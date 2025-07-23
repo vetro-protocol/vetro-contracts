@@ -1,0 +1,16 @@
+[profile.default]
+    src = "src"
+    out = "out"
+    libs = ["lib"]
+    auto_detect_solc = false
+    solc = "0.8.30"
+    remappings = [
+        "forge-std/=lib/forge-std/src/",
+        "@openzeppelin/=lib/openzeppelin-contracts/"
+    ]
+    [fmt]
+        line_length = 100
+        tab_width = 4
+        bracket_spacing = false
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
