@@ -127,6 +127,8 @@ contract Treasury is ReentrancyGuardTransient {
      */
     function removeFromWhitelist(address token_) external onlyOwner {
         if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
+        IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[token_].vault);
+        if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
         IERC20(token_).forceApprove(tokenConfig[token_].vault, 0);
         delete tokenConfig[token_];
         emit RemovedFromWhitelist(token_);

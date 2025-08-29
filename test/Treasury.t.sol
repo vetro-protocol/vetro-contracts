@@ -73,6 +73,16 @@ contract TreasuryTest is Test {
         treasury.removeFromWhitelist(address(_token2));
     }
 
+    function test_removeFromWhitelist_revertIfBalanceIsNotZero() public {
+        uint256 _tokenAmount = 10 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+        vm.prank(gateway);
+        treasury.deposit(address(token), _tokenAmount);
+        assertTrue(mockVault.balanceOf(address(treasury)) > 0);
+        vm.expectRevert(Treasury.BalanceShouldBeZero.selector);
+        treasury.removeFromWhitelist(address(token));
+    }
+
     // --- addKeeper ---
     function test_addKeeper_success() public {
         treasury.addKeeper(keeper);
