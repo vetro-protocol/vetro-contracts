@@ -244,7 +244,7 @@ contract TreasuryTest is Test {
     }
 
     // --- withdraw onlyGateway ---
-    function test_withdraw_onlyGateway_success() public {
+    function test_withdraw_onlyGateway_withdrawFromVault() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT;
         deal(address(token), address(treasury), _tokenAmount);
         treasury.push(address(token), _tokenAmount);
@@ -253,6 +253,29 @@ contract TreasuryTest is Test {
         vm.prank(gateway);
         treasury.withdraw(address(token), _tokenAmount / 2, alice);
         assertEq(token.balanceOf(alice), _tokenAmount / 2);
+    }
+
+    function test_withdraw_onlyGateway_withdrawFromTreasury() public {
+        uint256 _tokenAmount = 100 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+
+        assertEq(token.balanceOf(alice), 0);
+        vm.prank(gateway);
+        treasury.withdraw(address(token), _tokenAmount / 2, alice);
+        assertEq(token.balanceOf(alice), _tokenAmount / 2);
+    }
+
+    function test_withdraw_onlyGateway_withdrawFromTreasuryAndVault() public {
+        uint256 _tokenAmount = 100 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+        // push half to vault and keep half in treasury
+        treasury.push(address(token), _tokenAmount / 2);
+
+        assertEq(token.balanceOf(alice), 0);
+        vm.prank(gateway);
+        // withdraw _tokenAmount
+        treasury.withdraw(address(token), _tokenAmount, alice);
+        assertEq(token.balanceOf(alice), _tokenAmount);
     }
 
     function test_withdraw_onlyGateway_revertIfNotWhitelisted() public {

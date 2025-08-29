@@ -20,6 +20,7 @@ contract Treasury is ReentrancyGuardTransient {
     error AddressIsZero();
     error AddToListFailed();
     error AssetMismatch();
+    error BalanceShouldBeZero();
     error CallerIsNotAuthorized(address caller);
     error DepositIsPaused(address);
     error InvalidPriceTolerance();
@@ -259,10 +260,23 @@ contract Treasury is ReentrancyGuardTransient {
      */
     function withdraw(address token_, uint256 amount_, address tokenReceiver_) external nonReentrant onlyGateway {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (!tokenConfig[token_].withdrawActive) revert WithdrawIsPaused(token_);
-        IMorphoVaultV2(tokenConfig[token_].vault).withdraw(amount_, tokenReceiver_, address(this));
-    }
 
+        TokenConfig memory config = tokenConfig[token_];
+        if (!config.withdrawActive) revert WithdrawIsPaused(token_);
+
+        uint256 _tokenBalance = IERC20(token_).balanceOf(address(this));
+        if (_tokenBalance >= amount_) {
+            // Transfer directly if we have enough balance
+            IERC20(token_).safeTransfer(tokenReceiver_, amount_);
+        } else {
+            // Handle partial balance + vault withdrawal
+            if (_tokenBalance > 0) {
+                IERC20(token_).safeTransfer(tokenReceiver_, _tokenBalance);
+                amount_ -= _tokenBalance;
+            }
+            IMorphoVaultV2(config.vault).withdraw(amount_, tokenReceiver_, address(this));
+        }
+    }
     /*/////////////////////////////////////////////////////////////
                             onlyKeeper
     /////////////////////////////////////////////////////////////*/
