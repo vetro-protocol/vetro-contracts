@@ -423,6 +423,12 @@ contract TreasuryTest is Test {
         treasury.getPrice(address(token));
     }
 
+    function test_getPrice_revertIfUnsupportedToken() public {
+        address _token2 = address(new MockERC20());
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        treasury.getPrice(_token2);
+    }
+
     function test_isWhitelistedToken() public view {
         assertTrue(treasury.isWhitelistedToken(address(token)));
     }
@@ -450,7 +456,7 @@ contract TreasuryTest is Test {
         assertEq(_withdrawable, _tokenAmount);
     }
 
-    function test_withdrawable_zeroIfNotWhitelisted() public {
+    function test_withdrawable_returnZeroIfNotWhitelisted() public {
         MockERC20 _token2 = new MockERC20();
         assertEq(treasury.withdrawable(address(_token2)), 0);
     }

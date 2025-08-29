@@ -347,13 +347,14 @@ contract Treasury is ReentrancyGuardTransient {
 
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice) {
         IAggregatorV3 _oracle = IAggregatorV3(tokenConfig[token_].oracle);
-        uint8 _oracleDecimal = IAggregatorV3(_oracle).decimals();
-        (, int256 _price,, uint256 _updatedAt,) = IAggregatorV3(_oracle).latestRoundData();
+        if (address(_oracle) == address(0)) revert UnsupportedToken(token_);
+
+        (, int256 _price,, uint256 _updatedAt,) = _oracle.latestRoundData();
         if (block.timestamp - _updatedAt >= tokenConfig[token_].stalePeriod) revert StalePrice();
         _latestPrice = uint256(_price);
 
         /// Unit oracle price for given token_. i.e. 1 USD if token_ is USDC/USDT
-        _unitPrice = 10 ** _oracleDecimal;
+        _unitPrice = 10 ** _oracle.decimals();
         uint256 _priceTolerance = (_unitPrice * priceTolerance) / MAX_BPS;
         uint256 _priceUpperBound = _unitPrice + _priceTolerance;
         uint256 _priceLowerBound = _unitPrice - _priceTolerance;
@@ -395,10 +396,10 @@ contract Treasury is ReentrancyGuardTransient {
      */
     function withdrawable(address token_) external view returns (uint256) {
         IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[token_].vault);
-        uint256 _tokenInVault;
-        if (address(_vault) != address(0)) {
-            _tokenInVault = _vault.convertToAssets(_vault.balanceOf(address(this)));
-        }
-        return IERC20(token_).balanceOf(address(this)) + _tokenInVault;
+        // Token is not supported
+        if (address(_vault) == address(0)) return 0;
+
+        uint256 _shares = _vault.balanceOf(address(this));
+        return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
     }
 }
