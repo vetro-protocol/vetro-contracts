@@ -9,3 +9,7 @@ out/
 
 # env file
 .env
+
+# coverage
+coverage
+lcov*
