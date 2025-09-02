@@ -5,6 +5,7 @@ pragma solidity 0.8.30;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IVUSD} from "./interfaces/IVUSD.sol";
@@ -13,16 +14,20 @@ import {ITreasury} from "./interfaces/ITreasury.sol";
 /// @title Gateway - Handles both minting and redeeming of VUSD
 contract Gateway is ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
+    using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
     error AddressIsNull();
     error CallerIsNotOwner(address caller);
+    error ExceededMaxMint(uint256 requested, uint256 available);
+    error ExceededMaxWithdraw(uint256 requested, uint256 available);
+    error FeeOnTransferToken(address);
     error InvalidMintFee(uint256);
     error InvalidRedeemFee(uint256);
-    error MintableIsLessThanMinimum(uint256 mintable, uint256 minVusdOut);
-    error MintLimitReached(uint256 available, uint256 requested);
-    error RedeemableIsLessThanMinimum(uint256 redeemable, uint256 minAmountOut);
-    error UnsupportedToken(address);
+    error MintableIsLessThanMinimum(uint256 vusdOut, uint256 minVusdOut);
+    error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
+    error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
+    error VusdToBurnIsHigherThanMax(uint256 vusdIn, uint256 maxVusdIn);
 
     string public constant NAME = "VUSD-Gateway";
     string public constant VERSION = "2.0.0";
@@ -37,13 +42,11 @@ contract Gateway is ReentrancyGuardTransient {
     uint256 public redeemFee = 30;
     uint256 public mintLimit; // VUSD mint limit
 
-    event Mint(
-        address indexed tokenIn, uint256 amountIn, uint256 amountInAfterTransferFee, uint256 mintable, address receiver
-    );
+    event Deposit(address indexed token, uint256 tokenAmount, uint256 vusdAmount, address indexed receiver);
     event MintLimitUpdated(uint256 previousMintLimit, uint256 newMintLimit);
     event UpdatedMintFee(uint256 previousMintFee, uint256 newMintFee);
-    event Redeem(address indexed token, uint256 vusdAmount, uint256 redeemable, address indexed tokenReceiver);
     event UpdatedRedeemFee(uint256 previousRedeemFee, uint256 newRedeemFee);
+    event Withdraw(address indexed token, uint256 tokenAmount, uint256 vusdAmount, address indexed receiver);
 
     constructor(address vusd_, uint256 mintLimit_) {
         if (vusd_ == address(0)) revert AddressIsNull();
@@ -68,14 +71,14 @@ contract Gateway is ReentrancyGuardTransient {
      */
     function mint(uint256 amount_, address receiver_) external onlyOwner {
         if (receiver_ == address(0)) revert AddressIsNull();
-        uint256 _maxMintable = maxMintable();
-        if (_maxMintable < amount_) revert MintLimitReached(_maxMintable, amount_);
+        uint256 _maxMintable = maxMint();
+        if (_maxMintable < amount_) revert ExceededMaxMint(amount_, _maxMintable);
         vusd.mint(receiver_, amount_);
     }
 
     /// @notice OnlyOwner: Update mint fee
     function updateMintFee(uint256 newMintFee_) external onlyOwner {
-        if (newMintFee_ > MAX_BPS) revert InvalidMintFee(newMintFee_);
+        if (newMintFee_ >= MAX_BPS) revert InvalidMintFee(newMintFee_);
         emit UpdatedMintFee(mintFee, newMintFee_);
         mintFee = newMintFee_;
     }
@@ -88,7 +91,7 @@ contract Gateway is ReentrancyGuardTransient {
 
     /// @notice OnlyOwner: Update redeem fee
     function updateRedeemFee(uint256 newRedeemFee_) external onlyOwner {
-        if (newRedeemFee_ > MAX_BPS) revert InvalidRedeemFee(newRedeemFee_);
+        if (newRedeemFee_ >= MAX_BPS) revert InvalidRedeemFee(newRedeemFee_);
         emit UpdatedRedeemFee(redeemFee, newRedeemFee_);
         redeemFee = newRedeemFee_;
     }
@@ -98,93 +101,95 @@ contract Gateway is ReentrancyGuardTransient {
     /////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Mint VUSD by depositing a supported token
+     * @notice Deposit supported token and mint VUSD
      * @param token_ Address of token being deposited
-     * @param amountIn_ Amount of token_
+     * @param tokenAmount_ Amount of token_
      * @param minVusdOut_ Minimum amount of VUSD expected to mint
      * @param receiver_ Address of VUSD receiver
      */
-    function mint(address token_, uint256 amountIn_, uint256 minVusdOut_, address receiver_)
+    function deposit(address token_, uint256 tokenAmount_, uint256 minVusdOut_, address receiver_)
         external
         nonReentrant
         returns (uint256)
     {
-        address _treasury = treasury();
-        if (!ITreasury(_treasury).isWhitelistedToken(token_)) revert UnsupportedToken(token_);
-
-        uint256 _balanceBefore = IERC20(token_).balanceOf(_treasury);
-        IERC20(token_).safeTransferFrom(msg.sender, _treasury, amountIn_);
-        uint256 _balanceAfter = IERC20(token_).balanceOf(_treasury);
-
-        uint256 _actualAmountIn = _balanceAfter - _balanceBefore;
-        uint256 _mintable = _calculateMintable(token_, _actualAmountIn);
-        if (_mintable < minVusdOut_) revert MintableIsLessThanMinimum(_mintable, minVusdOut_);
-
-        uint256 _maxMintable = maxMintable();
-        if (_mintable > _maxMintable) revert MintLimitReached(_maxMintable, _mintable);
-
-        ITreasury(_treasury).deposit(token_, _actualAmountIn);
-
-        vusd.mint(receiver_, _mintable);
-        emit Mint(token_, amountIn_, _actualAmountIn, _mintable, receiver_);
-
-        return _mintable;
+        uint256 _vusdAmount = previewDeposit(token_, tokenAmount_);
+        if (_vusdAmount < minVusdOut_) revert MintableIsLessThanMinimum(_vusdAmount, minVusdOut_);
+        _deposit(token_, tokenAmount_, _vusdAmount, receiver_);
+        return _vusdAmount;
     }
 
     /**
-     * @notice Redeem token and burn VUSD amount less redeem fee, if any.
-     * Note: VUSD will be burnt from caller and there is no need to approve this contract to burn VUSD.
-     * @param token_ Token to redeem, it should be 1 of the supported tokens from treasury.
-     * @param vusdAmount_ VUSD amount to burn.
-     * @param minAmountOut_ Minimum amount of token expected to receive
-     * @param tokenReceiver_ Address of token receiver
+     * @notice Mint VUSD by depositing a supported token
+     * @param token_ Address of token being deposited
+     * @param vusdAmount_ Amount of VUSD to mint
+     * @param maxTokenIn_ Maximum amount of token to deposit
+     * @param receiver_ Address of VUSD receiver
      */
-    function redeem(address token_, uint256 vusdAmount_, uint256 minAmountOut_, address tokenReceiver_)
+    function mint(address token_, uint256 vusdAmount_, uint256 maxTokenIn_, address receiver_)
+        external
+        nonReentrant
+        returns (uint256)
+    {
+        uint256 _tokenAmount = previewMint(token_, vusdAmount_);
+        if (_tokenAmount > maxTokenIn_) revert TokenAmountIsHigherThanMax(_tokenAmount, maxTokenIn_);
+        _deposit(token_, _tokenAmount, vusdAmount_, receiver_);
+        return _tokenAmount;
+    }
+
+    /**
+     * @notice Redeem supported token and burn VUSD amount less redeem fee, if any.
+     * Note: VUSD will be burnt from caller and there is no need to approve this contract to burn VUSD.
+     * @param token_ Token to redeem
+     * @param vusdAmount_ VUSD amount to burn.
+     * @param minTokenOut_ Minimum amount of token expected to receive
+     * @param receiver_ Address of token receiver
+     * @dev We are not checking maxWithdraw for amountOut as it can be gas heavy computation. Redeem
+     * will fail if there is not enough token to withdraw in treasury.
+     */
+    function redeem(address token_, uint256 vusdAmount_, uint256 minTokenOut_, address receiver_)
         external
         nonReentrant
     {
-        address _treasury = treasury();
-        if (!ITreasury(_treasury).isWhitelistedToken(token_)) revert UnsupportedToken(token_);
-
         // @dev We are not checking _redeemable against total redeemable of token as it can be
         // gas heavy computation. If treasury has less than requested then it will fail anyway.
-        uint256 _redeemable = _calculateRedeemable(token_, vusdAmount_);
-        if (_redeemable < minAmountOut_) revert RedeemableIsLessThanMinimum(_redeemable, minAmountOut_);
+        uint256 _tokenAmount = previewRedeem(token_, vusdAmount_);
+        if (_tokenAmount < minTokenOut_) revert RedeemableIsLessThanMinimum(_tokenAmount, minTokenOut_);
+        _withdraw(token_, _tokenAmount, vusdAmount_, receiver_);
+    }
 
-        vusd.burnFrom(msg.sender, vusdAmount_);
-        ITreasury(_treasury).withdraw(token_, _redeemable, tokenReceiver_);
-
-        emit Redeem(token_, vusdAmount_, _redeemable, tokenReceiver_);
+    function withdraw(address token_, uint256 tokenAmount_, uint256 maxVusdIn_, address receiver_)
+        external
+        nonReentrant
+    {
+        uint256 _vusdToBurn = previewWithdraw(token_, tokenAmount_);
+        if (_vusdToBurn > maxVusdIn_) revert VusdToBurnIsHigherThanMax(_vusdToBurn, maxVusdIn_);
+        _withdraw(token_, tokenAmount_, _vusdToBurn, receiver_);
     }
 
     /*/////////////////////////////////////////////////////////////
                             Read Functions
     /////////////////////////////////////////////////////////////*/
 
-    /// @notice Mintable based on mint limit and VUSD totalSupply
-    function maxMintable() public view returns (uint256 _mintable) {
-        uint256 _totalSupply = vusd.totalSupply();
-        uint256 _mintableLimit = mintLimit;
-        if (_mintableLimit > _totalSupply) {
-            _mintable = _mintableLimit - _totalSupply;
-        }
+    /// @notice Returns the maximum amount of the token that can be deposited.
+    function maxDeposit() external pure returns (uint256) {
+        return type(uint256).max;
     }
 
-    /**
-     * @notice Calculate VUSD amount to mint for given token_ and amountIn_.
-     * If token_ is not supported by treasury then it will return 0.
-     * @param token_ Address of token which will be deposited to mint VUSD.
-     * @param amountIn_ Amount of token_
-     * @return Mintable VUSD amount
-     */
-    function mintable(address token_, uint256 amountIn_) external view returns (uint256) {
-        if (ITreasury(treasury()).isWhitelistedToken(token_)) {
-            // Calculate mintable based on given amount, price of given token and mint fee.
-            uint256 _mintable = _calculateMintable(token_, amountIn_);
-            // compare it against max mintable.
-            return _mintable > maxMintable() ? 0 : _mintable;
-        }
-        return 0;
+    /// @notice Returns the maximum amount of VUSD that can be minted.
+    function maxMint() public view returns (uint256) {
+        uint256 _totalSupply = vusd.totalSupply();
+        uint256 _mintableLimit = mintLimit;
+        return _mintableLimit > _totalSupply ? _mintableLimit - _totalSupply : 0;
+    }
+
+    /// @notice Returns the maximum amount of VUSD that can be redeemed for given owner.
+    function maxRedeem(address owner_) external view returns (uint256) {
+        return vusd.balanceOf(owner_);
+    }
+
+    /// @notice Returns the maximum amount of the token that can be withdrawn.
+    function maxWithdraw(address token_) public view returns (uint256) {
+        return ITreasury(treasury()).withdrawable(token_);
     }
 
     /// @dev Owner is defined in VUSD token contract only
@@ -192,28 +197,26 @@ contract Gateway is ReentrancyGuardTransient {
         return vusd.owner();
     }
 
-    /// @dev Current redeemable amount for given token
-    function redeemableOf(address token_) public view returns (uint256) {
-        return ITreasury(treasury()).withdrawable(token_);
+    function previewDeposit(address token_, uint256 tokenAmount_) public view returns (uint256) {
+        // Calculate mintable based on given tokenAmount_, price of given token and mint fee.
+        return _calculateVusdAmount(token_, tokenAmount_);
     }
 
-    /**
-     * @notice Current redeemable amount for given token and vusdAmount.
-     * If token is not supported by treasury then it will return 0.
-     * If redeemable is higher than current total redeemable of given token then it will return 0.
-     * @param token_ Token to redeem
-     * @param vusdAmount_ VUSD amount to burn
-     * @return Redeemable token amount
-     */
-    function redeemable(address token_, uint256 vusdAmount_) external view returns (uint256) {
-        ITreasury _treasury = ITreasury(treasury());
-        if (_treasury.isWhitelistedToken(token_)) {
-            // Calculate redeemable based on given amount, price of given token and redeem fee.
-            uint256 _redeemable = _calculateRedeemable(token_, vusdAmount_);
-            // compare it against total redeemable for given token.
-            return _redeemable > redeemableOf(token_) ? 0 : _redeemable;
-        }
-        return 0;
+    function previewMint(address token_, uint256 vusdAmount_) public view returns (uint256) {
+        uint256 _oneToken = 10 ** IERC20Metadata(token_).decimals();
+        uint256 _vusdForOneToken = _calculateVusdAmount(token_, _oneToken);
+        return vusdAmount_.mulDiv(_oneToken, _vusdForOneToken, Math.Rounding.Ceil);
+    }
+
+    function previewRedeem(address token_, uint256 vusdAmount_) public view returns (uint256) {
+        // Calculate redeemable based on given vusdAmount_, price of given token and redeem fee.
+        return _calculateTokenAmount(token_, vusdAmount_);
+    }
+
+    function previewWithdraw(address token_, uint256 tokenAmount_) public view returns (uint256) {
+        uint256 _oneVUSD = 10 ** vusdDecimals;
+        uint256 _tokensForOneVUSD = _calculateTokenAmount(token_, _oneVUSD);
+        return tokenAmount_.mulDiv(_oneVUSD, _tokensForOneVUSD, Math.Rounding.Ceil);
     }
 
     /// @dev Treasury is defined in VUSD token contract only
@@ -226,28 +229,56 @@ contract Gateway is ReentrancyGuardTransient {
     /////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Calculate mintable based on mintFee, token price and available mintable.
-     * Note: Mintable should be in VUSD decimal
-     * @return _mintable VUSD amount to mint
+     * @dev Calculate VUSD to mint based on mintFee and token price.
+     * @return VUSD amount to mint
      */
-    function _calculateMintable(address token_, uint256 amountIn_) internal view returns (uint256 _mintable) {
+    function _calculateVusdAmount(address token_, uint256 amountIn_) internal view returns (uint256) {
         (uint256 _latestPrice, uint256 _unitPrice) = ITreasury(treasury()).getPrice(token_);
-        uint256 _amountInAfterFee = mintFee > 0 ? (amountIn_ * (MAX_BPS - mintFee)) / MAX_BPS : amountIn_;
-        _mintable = _latestPrice >= _unitPrice ? _amountInAfterFee : (_amountInAfterFee * _latestPrice) / _unitPrice;
-        // convert redeemable into vusd decimal
-        return _mintable * 10 ** (vusdDecimals - IERC20Metadata(token_).decimals());
+        uint256 _amountInAfterFee = mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - mintFee), MAX_BPS) : amountIn_;
+        uint256 _vusdToMint =
+            _latestPrice >= _unitPrice ? _amountInAfterFee : _amountInAfterFee.mulDiv(_latestPrice, _unitPrice);
+        // convert _vusdToMint into vusd decimal
+        return _vusdToMint * 10 ** (vusdDecimals - IERC20Metadata(token_).decimals());
     }
 
     /**
-     * @notice Calculate redeemable amount based on oracle price and redeemFee, if any.
+     * @notice Calculate token amount to withdraw based on oracle price and redeemFee.
      * Also covert 18 decimal VUSD amount to token_ defined decimal amount.
-     * @return Token amount that user will get after burning vusdAmount
+     * @return Token amount to withdraw
      */
-    function _calculateRedeemable(address token_, uint256 vusdAmount_) internal view returns (uint256) {
+    function _calculateTokenAmount(address token_, uint256 vusdAmount_) internal view returns (uint256) {
         (uint256 _latestPrice, uint256 _unitPrice) = ITreasury(treasury()).getPrice(token_);
-        uint256 _vusdAfterFee = redeemFee > 0 ? (vusdAmount_ * (MAX_BPS - redeemFee)) / MAX_BPS : vusdAmount_;
-        uint256 _redeemable = _latestPrice <= _unitPrice ? _vusdAfterFee : (_vusdAfterFee * _unitPrice) / _latestPrice;
-        // convert redeemable to token_ defined decimal
-        return _redeemable / 10 ** (vusdDecimals - IERC20Metadata(token_).decimals());
+        uint256 _vusdAfterFee = redeemFee > 0 ? vusdAmount_.mulDiv((MAX_BPS - redeemFee), MAX_BPS) : vusdAmount_;
+        uint256 _tokenAmount = _latestPrice <= _unitPrice
+            ? _vusdAfterFee
+            : _vusdAfterFee.mulDiv(_unitPrice, _latestPrice, Math.Rounding.Floor);
+        // convert _tokenAmount to token_ defined decimal
+        return _tokenAmount / 10 ** (vusdDecimals - IERC20Metadata(token_).decimals());
+    }
+
+    function _deposit(address token_, uint256 tokenAmount_, uint256 vusdAmount_, address receiver_) private {
+        uint256 _maxMintable = maxMint();
+        if (vusdAmount_ > _maxMintable) revert ExceededMaxMint(vusdAmount_, _maxMintable);
+
+        address _treasury = treasury();
+
+        uint256 _balanceBefore = IERC20(token_).balanceOf(_treasury);
+        IERC20(token_).safeTransferFrom(msg.sender, _treasury, tokenAmount_);
+        uint256 _balanceAfter = IERC20(token_).balanceOf(_treasury);
+        if ((_balanceAfter - _balanceBefore) != tokenAmount_) revert FeeOnTransferToken(token_);
+
+        ITreasury(_treasury).deposit(token_, tokenAmount_);
+        vusd.mint(receiver_, vusdAmount_);
+
+        emit Deposit(token_, tokenAmount_, vusdAmount_, receiver_);
+    }
+
+    function _withdraw(address token_, uint256 tokenAmount_, uint256 vusdAmount_, address receiver_) private {
+        uint256 _maxWithdraw = maxWithdraw(token_);
+        if (tokenAmount_ > _maxWithdraw) revert ExceededMaxWithdraw(tokenAmount_, _maxWithdraw);
+        vusd.burnFrom(msg.sender, vusdAmount_);
+        ITreasury(treasury()).withdraw(token_, tokenAmount_, receiver_);
+
+        emit Withdraw(token_, tokenAmount_, vusdAmount_, receiver_);
     }
 }
