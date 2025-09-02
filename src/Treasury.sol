@@ -20,6 +20,7 @@ contract Treasury is ReentrancyGuardTransient {
     error AddressIsZero();
     error AddToListFailed();
     error AssetMismatch();
+    error BalanceShouldBeZero();
     error CallerIsNotAuthorized(address caller);
     error DepositIsPaused(address);
     error InvalidPriceTolerance();
@@ -126,6 +127,8 @@ contract Treasury is ReentrancyGuardTransient {
      */
     function removeFromWhitelist(address token_) external onlyOwner {
         if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
+        IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[token_].vault);
+        if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
         IERC20(token_).forceApprove(tokenConfig[token_].vault, 0);
         delete tokenConfig[token_];
         emit RemovedFromWhitelist(token_);
@@ -259,10 +262,23 @@ contract Treasury is ReentrancyGuardTransient {
      */
     function withdraw(address token_, uint256 amount_, address tokenReceiver_) external nonReentrant onlyGateway {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (!tokenConfig[token_].withdrawActive) revert WithdrawIsPaused(token_);
-        IMorphoVaultV2(tokenConfig[token_].vault).withdraw(amount_, tokenReceiver_, address(this));
-    }
 
+        TokenConfig memory config = tokenConfig[token_];
+        if (!config.withdrawActive) revert WithdrawIsPaused(token_);
+
+        uint256 _tokenBalance = IERC20(token_).balanceOf(address(this));
+        if (_tokenBalance >= amount_) {
+            // Transfer directly if we have enough balance
+            IERC20(token_).safeTransfer(tokenReceiver_, amount_);
+        } else {
+            // Handle partial balance + vault withdrawal
+            if (_tokenBalance > 0) {
+                IERC20(token_).safeTransfer(tokenReceiver_, _tokenBalance);
+                amount_ -= _tokenBalance;
+            }
+            IMorphoVaultV2(config.vault).withdraw(amount_, tokenReceiver_, address(this));
+        }
+    }
     /*/////////////////////////////////////////////////////////////
                             onlyKeeper
     /////////////////////////////////////////////////////////////*/
@@ -331,13 +347,14 @@ contract Treasury is ReentrancyGuardTransient {
 
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice) {
         IAggregatorV3 _oracle = IAggregatorV3(tokenConfig[token_].oracle);
-        uint8 _oracleDecimal = IAggregatorV3(_oracle).decimals();
-        (, int256 _price,, uint256 _updatedAt,) = IAggregatorV3(_oracle).latestRoundData();
+        if (address(_oracle) == address(0)) revert UnsupportedToken(token_);
+
+        (, int256 _price,, uint256 _updatedAt,) = _oracle.latestRoundData();
         if (block.timestamp - _updatedAt >= tokenConfig[token_].stalePeriod) revert StalePrice();
         _latestPrice = uint256(_price);
 
         /// Unit oracle price for given token_. i.e. 1 USD if token_ is USDC/USDT
-        _unitPrice = 10 ** _oracleDecimal;
+        _unitPrice = 10 ** _oracle.decimals();
         uint256 _priceTolerance = (_unitPrice * priceTolerance) / MAX_BPS;
         uint256 _priceUpperBound = _unitPrice + _priceTolerance;
         uint256 _priceLowerBound = _unitPrice - _priceTolerance;
@@ -379,10 +396,10 @@ contract Treasury is ReentrancyGuardTransient {
      */
     function withdrawable(address token_) external view returns (uint256) {
         IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[token_].vault);
-        uint256 _tokenInVault;
-        if (address(_vault) != address(0)) {
-            _tokenInVault = _vault.convertToAssets(_vault.balanceOf(address(this)));
-        }
-        return IERC20(token_).balanceOf(address(this)) + _tokenInVault;
+        // Token is not supported
+        if (address(_vault) == address(0)) return 0;
+
+        uint256 _shares = _vault.balanceOf(address(this));
+        return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
     }
 }

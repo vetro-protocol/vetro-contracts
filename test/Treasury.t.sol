@@ -73,6 +73,16 @@ contract TreasuryTest is Test {
         treasury.removeFromWhitelist(address(_token2));
     }
 
+    function test_removeFromWhitelist_revertIfBalanceIsNotZero() public {
+        uint256 _tokenAmount = 10 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+        vm.prank(gateway);
+        treasury.deposit(address(token), _tokenAmount);
+        assertTrue(mockVault.balanceOf(address(treasury)) > 0);
+        vm.expectRevert(Treasury.BalanceShouldBeZero.selector);
+        treasury.removeFromWhitelist(address(token));
+    }
+
     // --- addKeeper ---
     function test_addKeeper_success() public {
         treasury.addKeeper(keeper);
@@ -244,7 +254,7 @@ contract TreasuryTest is Test {
     }
 
     // --- withdraw onlyGateway ---
-    function test_withdraw_onlyGateway_success() public {
+    function test_withdraw_onlyGateway_withdrawFromVault() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT;
         deal(address(token), address(treasury), _tokenAmount);
         treasury.push(address(token), _tokenAmount);
@@ -253,6 +263,29 @@ contract TreasuryTest is Test {
         vm.prank(gateway);
         treasury.withdraw(address(token), _tokenAmount / 2, alice);
         assertEq(token.balanceOf(alice), _tokenAmount / 2);
+    }
+
+    function test_withdraw_onlyGateway_withdrawFromTreasury() public {
+        uint256 _tokenAmount = 100 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+
+        assertEq(token.balanceOf(alice), 0);
+        vm.prank(gateway);
+        treasury.withdraw(address(token), _tokenAmount / 2, alice);
+        assertEq(token.balanceOf(alice), _tokenAmount / 2);
+    }
+
+    function test_withdraw_onlyGateway_withdrawFromTreasuryAndVault() public {
+        uint256 _tokenAmount = 100 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+        // push half to vault and keep half in treasury
+        treasury.push(address(token), _tokenAmount / 2);
+
+        assertEq(token.balanceOf(alice), 0);
+        vm.prank(gateway);
+        // withdraw _tokenAmount
+        treasury.withdraw(address(token), _tokenAmount, alice);
+        assertEq(token.balanceOf(alice), _tokenAmount);
     }
 
     function test_withdraw_onlyGateway_revertIfNotWhitelisted() public {
@@ -390,6 +423,12 @@ contract TreasuryTest is Test {
         treasury.getPrice(address(token));
     }
 
+    function test_getPrice_revertIfUnsupportedToken() public {
+        address _token2 = address(new MockERC20());
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        treasury.getPrice(_token2);
+    }
+
     function test_isWhitelistedToken() public view {
         assertTrue(treasury.isWhitelistedToken(address(token)));
     }
@@ -417,7 +456,7 @@ contract TreasuryTest is Test {
         assertEq(_withdrawable, _tokenAmount);
     }
 
-    function test_withdrawable_zeroIfNotWhitelisted() public {
+    function test_withdrawable_returnZeroIfNotWhitelisted() public {
         MockERC20 _token2 = new MockERC20();
         assertEq(treasury.withdrawable(address(_token2)), 0);
     }
