@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Treasury} from "src/Treasury.sol";
 import {VUSD} from "src/VUSD.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
@@ -10,6 +11,8 @@ import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockSwapper} from "test/mocks/MockSwapper.sol";
 
 contract TreasuryTest is Test {
+    using Math for uint256;
+
     Treasury treasury;
     VUSD vusd;
     MockERC20 token;
@@ -59,6 +62,13 @@ contract TreasuryTest is Test {
         MockERC20 _fakeToken = new MockERC20();
         vm.expectRevert(Treasury.AssetMismatch.selector);
         treasury.addToWhitelist(address(_fakeToken), address(mockVault), address(mockOracle), 1 hours);
+    }
+
+    function test_addToWhitelist_revertOnInvalidTokenDecimals() public {
+        MockERC20 _mockToken = new MockERC20();
+        _mockToken.setDecimals(24);
+        vm.expectRevert(abi.encodeWithSignature("InvalidTokenDecimals(uint8)", 24));
+        treasury.addToWhitelist(address(_mockToken), address(mockVault), address(mockOracle), 1 hours);
     }
 
     // --- removeFromWhitelist ---
@@ -155,7 +165,7 @@ contract TreasuryTest is Test {
     function test_updateOracle_success() public {
         address _newOracle = address(new MockChainlinkOracle(2e8));
         treasury.updateOracle(address(token), _newOracle, 2 hours);
-        (, address _oracle, uint256 _stalePeriod,,) = treasury.tokenConfig(address(token));
+        (, address _oracle, uint256 _stalePeriod,,,) = treasury.tokenConfig(address(token));
         assertEq(_oracle, _newOracle);
         assertEq(_stalePeriod, 2 hours);
     }
@@ -344,10 +354,10 @@ contract TreasuryTest is Test {
     // --- toggleDepositActive ---
     function test_toggleDepositActive_onlyKeeper_success() public {
         treasury.addKeeper(keeper);
-        (,,, bool depositActiveBefore,) = treasury.tokenConfig(address(token));
+        (,,, bool depositActiveBefore,,) = treasury.tokenConfig(address(token));
         vm.prank(keeper);
         treasury.toggleDepositActive(address(token));
-        (,,, bool depositActiveAfter,) = treasury.tokenConfig(address(token));
+        (,,, bool depositActiveAfter,,) = treasury.tokenConfig(address(token));
 
         assertTrue(depositActiveBefore != depositActiveAfter);
     }
@@ -363,10 +373,10 @@ contract TreasuryTest is Test {
     // --- toggleWithdrawActive ---
     function test_toggleWithdrawActive_onlyKeeper_success() public {
         treasury.addKeeper(keeper);
-        (,,,, bool withdrawActiveBefore) = treasury.tokenConfig(address(token));
+        (,,,, bool withdrawActiveBefore,) = treasury.tokenConfig(address(token));
         vm.prank(keeper);
         treasury.toggleWithdrawActive(address(token));
-        (,,,, bool withdrawActiveAfter) = treasury.tokenConfig(address(token));
+        (,,,, bool withdrawActiveAfter,) = treasury.tokenConfig(address(token));
         assertTrue(withdrawActiveBefore != withdrawActiveAfter);
     }
 
@@ -459,5 +469,59 @@ contract TreasuryTest is Test {
     function test_withdrawable_returnZeroIfNotWhitelisted() public {
         MockERC20 _token2 = new MockERC20();
         assertEq(treasury.withdrawable(address(_token2)), 0);
+    }
+
+    // --- reserve ---
+    function test_reserve_tokenInTreasury() public {
+        uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
+        deal(address(token), address(treasury), _tokenAmount);
+        // Expected reserve should be 100 * 1e18, as the price is $1.
+        assertEq(treasury.reserve(), 100e18);
+    }
+
+    function test_reserve_tokenInVault() public {
+        uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
+        deal(address(token), address(treasury), _tokenAmount);
+
+        vm.prank(gateway);
+        treasury.deposit(address(token), _tokenAmount);
+        // Expected reserve should be 100 * 1e18, as the price is $1.
+        assertEq(treasury.reserve(), 100e18);
+    }
+
+    function test_reserve_withMultipleTokens() public {
+        uint256 _token1Amount = 100 * TOKEN_UNIT; // 100 tokens
+        deal(address(token), address(treasury), _token1Amount);
+        uint256 _expectedReserve1 = (_token1Amount * 1e18) / TOKEN_UNIT;
+
+        // 2. Whitelist a new token with 18 decimals
+        MockERC20 _token2 = new MockERC20();
+        _token2.setDecimals(18);
+        MockMorphoVaultV2 _vault2 = new MockMorphoVaultV2(address(_token2));
+        MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8); // $1
+        treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
+
+        uint256 _token2Amount = 50e18; // 50 tokens
+        deal(address(_token2), address(treasury), _token2Amount);
+        uint256 _expectedReserve2 = 50e18;
+
+        assertEq(treasury.reserve(), _expectedReserve1 + _expectedReserve2);
+    }
+
+    function test_reserve_withPriceChange() public {
+        mockOracle.updatePrice(1.01e8);
+
+        uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
+        deal(address(token), address(treasury), _tokenAmount);
+
+        // Expected reserve should be 101 * 1e18.
+        (uint256 _latestPrice, uint256 _unitPrice) = treasury.getPrice(address(token));
+        uint256 _reserveInTokenDecimal = _tokenAmount.mulDiv(_latestPrice, _unitPrice);
+        uint256 _expectedReserve = (_reserveInTokenDecimal * 1e18) / TOKEN_UNIT;
+        assertEq(treasury.reserve(), _expectedReserve);
+    }
+
+    function test_reserve_isZero_whenNoTokens() public view {
+        assertEq(treasury.reserve(), 0);
     }
 }
