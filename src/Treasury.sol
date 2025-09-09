@@ -3,7 +3,9 @@
 pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IMorphoVaultV2} from "./interfaces/morpho/IMorphoVaultV2.sol";
@@ -15,6 +17,7 @@ import {ITreasury} from "./interfaces/ITreasury.sol";
 /// @title VUSD Treasury
 contract Treasury is ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
+    using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
     error AddressIsZero();
@@ -25,6 +28,7 @@ contract Treasury is ReentrancyGuardTransient {
     error DepositIsPaused(address);
     error InvalidPriceTolerance();
     error InvalidStalePeriod();
+    error InvalidTokenDecimals(uint8);
     error PriceExceedTolerance(uint256 latestPrice, uint256 priceUpperBound, uint256 priceLowerBound);
     error RemoveFromListFailed();
     error ReservedToken();
@@ -49,6 +53,7 @@ contract Treasury is ReentrancyGuardTransient {
         uint256 stalePeriod;
         bool depositActive;
         bool withdrawActive;
+        uint8 decimals;
     }
 
     mapping(address token => TokenConfig) public tokenConfig;
@@ -105,6 +110,8 @@ contract Treasury is ReentrancyGuardTransient {
     function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_) external onlyOwner {
         if (token_ == address(0) || vault_ == address(0) || oracle_ == address(0)) revert AddressIsZero();
         if (stalePeriod_ == 0) revert InvalidStalePeriod();
+        uint8 _decimals = IERC20Metadata(token_).decimals();
+        if (_decimals > 18) revert InvalidTokenDecimals(_decimals);
         if (token_ != IMorphoVaultV2(vault_).asset()) revert AssetMismatch();
 
         if (!_whitelistedTokens.add(token_)) revert AddToListFailed();
@@ -113,7 +120,8 @@ contract Treasury is ReentrancyGuardTransient {
             oracle: oracle_,
             stalePeriod: stalePeriod_,
             depositActive: true,
-            withdrawActive: true
+            withdrawActive: true,
+            decimals: _decimals
         });
         IERC20(token_).forceApprove(vault_, type(uint256).max);
 
@@ -348,20 +356,7 @@ contract Treasury is ReentrancyGuardTransient {
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice) {
         IAggregatorV3 _oracle = IAggregatorV3(tokenConfig[token_].oracle);
         if (address(_oracle) == address(0)) revert UnsupportedToken(token_);
-
-        (, int256 _price,, uint256 _updatedAt,) = _oracle.latestRoundData();
-        if (block.timestamp - _updatedAt >= tokenConfig[token_].stalePeriod) revert StalePrice();
-        _latestPrice = uint256(_price);
-
-        /// Unit oracle price for given token_. i.e. 1 USD if token_ is USDC/USDT
-        _unitPrice = 10 ** _oracle.decimals();
-        uint256 _priceTolerance = (_unitPrice * priceTolerance) / MAX_BPS;
-        uint256 _priceUpperBound = _unitPrice + _priceTolerance;
-        uint256 _priceLowerBound = _unitPrice - _priceTolerance;
-
-        if (_latestPrice > _priceUpperBound || _latestPrice < _priceLowerBound) {
-            revert PriceExceedTolerance(_latestPrice, _priceUpperBound, _priceLowerBound);
-        }
+        return _getPrice(_oracle, tokenConfig[token_].stalePeriod, priceTolerance);
     }
 
     /// @notice Returns whether given account is keeper
@@ -384,6 +379,36 @@ contract Treasury is ReentrancyGuardTransient {
         return vusd.owner();
     }
 
+    /// @notice Return total reserve value in USD
+    function reserve() external view returns (uint256 _reserve) {
+        uint256 _len = _whitelistedTokens.length();
+        uint256 _priceToleranceBps = priceTolerance;
+
+        for (uint256 i; i < _len;) {
+            address _token = _whitelistedTokens.at(i);
+            IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[_token].vault);
+            uint256 _shares = _vault.balanceOf(address(this));
+            uint256 _balance = IERC20(_token).balanceOf(address(this));
+            if (_shares > 0) {
+                _balance += _vault.convertToAssets(_shares);
+            }
+
+            if (_balance > 0) {
+                (uint256 _price, uint256 _unitPrice) = _getPrice(
+                    IAggregatorV3(tokenConfig[_token].oracle), tokenConfig[_token].stalePeriod, _priceToleranceBps
+                );
+                // Calculate USD value in token decimals
+                uint256 _valueInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
+                // Normalize value to 18 decimals before adding to total reserve
+                _reserve += (_valueInTokenDecimals * (10 ** (18 - tokenConfig[_token].decimals)));
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     /// @notice Return list of whitelisted tokens
     function whitelistedTokens() external view returns (address[] memory) {
         return _whitelistedTokens.values();
@@ -401,5 +426,25 @@ contract Treasury is ReentrancyGuardTransient {
 
         uint256 _shares = _vault.balanceOf(address(this));
         return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
+    }
+
+    function _getPrice(IAggregatorV3 oracle_, uint256 stalePeriod_, uint256 priceToleranceBps_)
+        private
+        view
+        returns (uint256 _latestPrice, uint256 _unitPrice)
+    {
+        (, int256 _price,, uint256 _updatedAt,) = oracle_.latestRoundData();
+        if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice();
+        _latestPrice = uint256(_price);
+
+        // Unit oracle price for given token_. i.e. 1 USD if token_ is USDC/USDT
+        _unitPrice = 10 ** oracle_.decimals();
+        uint256 _priceToleranceValue = (_unitPrice * priceToleranceBps_) / MAX_BPS;
+        uint256 _priceUpperBound = _unitPrice + _priceToleranceValue;
+        uint256 _priceLowerBound = _unitPrice - _priceToleranceValue;
+
+        if (_latestPrice > _priceUpperBound || _latestPrice < _priceLowerBound) {
+            revert PriceExceedTolerance(_latestPrice, _priceUpperBound, _priceLowerBound);
+        }
     }
 }
