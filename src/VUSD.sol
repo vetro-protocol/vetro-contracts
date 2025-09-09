@@ -13,7 +13,6 @@ contract VUSD is ERC20Permit, ERC20Burnable, Ownable2Step {
     using SafeERC20 for IERC20;
 
     error AddressIsNull();
-    error ArrayLengthMismatch();
     error CallerIsNotGateway(address);
     error TreasuryIsNull();
 
@@ -49,22 +48,6 @@ contract VUSD is ERC20Permit, ERC20Burnable, Ownable2Step {
     function mint(address account_, uint256 amount_) external {
         if (msg.sender != gateway) revert CallerIsNotGateway(msg.sender);
         _mint(account_, amount_);
-    }
-
-    /**
-     * @notice Transfer tokens to multiple recipient
-     * @dev Address array and amount array are 1:1 and are in order.
-     * @param recipients_ array of recipient addresses
-     * @param amounts_ array of token amounts
-     * @return true/false
-     */
-    function multiTransfer(address[] memory recipients_, uint256[] memory amounts_) external returns (bool) {
-        uint256 _len = recipients_.length;
-        if (_len != amounts_.length) revert ArrayLengthMismatch();
-        for (uint256 i; i < _len; i++) {
-            transfer(recipients_[i], amounts_[i]);
-        }
-        return true;
     }
 
     /**
