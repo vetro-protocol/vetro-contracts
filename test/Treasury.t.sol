@@ -71,6 +71,11 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(_mockToken), address(mockVault), address(mockOracle), 1 hours);
     }
 
+    function test_addToWhitelist_revertIfAlreadyWhitelisted() public {
+        vm.expectRevert(Treasury.AddToListFailed.selector);
+        treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
+    }
+
     // --- removeFromWhitelist ---
     function test_removeFromWhitelist_success() public {
         treasury.removeFromWhitelist(address(token));
@@ -102,6 +107,18 @@ contract TreasuryTest is Test {
     function test_addKeeper_revertOnZeroAddress() public {
         vm.expectRevert(Treasury.AddressIsZero.selector);
         treasury.addKeeper(address(0));
+    }
+
+    function test_addKeeper_revertIfCallerIsNotOwner() public {
+        vm.expectRevert(abi.encodeWithSignature("CallerIsNotAuthorized(address)", alice));
+        vm.prank(alice);
+        treasury.addKeeper(makeAddr("another"));
+    }
+
+    function test_addKeeper_revertIfAlreadyAdded() public {
+        treasury.addKeeper(keeper);
+        vm.expectRevert(Treasury.AddToListFailed.selector);
+        treasury.addKeeper(keeper);
     }
 
     // --- removeKeeper ---
@@ -159,6 +176,11 @@ contract TreasuryTest is Test {
         MockERC20 _other = new MockERC20();
         vm.expectRevert(Treasury.AddressIsZero.selector);
         treasury.sweep(address(_other), address(0));
+    }
+
+    function test_sweep_revertOnVaultShareToken() public {
+        vm.expectRevert(Treasury.ReservedToken.selector);
+        treasury.sweep(address(mockVault), alice);
     }
 
     // --- updateOracle ---
@@ -249,6 +271,11 @@ contract TreasuryTest is Test {
         assertEq(mockVault.balanceOf(address(treasury)), mockVault.convertToShares(_tokenAmount));
     }
 
+    function test_deposit_revertIfCallerIsNotGateway() public {
+        vm.expectRevert(abi.encodeWithSignature("CallerIsNotAuthorized(address)", address(this)));
+        treasury.deposit(address(token), 1);
+    }
+
     function test_deposit_onlyGateway_revertIfNotWhitelisted() public {
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
@@ -322,12 +349,28 @@ contract TreasuryTest is Test {
         assertEq(mockVault.balanceOf(address(treasury)), _tokenAmount * VAULT_UNIT / TOKEN_UNIT);
     }
 
+    function test_push_onlyKeeper_maxAmountDepositsAllBalance() public {
+        uint256 _tokenAmount = 123 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+        treasury.addKeeper(keeper);
+        vm.prank(keeper);
+        treasury.push(address(token), type(uint256).max);
+        assertEq(mockVault.balanceOf(address(treasury)), _tokenAmount * VAULT_UNIT / TOKEN_UNIT);
+        assertEq(token.balanceOf(address(treasury)), 0);
+    }
+
     function test_push_onlyKeeper_revertIfNotWhitelisted() public {
         treasury.addKeeper(keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
         treasury.push(address(_token2), 10 * TOKEN_UNIT);
+    }
+
+    function test_onlyKeeper_revertIfCallerIsNotKeeper() public {
+        vm.expectRevert(abi.encodeWithSignature("CallerIsNotAuthorized(address)", alice));
+        vm.prank(alice);
+        treasury.push(address(token), 1);
     }
 
     // --- pull ---
@@ -414,6 +457,13 @@ contract TreasuryTest is Test {
         treasury.swap(address(token), address(token), 10 * TOKEN_UNIT, 1);
     }
 
+    function test_swap_onlyKeeper_revertOnVaultShareToken() public {
+        treasury.addKeeper(keeper);
+        vm.expectRevert(Treasury.ReservedToken.selector);
+        vm.prank(keeper);
+        treasury.swap(address(mockVault), address(token), 1, 1);
+    }
+
     // --- getters ---
     function test_getPrice_success() public view {
         (uint256 _latest, uint256 _unitPrice) = treasury.getPrice(address(token));
@@ -451,6 +501,14 @@ contract TreasuryTest is Test {
     function test_whitelistedTokens() public view {
         address[] memory _tokens = treasury.whitelistedTokens();
         assertTrue(_tokens.length > 0);
+    }
+
+    function test_gateway_returnsVusdGateway() public view {
+        assertEq(treasury.gateway(), gateway);
+    }
+
+    function test_owner_returnsVusdOwner() public view {
+        assertEq(treasury.owner(), owner);
     }
 
     function test_withdrawable() public {

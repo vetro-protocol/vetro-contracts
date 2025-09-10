@@ -124,6 +124,16 @@ contract GatewayTest is Test {
         vm.stopPrank();
     }
 
+    function test_deposit_revertIfTokenHasFeeOnTransfer() public {
+        MockERC20(token).setHasFeeOnTransfer(true);
+        uint256 amt = 1_000_000; // 1 token with 6 decimals
+        deal(address(token), address(this), amt);
+        MockERC20(token).approve(address(gateway), amt);
+
+        vm.expectRevert(abi.encodeWithSignature("FeeOnTransferToken(address)", address(token)));
+        gateway.deposit(address(token), amt, 0, address(this));
+    }
+
     // --- mint only owner ---
     function test_mint_onlyOwner() public {
         uint256 amount = 1000e18; // 1000 VUSD
@@ -501,5 +511,41 @@ contract GatewayTest is Test {
         uint256 newFee = 10001;
         vm.expectRevert(abi.encodeWithSignature("InvalidRedeemFee(uint256)", newFee));
         gateway.updateRedeemFee(newFee);
+    }
+
+    function test_maxDeposit() public view {
+        assertEq(gateway.maxDeposit(), type(uint256).max);
+    }
+
+    function test_maxMint() public {
+        // With zero supply
+        gateway.updateMintLimit(100e18);
+        assertEq(gateway.maxMint(), 100e18);
+        // Increase total supply via owner mint
+        gateway.mint(60e18, address(this));
+        assertEq(gateway.maxMint(), 40e18);
+        // Set limit below current supply → zero
+        gateway.updateMintLimit(10e18);
+        assertEq(gateway.maxMint(), 0);
+    }
+
+    function test_maxRedeem() public {
+        // With zero balance
+        assertEq(gateway.maxRedeem(alice), 0);
+        // mint 50 VUSD to alice
+        gateway.mint(50e18, alice);
+        assertEq(gateway.maxRedeem(alice), 50e18);
+    }
+
+    function test_maxWithdraw() public {
+        assertEq(gateway.maxWithdraw(token), 0);
+
+        deal(address(token), address(treasury), 50e18);
+        assertEq(gateway.maxWithdraw(token), 50e18);
+    }
+
+    function test_owner_and_treasury_views() public view {
+        assertEq(gateway.owner(), owner);
+        assertEq(gateway.treasury(), address(treasury));
     }
 }
