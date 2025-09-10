@@ -227,23 +227,6 @@ contract Treasury is ReentrancyGuardTransient {
         swapper = swapper_;
     }
 
-    /**
-     * @notice onlyOwner: Withdraw token from vault and sent tokens to receiver address.
-     * @param tokens_ Array of token addresses, tokens should be supported tokens.
-     * @param receiver_ recipient of tokens being withdrawn
-     */
-    function withdrawAll(address[] memory tokens_, address receiver_) external nonReentrant onlyOwner {
-        if (receiver_ == address(0)) revert AddressIsZero();
-        uint256 _len = tokens_.length;
-        for (uint256 i; i < _len; ++i) {
-            address _token = tokens_[i];
-            if (!_whitelistedTokens.contains(_token)) revert UnsupportedToken(_token);
-            IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[_token].vault);
-            _vault.redeem(_vault.balanceOf(address(this)), receiver_, address(this));
-        }
-        emit WithdrawnAll(tokens_, receiver_);
-    }
-
     /*/////////////////////////////////////////////////////////////
                             onlyGateway
     /////////////////////////////////////////////////////////////*/
