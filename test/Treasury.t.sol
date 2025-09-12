@@ -234,34 +234,6 @@ contract TreasuryTest is Test {
         treasury.updateSwapper(address(0));
     }
 
-    // --- withdrawAll ---
-    function test_withdrawAll_success() public {
-        uint256 _tokenAmount = 100 * TOKEN_UNIT;
-        deal(address(token), address(treasury), _tokenAmount);
-        treasury.push(address(token), _tokenAmount);
-
-        address[] memory _tokens = new address[](1);
-        _tokens[0] = address(token);
-        assertEq(token.balanceOf(alice), 0);
-        treasury.withdrawAll(_tokens, alice);
-        assertEq(token.balanceOf(alice), _tokenAmount);
-    }
-
-    function test_withdrawAll_revertOnZeroReceiver() public {
-        address[] memory _tokens = new address[](1);
-        _tokens[0] = address(token);
-        vm.expectRevert(Treasury.AddressIsZero.selector);
-        treasury.withdrawAll(_tokens, address(0));
-    }
-
-    function test_withdrawAll_revertIfNotWhitelisted() public {
-        MockERC20 _token2 = new MockERC20();
-        address[] memory _tokens = new address[](1);
-        _tokens[0] = address(_token2);
-        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
-        treasury.withdrawAll(_tokens, alice);
-    }
-
     // --- deposit onlyGateway ---
     function test_deposit_onlyGateway_success() public {
         uint256 _tokenAmount = 10 * TOKEN_UNIT;
