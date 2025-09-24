@@ -34,8 +34,8 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     string public constant VERSION = "2.0.0";
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
 
-    IVUSD public immutable vusd;
-    uint8 internal immutable vusdDecimals;
+    IVUSD public immutable VUSD;
+    uint8 internal immutable VUSD_DECIMALS;
 
     /// @dev by default there is no mint fee
     uint256 public mintFee;
@@ -51,9 +51,9 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
 
     constructor(address vusd_, uint256 mintLimit_) {
         if (vusd_ == address(0)) revert AddressIsNull();
-        vusd = IVUSD(vusd_);
+        VUSD = IVUSD(vusd_);
         mintLimit = mintLimit_;
-        vusdDecimals = IERC20Metadata(vusd_).decimals();
+        VUSD_DECIMALS = IERC20Metadata(vusd_).decimals();
     }
 
     modifier onlyOwner() {
@@ -70,7 +70,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
         if (receiver_ == address(0)) revert AddressIsNull();
         uint256 _maxMintable = maxMint();
         if (_maxMintable < amount_) revert ExceededMaxMint(amount_, _maxMintable);
-        vusd.mint(receiver_, amount_);
+        VUSD.mint(receiver_, amount_);
     }
 
     /// @inheritdoc IGateway
@@ -155,14 +155,14 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
      * @dev Returns difference between mint limit and current supply
      */
     function maxMint() public view returns (uint256) {
-        uint256 _totalSupply = vusd.totalSupply();
+        uint256 _totalSupply = VUSD.totalSupply();
         uint256 _mintableLimit = mintLimit;
         return _mintableLimit > _totalSupply ? _mintableLimit - _totalSupply : 0;
     }
 
     /// @inheritdoc IGateway
     function maxRedeem(address owner_) external view returns (uint256) {
-        return vusd.balanceOf(owner_);
+        return VUSD.balanceOf(owner_);
     }
 
     /// @inheritdoc IGateway
@@ -172,7 +172,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function owner() public view returns (address) {
-        return vusd.owner();
+        return VUSD.owner();
     }
 
     /// @inheritdoc IGateway
@@ -196,14 +196,14 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function previewWithdraw(address tokenOut_, uint256 amountOut) public view returns (uint256) {
-        uint256 _oneVUSD = 10 ** vusdDecimals;
-        uint256 _tokensForOneVUSD = _calculateTokenOutput(tokenOut_, _oneVUSD);
-        return amountOut.mulDiv(_oneVUSD, _tokensForOneVUSD, Math.Rounding.Ceil);
+        uint256 _oneVusd = 10 ** VUSD_DECIMALS;
+        uint256 _tokensForOneVusd = _calculateTokenOutput(tokenOut_, _oneVusd);
+        return amountOut.mulDiv(_oneVusd, _tokensForOneVusd, Math.Rounding.Ceil);
     }
 
     /// @inheritdoc IGateway
     function treasury() public view returns (address) {
-        return vusd.treasury();
+        return VUSD.treasury();
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -224,7 +224,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
         uint256 _rawVusdAmount =
             _latestPrice >= _unitPrice ? _amountInAfterFee : _amountInAfterFee.mulDiv(_latestPrice, _unitPrice);
         // convert _rawVusdAmount into vusd decimal
-        return _rawVusdAmount * 10 ** (vusdDecimals - IERC20Metadata(tokenIn_).decimals());
+        return _rawVusdAmount * 10 ** (VUSD_DECIMALS - IERC20Metadata(tokenIn_).decimals());
     }
 
     /**
@@ -241,7 +241,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
         uint256 _rawTokenAmount =
             _latestPrice <= _unitPrice ? _vusdInAfterFee : _vusdInAfterFee.mulDiv(_unitPrice, _latestPrice);
         // convert _rawTokenAmount to token_ decimal
-        return _rawTokenAmount / 10 ** (vusdDecimals - IERC20Metadata(tokenOut_).decimals());
+        return _rawTokenAmount / 10 ** (VUSD_DECIMALS - IERC20Metadata(tokenOut_).decimals());
     }
 
     /**
@@ -260,7 +260,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
         if ((_balanceAfter - _balanceBefore) != amountIn_) revert FeeOnTransferToken(tokenIn_);
 
         ITreasury(_treasury).deposit(tokenIn_, amountIn_);
-        vusd.mint(receiver_, vusdOut_);
+        VUSD.mint(receiver_, vusdOut_);
 
         emit Deposit(tokenIn_, amountIn_, vusdOut_, receiver_);
     }
@@ -272,7 +272,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     function _withdraw(address tokenOut_, uint256 amountOut_, uint256 vusdIn_, address receiver_) private {
         uint256 _maxWithdraw = maxWithdraw(tokenOut_);
         if (amountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(amountOut_, _maxWithdraw);
-        vusd.burnFrom(msg.sender, vusdIn_);
+        VUSD.burnFrom(msg.sender, vusdIn_);
         ITreasury(treasury()).withdraw(tokenOut_, amountOut_, receiver_);
 
         emit Withdraw(tokenOut_, amountOut_, vusdIn_, receiver_);

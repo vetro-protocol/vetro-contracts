@@ -42,7 +42,7 @@ contract GatewayTest is Test {
         treasury.addToWhitelist(token, address(mockVault), address(mockOracle), 1 hours);
     }
 
-    function mintVUSD(address user, uint256 vusdAmount) internal returns (uint256) {
+    function mintVusd(address user, uint256 vusdAmount) internal returns (uint256) {
         uint256 tokenAmount = gateway.previewMint(token, vusdAmount);
         deal(token, user, tokenAmount);
 
@@ -249,7 +249,7 @@ contract GatewayTest is Test {
         gateway.updateRedeemFee(redeemFee);
 
         // Mint VUSD for testing
-        mintVUSD(alice, vusdAmount);
+        mintVusd(alice, vusdAmount);
 
         uint256 expectedToken = gateway.previewRedeem(token, vusdAmount);
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
@@ -272,7 +272,7 @@ contract GatewayTest is Test {
     }
 
     function test_redeem_revertIfRedeemableIsNotEnough() public {
-        uint256 vusdAmount = mintVUSD(bob, 100e18);
+        uint256 vusdAmount = mintVusd(bob, 100e18);
         uint256 redeemable = gateway.previewRedeem(token, vusdAmount);
 
         vm.prank(bob);
@@ -308,7 +308,7 @@ contract GatewayTest is Test {
 
         // Mint VUSD for testing
         uint256 vusdAmount = gateway.previewWithdraw(token, tokenAmount);
-        mintVUSD(alice, vusdAmount);
+        mintVusd(alice, vusdAmount);
 
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
         uint256 vusdBalanceBefore = vusd.balanceOf(alice);
@@ -363,8 +363,8 @@ contract GatewayTest is Test {
 
         // Calculate expected VUSD amount
         (uint256 latestPrice, uint256 unitPrice) = treasury.getPrice(token);
-        uint256 maxBPS = gateway.MAX_BPS();
-        uint256 amountAfterFee = amount.mulDiv((maxBPS - gateway.mintFee()), maxBPS);
+        uint256 maxBps = gateway.MAX_BPS();
+        uint256 amountAfterFee = amount.mulDiv((maxBps - gateway.mintFee()), maxBps);
         uint256 expectedVusd = latestPrice >= unitPrice
             ? parseAmount(amountAfterFee, token, address(vusd))
             : parseAmount(amountAfterFee.mulDiv(latestPrice, unitPrice), token, address(vusd));
@@ -417,8 +417,8 @@ contract GatewayTest is Test {
 
         // Calculate expected token amount
         (uint256 latestPrice, uint256 unitPrice) = treasury.getPrice(token);
-        uint256 maxBPS = gateway.MAX_BPS();
-        uint256 vusdAfterFee = vusdAmount.mulDiv((maxBPS - gateway.redeemFee()), maxBPS);
+        uint256 maxBps = gateway.MAX_BPS();
+        uint256 vusdAfterFee = vusdAmount.mulDiv((maxBps - gateway.redeemFee()), maxBps);
         uint256 expectedToken = latestPrice <= unitPrice
             ? parseAmount(vusdAfterFee, address(vusd), token)
             : parseAmount(vusdAfterFee.mulDiv(unitPrice, latestPrice), address(vusd), token);

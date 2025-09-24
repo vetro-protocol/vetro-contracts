@@ -43,7 +43,7 @@ contract Treasury is ReentrancyGuardTransient {
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public priceTolerance = 100; // 1% based on BPS
 
-    IVUSD public immutable vusd;
+    IVUSD public immutable VUSD;
 
     address public swapper;
 
@@ -77,7 +77,7 @@ contract Treasury is ReentrancyGuardTransient {
 
     constructor(address vusd_) {
         if (vusd_ == address(0)) revert AddressIsZero();
-        vusd = IVUSD(vusd_);
+        VUSD = IVUSD(vusd_);
 
         _keepers.add(msg.sender);
     }
@@ -88,7 +88,7 @@ contract Treasury is ReentrancyGuardTransient {
     }
 
     modifier onlyGateway() {
-        if (msg.sender != vusd.gateway()) revert CallerIsNotAuthorized(msg.sender);
+        if (msg.sender != VUSD.gateway()) revert CallerIsNotAuthorized(msg.sender);
         _;
     }
 
@@ -167,7 +167,7 @@ contract Treasury is ReentrancyGuardTransient {
      */
     function migrate(address newTreasury_) external onlyOwner {
         if (newTreasury_ == address(0)) revert AddressIsZero();
-        if (address(vusd) != address(ITreasury(newTreasury_).vusd())) revert VUSDMismatch();
+        if (address(VUSD) != address(ITreasury(newTreasury_).VUSD())) revert VUSDMismatch();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
             address _token = _whitelistedTokens.at(i);
@@ -333,7 +333,7 @@ contract Treasury is ReentrancyGuardTransient {
                             getter
     /////////////////////////////////////////////////////////////*/
     function gateway() external view returns (address) {
-        return vusd.gateway();
+        return VUSD.gateway();
     }
 
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice) {
@@ -359,7 +359,7 @@ contract Treasury is ReentrancyGuardTransient {
 
     /// @dev Owner is defined in VUSD token contract only
     function owner() public view returns (address) {
-        return vusd.owner();
+        return VUSD.owner();
     }
 
     /// @notice Return total reserve value in USD

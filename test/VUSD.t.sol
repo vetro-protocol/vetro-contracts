@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {VUSD} from "src/VUSD.sol";
 
+/// forge-lint: disable-next-item(erc20-unchecked-transfer)
 contract VUSDTest is Test {
     using SafeERC20 for IERC20;
 

@@ -64,17 +64,10 @@ interface IGateway {
     /**
      * View Functions
      */
-    // Constants
-    /// @notice Returns contract name
-    function NAME() external view returns (string memory);
-    /// @notice Returns contract version
-    function VERSION() external view returns (string memory);
-    /// @notice Returns maximum basis points (100%)
-    function MAX_BPS() external view returns (uint256);
-
     // State getters
     /// @notice Returns VUSD token contract
-    function vusd() external view returns (IVUSD);
+    /// forge-lint: disable-next-line(mixed-case-function)
+    function VUSD() external view returns (IVUSD);
 
     /// @notice Returns current mint fee in basis points
     function mintFee() external view returns (uint256);
