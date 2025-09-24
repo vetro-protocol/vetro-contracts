@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/// forge-lint: disable-next-item(erc20-unchecked-transfer)
 contract MockSwapper {
     function swapExactInput(
         address tokenIn_,

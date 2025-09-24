@@ -152,8 +152,8 @@ contract TreasuryTest is Test {
     }
 
     function test_migrate_revertOnVUSDMismatch() public {
-        VUSD _fakeVUSD = new VUSD(owner);
-        Treasury _newTreasury = new Treasury(address(_fakeVUSD));
+        VUSD _fakeVusd = new VUSD(owner);
+        Treasury _newTreasury = new Treasury(address(_fakeVusd));
         vm.expectRevert(Treasury.VUSDMismatch.selector);
         treasury.migrate(address(_newTreasury));
     }
