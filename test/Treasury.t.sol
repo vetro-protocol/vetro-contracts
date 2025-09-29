@@ -26,6 +26,8 @@ contract TreasuryTest is Test {
     uint256 constant TOKEN_UNIT = 1e6; // 6 decimals
     uint256 constant VAULT_UNIT = 1e18; // 18 decimals
 
+    bytes32 keeperRole;
+
     function setUp() public {
         owner = address(this);
         vusd = new VUSD(owner);
@@ -37,6 +39,7 @@ contract TreasuryTest is Test {
         mockOracle = new MockChainlinkOracle(1e8); // $1
         // Add token to whitelist
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
+        keeperRole = treasury.KEEPER_ROLE();
     }
 
     // --- addToWhitelist ---
@@ -96,41 +99,6 @@ contract TreasuryTest is Test {
         assertTrue(mockVault.balanceOf(address(treasury)) > 0);
         vm.expectRevert(Treasury.BalanceShouldBeZero.selector);
         treasury.removeFromWhitelist(address(token));
-    }
-
-    // --- addKeeper ---
-    function test_addKeeper_success() public {
-        treasury.addKeeper(keeper);
-        assertTrue(treasury.isKeeper(keeper));
-    }
-
-    function test_addKeeper_revertOnZeroAddress() public {
-        vm.expectRevert(Treasury.AddressIsZero.selector);
-        treasury.addKeeper(address(0));
-    }
-
-    function test_addKeeper_revertIfCallerIsNotOwner() public {
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotAuthorized(address)", alice));
-        vm.prank(alice);
-        treasury.addKeeper(makeAddr("another"));
-    }
-
-    function test_addKeeper_revertIfAlreadyAdded() public {
-        treasury.addKeeper(keeper);
-        vm.expectRevert(Treasury.AddToListFailed.selector);
-        treasury.addKeeper(keeper);
-    }
-
-    // --- removeKeeper ---
-    function test_removeKeeper_success() public {
-        treasury.addKeeper(keeper);
-        treasury.removeKeeper(keeper);
-        assertFalse(treasury.isKeeper(keeper));
-    }
-
-    function test_removeKeeper_revertIfNotPresent() public {
-        vm.expectRevert(Treasury.RemoveFromListFailed.selector);
-        treasury.removeKeeper(keeper);
     }
 
     // --- migrate ---
@@ -315,7 +283,7 @@ contract TreasuryTest is Test {
     // --- push ---
     function test_push_onlyKeeper_success() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT;
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         deal(address(token), address(treasury), _tokenAmount);
         treasury.push(address(token), _tokenAmount);
         assertEq(mockVault.balanceOf(address(treasury)), _tokenAmount * VAULT_UNIT / TOKEN_UNIT);
@@ -324,7 +292,7 @@ contract TreasuryTest is Test {
     function test_push_onlyKeeper_maxAmountDepositsAllBalance() public {
         uint256 _tokenAmount = 123 * TOKEN_UNIT;
         deal(address(token), address(treasury), _tokenAmount);
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         vm.prank(keeper);
         treasury.push(address(token), type(uint256).max);
         assertEq(mockVault.balanceOf(address(treasury)), _tokenAmount * VAULT_UNIT / TOKEN_UNIT);
@@ -332,7 +300,7 @@ contract TreasuryTest is Test {
     }
 
     function test_push_onlyKeeper_revertIfNotWhitelisted() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
@@ -340,7 +308,7 @@ contract TreasuryTest is Test {
     }
 
     function test_onlyKeeper_revertIfCallerIsNotKeeper() public {
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotAuthorized(address)", alice));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, keeperRole));
         vm.prank(alice);
         treasury.push(address(token), 1);
     }
@@ -348,7 +316,7 @@ contract TreasuryTest is Test {
     // --- pull ---
     function test_pull_onlyKeeper_success() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT;
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         deal(address(token), address(treasury), _tokenAmount);
         treasury.push(address(token), _tokenAmount);
         assertEq(token.balanceOf(address(treasury)), 0);
@@ -359,7 +327,7 @@ contract TreasuryTest is Test {
     }
 
     function test_pull_onlyKeeper_revertIfNotWhitelisted() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
@@ -368,7 +336,7 @@ contract TreasuryTest is Test {
 
     // --- toggleDepositActive ---
     function test_toggleDepositActive_onlyKeeper_success() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         (,,, bool depositActiveBefore,,) = treasury.tokenConfig(address(token));
         vm.prank(keeper);
         treasury.toggleDepositActive(address(token));
@@ -378,7 +346,7 @@ contract TreasuryTest is Test {
     }
 
     function test_toggleDepositActive_onlyKeeper_revertIfNotWhitelisted() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
@@ -387,7 +355,7 @@ contract TreasuryTest is Test {
 
     // --- toggleWithdrawActive ---
     function test_toggleWithdrawActive_onlyKeeper_success() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         (,,,, bool withdrawActiveBefore,) = treasury.tokenConfig(address(token));
         vm.prank(keeper);
         treasury.toggleWithdrawActive(address(token));
@@ -396,7 +364,7 @@ contract TreasuryTest is Test {
     }
 
     function test_toggleWithdrawActive_onlyKeeper_revertIfNotWhitelisted() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
@@ -415,7 +383,7 @@ contract TreasuryTest is Test {
 
         assertEq(token.balanceOf(address(treasury)), 0);
         uint256 _minAmountOut = 500 * TOKEN_UNIT;
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         vm.prank(keeper);
         treasury.swap(address(_other), address(token), _amountIn, _minAmountOut);
 
@@ -423,14 +391,14 @@ contract TreasuryTest is Test {
     }
 
     function test_swap_onlyKeeper_revertIfReservedToken() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         vm.expectRevert(Treasury.ReservedToken.selector);
         vm.prank(keeper);
         treasury.swap(address(token), address(token), 10 * TOKEN_UNIT, 1);
     }
 
     function test_swap_onlyKeeper_revertOnVaultShareToken() public {
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         vm.expectRevert(Treasury.ReservedToken.selector);
         vm.prank(keeper);
         treasury.swap(address(mockVault), address(token), 1, 1);
@@ -465,11 +433,6 @@ contract TreasuryTest is Test {
         assertTrue(treasury.isWhitelistedToken(address(token)));
     }
 
-    function test_keepers() public view {
-        address[] memory _keepers = treasury.keepers();
-        assertTrue(_keepers.length > 0);
-    }
-
     function test_whitelistedTokens() public view {
         address[] memory _tokens = treasury.whitelistedTokens();
         assertTrue(_tokens.length > 0);
@@ -485,7 +448,7 @@ contract TreasuryTest is Test {
 
     function test_withdrawable() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT;
-        treasury.addKeeper(keeper);
+        treasury.grantRole(keeperRole, keeper);
         deal(address(token), address(treasury), _tokenAmount);
         vm.prank(keeper);
         // push half amount
