@@ -2,6 +2,7 @@
 
 pragma solidity 0.8.30;
 
+import {AccessControlEnumerable} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -15,7 +16,7 @@ import {IVUSD} from "./interfaces/IVUSD.sol";
 import {ITreasury} from "./interfaces/ITreasury.sol";
 
 /// @title VUSD Treasury
-contract Treasury is ReentrancyGuardTransient {
+contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -39,6 +40,8 @@ contract Treasury is ReentrancyGuardTransient {
 
     string public constant NAME = "VUSD-Treasury";
     string public constant VERSION = "2.0.0";
+    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
+    bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
 
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public priceTolerance = 100; // 1% based on BPS
@@ -59,10 +62,7 @@ contract Treasury is ReentrancyGuardTransient {
     mapping(address token => TokenConfig) public tokenConfig;
 
     EnumerableSet.AddressSet private _whitelistedTokens;
-    EnumerableSet.AddressSet private _keepers;
 
-    event AddedKeeper(address indexed keeper);
-    event RemovedKeeper(address indexed keeper);
     event AddedToWhitelist(address indexed token, address vault, address oracle);
     event RemovedFromWhitelist(address indexed token);
     event Migrated(address indexed newTreasury);
@@ -79,12 +79,8 @@ contract Treasury is ReentrancyGuardTransient {
         if (vusd_ == address(0)) revert AddressIsZero();
         VUSD = IVUSD(vusd_);
 
-        _keepers.add(msg.sender);
-    }
-
-    modifier onlyKeeper() {
-        if (!_keepers.contains(msg.sender)) revert CallerIsNotAuthorized(msg.sender);
-        _;
+        _grantRole(DEFAULT_ADMIN_ROLE, owner());
+        _grantRole(KEEPER_ROLE, msg.sender);
     }
 
     modifier onlyGateway() {
@@ -140,25 +136,6 @@ contract Treasury is ReentrancyGuardTransient {
         IERC20(token_).forceApprove(tokenConfig[token_].vault, 0);
         delete tokenConfig[token_];
         emit RemovedFromWhitelist(token_);
-    }
-
-    /**
-     * @notice onlyOwner: Add given address in keepers list.
-     * @param keeperAddress_ keeper address to add.
-     */
-    function addKeeper(address keeperAddress_) external onlyOwner {
-        if (keeperAddress_ == address(0)) revert AddressIsZero();
-        if (!_keepers.add(keeperAddress_)) revert AddToListFailed();
-        emit AddedKeeper(keeperAddress_);
-    }
-
-    /**
-     * @notice onlyOwner: Remove given address from keepers list.
-     * @param keeperAddress_ keeper address to remove.
-     */
-    function removeKeeper(address keeperAddress_) external onlyOwner {
-        if (!_keepers.remove(keeperAddress_)) revert RemoveFromListFailed();
-        emit RemovedKeeper(keeperAddress_);
     }
 
     /**
@@ -271,16 +248,16 @@ contract Treasury is ReentrancyGuardTransient {
         }
     }
     /*/////////////////////////////////////////////////////////////
-                            onlyKeeper
+                            KEEPER_ROLE
     /////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice onlyKeeper: Deposit token into the vault
+     * @notice KEEPER_ROLE: Deposit token into the vault
      * @dev Keeper is allowed to deposit even if depositActive is false.
      * @param token_ token to deposit into the vault
      * @param amount_ token amount to deposit
      */
-    function push(address token_, uint256 amount_) external onlyKeeper {
+    function push(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (amount_ == type(uint256).max) {
             amount_ = IERC20(token_).balanceOf(address(this));
@@ -291,34 +268,37 @@ contract Treasury is ReentrancyGuardTransient {
     }
 
     /**
-     * @notice onlyKeeper: Withdraw token from vault.
+     * @notice KEEPER_ROLE: Withdraw token from vault.
      * @dev Keeper is allowed to withdraw even if withdrawActive is false.
      * @dev Keeper can withdraw tokens at treasury address only.
      * @param token_ token to withdraw from vault
      * @param amount_ token amount to withdraw
      */
-    function pull(address token_, uint256 amount_) external onlyKeeper {
+    function pull(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (amount_ > 0) {
             IMorphoVaultV2(tokenConfig[token_].vault).withdraw(amount_, address(this), address(this));
         }
     }
 
-    function toggleDepositActive(address token_) external onlyKeeper {
+    function toggleDepositActive(address token_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         bool _current = tokenConfig[token_].depositActive;
         emit ToggledDepositActive(!_current);
         tokenConfig[token_].depositActive = !_current;
     }
 
-    function toggleWithdrawActive(address token_) external onlyKeeper {
+    function toggleWithdrawActive(address token_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         bool _current = tokenConfig[token_].withdrawActive;
         emit ToggledWithdrawActive(!_current);
         tokenConfig[token_].withdrawActive = !_current;
     }
 
-    function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_) external onlyKeeper {
+    function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)
+        external
+        onlyRole(KEEPER_ROLE)
+    {
         if (_whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
@@ -342,19 +322,9 @@ contract Treasury is ReentrancyGuardTransient {
         return _getPrice(_oracle, tokenConfig[token_].stalePeriod, priceTolerance);
     }
 
-    /// @notice Returns whether given account is keeper
-    function isKeeper(address account_) external view returns (bool) {
-        return _keepers.contains(account_);
-    }
-
     /// @notice Returns whether given token is whitelisted
     function isWhitelistedToken(address token_) external view returns (bool) {
         return _whitelistedTokens.contains(token_);
-    }
-
-    /// @notice Return list of keepers
-    function keepers() external view returns (address[] memory) {
-        return _keepers.values();
     }
 
     /// @dev Owner is defined in VUSD token contract only
