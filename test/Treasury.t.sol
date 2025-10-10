@@ -27,6 +27,7 @@ contract TreasuryTest is Test {
     uint256 constant VAULT_UNIT = 1e18; // 18 decimals
 
     bytes32 keeperRole;
+    bytes32 ummRole;
 
     function setUp() public {
         owner = address(this);
@@ -40,6 +41,7 @@ contract TreasuryTest is Test {
         // Add token to whitelist
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
         keeperRole = treasury.KEEPER_ROLE();
+        ummRole = treasury.UMM_ROLE();
     }
 
     // --- addToWhitelist ---
@@ -516,5 +518,100 @@ contract TreasuryTest is Test {
 
     function test_reserve_isZero_whenNoTokens() public view {
         assertEq(treasury.reserve(), 0);
+    }
+
+    // --- withdrawExcess ---
+    function test_withdrawExcess() public {
+        address umm = makeAddr("UMM");
+        treasury.grantRole(ummRole, umm);
+
+        // Mint 800 VUSD
+        vm.prank(gateway);
+        vusd.mint(alice, 800e18);
+        // Add 1000 tokens for treasury to create excess of 200 tokens
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+
+        vm.prank(umm);
+        treasury.withdrawExcess(address(token));
+
+        assertEq(token.balanceOf(umm), 200 * TOKEN_UNIT);
+        assertEq(token.balanceOf(address(treasury)), 800 * TOKEN_UNIT);
+    }
+
+    function test_withdrawExcess_withVaultBalance() public {
+        address umm = makeAddr("UMM");
+        treasury.grantRole(ummRole, umm);
+
+        // Mint 600 VUSD
+        vm.prank(gateway);
+        vusd.mint(alice, 600e18);
+        // Add 1000 tokens in treasury creating excess of 400.
+        uint256 tokenAmount = 1000 * TOKEN_UNIT;
+        deal(address(token), address(treasury), tokenAmount);
+        // Push 900 tokens into the vault and keep 100 in treasury
+        treasury.push(address(token), tokenAmount - (100 * TOKEN_UNIT));
+
+        vm.prank(umm);
+        treasury.withdrawExcess(address(token));
+
+        assertEq(token.balanceOf(umm), 400 * TOKEN_UNIT);
+        assertEq(token.balanceOf(address(treasury)), 0);
+        assertEq(token.balanceOf(address(mockVault)), 600 * TOKEN_UNIT);
+        assertEq(treasury.withdrawable(address(token)), 600 * TOKEN_UNIT);
+    }
+
+    function test_withdrawExcess_noExcess() public {
+        address umm = makeAddr("UMM");
+        treasury.grantRole(ummRole, umm);
+
+        // No excess tokens
+        vm.prank(gateway);
+        vusd.mint(owner, 1000e18);
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+
+        uint256 balanceBefore = token.balanceOf(address(treasury));
+
+        vm.prank(umm);
+        treasury.withdrawExcess(address(token));
+
+        // No tokens should be withdrawn
+        assertEq(token.balanceOf(umm), 0);
+        assertEq(token.balanceOf(address(treasury)), balanceBefore);
+    }
+
+    function test_withdrawExcess_withPriceChange() public {
+        treasury.grantRole(ummRole, alice);
+
+        // Mint 900 VUSD
+        vm.prank(gateway);
+        vusd.mint(alice, 900e18);
+        // Set collateral price to $0.9
+        mockOracle.updatePrice(0.9e8);
+        treasury.updatePriceTolerance(1000);
+        // Add 1000 tokens to the treasury, creating no excess due to price
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+
+        // Alice has UMM_ROLE
+        vm.prank(alice);
+        treasury.withdrawExcess(address(token));
+
+        assertEq(token.balanceOf(alice), 0);
+    }
+
+    function test_withdrawExcess_revertIfNotUMM() public {
+        vm.expectRevert(
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, treasury.UMM_ROLE())
+        );
+        vm.prank(alice);
+        treasury.withdrawExcess(address(token));
+    }
+
+    function test_withdrawExcess_revertIfNotWhitelisted() public {
+        treasury.grantRole(ummRole, alice);
+
+        MockERC20 invalidToken = new MockERC20();
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", address(invalidToken)));
+        vm.prank(alice);
+        treasury.withdrawExcess(address(invalidToken));
     }
 }
