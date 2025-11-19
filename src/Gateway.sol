@@ -132,20 +132,24 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     function redeem(address tokenOut_, uint256 vusdIn_, uint256 minAmountOut_, address receiver_)
         external
         nonReentrant
+        returns (uint256)
     {
         uint256 _tokenAmount = previewRedeem(tokenOut_, vusdIn_);
         if (_tokenAmount < minAmountOut_) revert RedeemableIsLessThanMinimum(_tokenAmount, minAmountOut_);
         _withdraw(tokenOut_, _tokenAmount, vusdIn_, receiver_);
+        return _tokenAmount;
     }
 
     /// @inheritdoc IGateway
     function withdraw(address tokenOut_, uint256 amountOut_, uint256 maxVusdIn_, address receiver_)
         external
         nonReentrant
+        returns (uint256)
     {
         uint256 _vusdToBurn = previewWithdraw(tokenOut_, amountOut_);
         if (_vusdToBurn > maxVusdIn_) revert VusdToBurnIsHigherThanMax(_vusdToBurn, maxVusdIn_);
         _withdraw(tokenOut_, amountOut_, _vusdToBurn, receiver_);
+        return _vusdToBurn;
     }
 
     /*/////////////////////////////////////////////////////////////

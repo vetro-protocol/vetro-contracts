@@ -40,26 +40,32 @@ interface IGateway {
     /// @notice Mints exact VUSD amount by depositing tokens
     /// @param tokenIn_ Token to deposit
     /// @param vusdOut_ Exact VUSD amount to mint
-    /// @param maxAmountIn_ Maximum tokens to spend
+    /// @param maxAmountIn_ Maximum tokens to deposit
     /// @param receiver_ Address to receive the VUSD
-    /// @return Amount of tokens spent
+    /// @return Amount of tokens deposited
     function mint(address tokenIn_, uint256 vusdOut_, uint256 maxAmountIn_, address receiver_)
         external
         returns (uint256);
 
     /// @notice Redeems VUSD for exact token amount
     /// @param tokenOut_ Token to receive
-    /// @param vusdIn_ VUSD amount to spend
+    /// @param vusdIn_ VUSD amount to burn
     /// @param minAmountOut_ Minimum tokens to receive
     /// @param receiver_ Address to receive the tokens
-    function redeem(address tokenOut_, uint256 vusdIn_, uint256 minAmountOut_, address receiver_) external;
+    /// @return Amount of tokens received
+    function redeem(address tokenOut_, uint256 vusdIn_, uint256 minAmountOut_, address receiver_)
+        external
+        returns (uint256);
 
     /// @notice Withdraws exact token amount by burning VUSD
     /// @param tokenOut_ Token to receive
     /// @param amountOut_ Exact token amount to receive
-    /// @param maxVusdIn_ Maximum VUSD to spend
+    /// @param maxVusdIn_ Maximum VUSD to burn
     /// @param receiver_ Address to receive the tokens
-    function withdraw(address tokenOut_, uint256 amountOut_, uint256 maxVusdIn_, address receiver_) external;
+    /// @return Amount of VUSD burnt
+    function withdraw(address tokenOut_, uint256 amountOut_, uint256 maxVusdIn_, address receiver_)
+        external
+        returns (uint256);
 
     /**
      * View Functions

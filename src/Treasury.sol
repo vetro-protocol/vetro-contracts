@@ -248,6 +248,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
             IERC4626(config.vault).withdraw(amount_, tokenReceiver_, address(this));
         }
     }
+
     /*/////////////////////////////////////////////////////////////
                             KEEPER_ROLE
     /////////////////////////////////////////////////////////////*/
@@ -299,6 +300,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)
         external
         onlyRole(KEEPER_ROLE)
+        returns (uint256)
     {
         if (_whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
         uint256 _len = _whitelistedTokens.length();
@@ -306,8 +308,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
             if (tokenConfig[_whitelistedTokens.at(i)].vault == tokenIn_) revert ReservedToken();
         }
         IERC20(tokenIn_).forceApprove(swapper, amountIn_);
-        ISwapper(swapper).swapExactInput(tokenIn_, tokenOut_, amountIn_, minAmountOut_, address(this));
         emit Swapped(tokenIn_, tokenOut_, amountIn_);
+        return ISwapper(swapper).swapExactInput(tokenIn_, tokenOut_, amountIn_, minAmountOut_, address(this));
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -319,13 +321,13 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
      * Note: As treasury reserve is in multiple tokens, there is no guarantee
      * that this function will withdraw all of the excess in given token.
      */
-    function harvest(address token_) external onlyRole(UMM_ROLE) nonReentrant {
+    function harvest(address token_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
 
         // Compute excess reserve in 18-decimal USD
         uint256 _supply = VUSD.totalSupply();
         uint256 _reserve = reserve();
-        if (_reserve <= _supply) return; // no excess
+        if (_reserve <= _supply) return 0; // no excess
         uint256 _excessUSD = _reserve - _supply;
 
         // Get oracle price of token_
@@ -334,14 +336,14 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
 
         uint256 _excessInTokenDecimals = _excessUSD / (10 ** (18 - tokenConfig[token_].decimals));
         uint256 _excess = _excessInTokenDecimals.mulDiv(unitPrice, price);
-        if (_excess == 0) return;
+        if (_excess == 0) return 0;
 
         uint256 _balance = IERC20(token_).balanceOf(address(this));
         // If we have enough balance to cover excess then send tokens and return
         if (_balance >= _excess) {
             IERC20(token_).safeTransfer(msg.sender, _excess);
             emit ExcessWithdrawn(token_, _excess);
-            return;
+            return _excess;
         }
 
         // Send what we have, then withdraw remainder from vault
@@ -356,7 +358,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         if (_toWithdraw > 0) {
             _vault.withdraw(_toWithdraw, msg.sender, address(this));
         }
-        emit ExcessWithdrawn(token_, _toWithdraw + _balance);
+        uint256 _withdrawn = _toWithdraw + _balance;
+        emit ExcessWithdrawn(token_, _withdrawn);
+        return _withdrawn;
     }
 
     /*/////////////////////////////////////////////////////////////
