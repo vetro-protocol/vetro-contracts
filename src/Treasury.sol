@@ -9,7 +9,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import {IMorphoVaultV2} from "./interfaces/morpho/IMorphoVaultV2.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IAggregatorV3} from "./interfaces/chainlink/IAggregatorV3.sol";
 import {ISwapper} from "./interfaces/bloq/ISwapper.sol";
 import {IVUSD} from "./interfaces/IVUSD.sol";
@@ -109,7 +109,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         if (stalePeriod_ == 0) revert InvalidStalePeriod();
         uint8 _decimals = IERC20Metadata(token_).decimals();
         if (_decimals > 18) revert InvalidTokenDecimals(_decimals);
-        if (token_ != IMorphoVaultV2(vault_).asset()) revert AssetMismatch();
+        if (token_ != IERC4626(vault_).asset()) revert AssetMismatch();
 
         if (!_whitelistedTokens.add(token_)) revert AddToListFailed();
         tokenConfig[token_] = TokenConfig({
@@ -132,7 +132,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
      */
     function removeFromWhitelist(address token_) external onlyOwner {
         if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
-        IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[token_].vault);
+        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
         if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
         IERC20(token_).forceApprove(tokenConfig[token_].vault, 0);
         delete tokenConfig[token_];
@@ -219,7 +219,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (!tokenConfig[token_].depositActive) revert DepositIsPaused(token_);
 
-        IMorphoVaultV2(tokenConfig[token_].vault).deposit(amount_, address(this));
+        IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this));
     }
 
     /**
@@ -245,7 +245,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
                 IERC20(token_).safeTransfer(tokenReceiver_, _tokenBalance);
                 amount_ -= _tokenBalance;
             }
-            IMorphoVaultV2(config.vault).withdraw(amount_, tokenReceiver_, address(this));
+            IERC4626(config.vault).withdraw(amount_, tokenReceiver_, address(this));
         }
     }
     /*/////////////////////////////////////////////////////////////
@@ -264,7 +264,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
             amount_ = IERC20(token_).balanceOf(address(this));
         }
         if (amount_ > 0) {
-            IMorphoVaultV2(tokenConfig[token_].vault).deposit(amount_, address(this));
+            IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this));
         }
     }
 
@@ -278,7 +278,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     function pull(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (amount_ > 0) {
-            IMorphoVaultV2(tokenConfig[token_].vault).withdraw(amount_, address(this), address(this));
+            IERC4626(tokenConfig[token_].vault).withdraw(amount_, address(this), address(this));
         }
     }
 
@@ -350,7 +350,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
             _excess -= _balance;
         }
 
-        IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[token_].vault);
+        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
         uint256 _assetsInVault = _vault.convertToAssets(_vault.balanceOf(address(this)));
         uint256 _toWithdraw = Math.min(_excess, _assetsInVault);
         if (_toWithdraw > 0) {
@@ -390,7 +390,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
 
         for (uint256 i; i < _len;) {
             address _token = _whitelistedTokens.at(i);
-            IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[_token].vault);
+            IERC4626 _vault = IERC4626(tokenConfig[_token].vault);
             uint256 _shares = _vault.balanceOf(address(this));
             uint256 _balance = IERC20(_token).balanceOf(address(this));
             if (_shares > 0) {
@@ -424,7 +424,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
      * @param token_ token address
      */
     function withdrawable(address token_) external view returns (uint256) {
-        IMorphoVaultV2 _vault = IMorphoVaultV2(tokenConfig[token_].vault);
+        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
         // Token is not supported
         if (address(_vault) == address(0)) return 0;
 
