@@ -6,7 +6,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Treasury} from "src/Treasury.sol";
 import {VUSD} from "src/VUSD.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
-import {MockMorphoVaultV2} from "test/mocks/MockMorphoVaultV2.sol";
+import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockSwapper} from "test/mocks/MockSwapper.sol";
 
@@ -16,7 +16,7 @@ contract TreasuryTest is Test {
     Treasury treasury;
     VUSD vusd;
     MockERC20 token;
-    MockMorphoVaultV2 mockVault;
+    MockYieldVault mockVault;
     MockChainlinkOracle mockOracle;
     address owner;
     address keeper = makeAddr("keeper");
@@ -36,7 +36,7 @@ contract TreasuryTest is Test {
         vusd.updateTreasury(address(treasury));
         vusd.updateGateway(gateway);
         token = new MockERC20();
-        mockVault = new MockMorphoVaultV2(address(token));
+        mockVault = new MockYieldVault(address(token));
         mockOracle = new MockChainlinkOracle(1e8); // $1
         // Add token to whitelist
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
@@ -47,7 +47,7 @@ contract TreasuryTest is Test {
     // --- addToWhitelist ---
     function test_addToWhitelist_success() public {
         MockERC20 _token2 = new MockERC20();
-        MockMorphoVaultV2 _vault2 = new MockMorphoVaultV2(address(_token2));
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
         MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8);
         treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
         assertTrue(treasury.isWhitelistedToken(address(_token2)));
@@ -492,7 +492,7 @@ contract TreasuryTest is Test {
         // 2. Whitelist a new token with 18 decimals
         MockERC20 _token2 = new MockERC20();
         _token2.setDecimals(18);
-        MockMorphoVaultV2 _vault2 = new MockMorphoVaultV2(address(_token2));
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
         MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8); // $1
         treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
 
@@ -520,8 +520,8 @@ contract TreasuryTest is Test {
         assertEq(treasury.reserve(), 0);
     }
 
-    // --- withdrawExcess ---
-    function test_withdrawExcess() public {
+    // --- harvest ---
+    function test_harvest() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
@@ -532,13 +532,13 @@ contract TreasuryTest is Test {
         deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
 
         vm.prank(umm);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         assertEq(token.balanceOf(umm), 200 * TOKEN_UNIT);
         assertEq(token.balanceOf(address(treasury)), 800 * TOKEN_UNIT);
     }
 
-    function test_withdrawExcess_withVaultBalance() public {
+    function test_harvest_withVaultBalance() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
@@ -552,7 +552,7 @@ contract TreasuryTest is Test {
         treasury.push(address(token), tokenAmount - (100 * TOKEN_UNIT));
 
         vm.prank(umm);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         assertEq(token.balanceOf(umm), 400 * TOKEN_UNIT);
         assertEq(token.balanceOf(address(treasury)), 0);
@@ -560,7 +560,7 @@ contract TreasuryTest is Test {
         assertEq(treasury.withdrawable(address(token)), 600 * TOKEN_UNIT);
     }
 
-    function test_withdrawExcess_noExcess() public {
+    function test_harvest_noExcess() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
@@ -572,14 +572,14 @@ contract TreasuryTest is Test {
         uint256 balanceBefore = token.balanceOf(address(treasury));
 
         vm.prank(umm);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         // No tokens should be withdrawn
         assertEq(token.balanceOf(umm), 0);
         assertEq(token.balanceOf(address(treasury)), balanceBefore);
     }
 
-    function test_withdrawExcess_withPriceChange() public {
+    function test_harvest_withPriceChange() public {
         treasury.grantRole(ummRole, alice);
 
         // Mint 900 VUSD
@@ -593,25 +593,25 @@ contract TreasuryTest is Test {
 
         // Alice has UMM_ROLE
         vm.prank(alice);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         assertEq(token.balanceOf(alice), 0);
     }
 
-    function test_withdrawExcess_revertIfNotUMM() public {
+    function test_harvest_revertIfNotUMM() public {
         vm.expectRevert(
             abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, treasury.UMM_ROLE())
         );
         vm.prank(alice);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
     }
 
-    function test_withdrawExcess_revertIfNotWhitelisted() public {
+    function test_harvest_revertIfNotWhitelisted() public {
         treasury.grantRole(ummRole, alice);
 
         MockERC20 invalidToken = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", address(invalidToken)));
         vm.prank(alice);
-        treasury.withdrawExcess(address(invalidToken));
+        treasury.harvest(address(invalidToken));
     }
 }
