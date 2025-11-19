@@ -17,6 +17,7 @@ interface ITreasury {
     function gateway() external view returns (address);
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice);
     function isWhitelistedToken(address token_) external view returns (bool);
+    function reserve() external view returns (uint256 _reserve);
     /// forge-lint: disable-next-line(mixed-case-function)
     function VUSD() external view returns (IVUSD);
     function withdrawable(address token_) external view returns (uint256);

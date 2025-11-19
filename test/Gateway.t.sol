@@ -136,6 +136,9 @@ contract GatewayTest is Test {
 
     // --- mint only owner ---
     function test_mint_onlyOwner() public {
+        // add tokens in Treasury to build reserve. Token has 6 decimals.
+        deal(address(token), address(treasury), 10000e6);
+
         uint256 amount = 1000e18; // 1000 VUSD
         uint256 initialSupply = vusd.totalSupply();
         assertEq(vusd.balanceOf(bob), 0, "Incorrect VUSD balance");
@@ -150,14 +153,38 @@ contract GatewayTest is Test {
         gateway.mint(100e18, address(0));
     }
 
-    function test_mint_onlyOwner_revertItNotOwner() public {
+    function test_mint_onlyOwner_revertIfNotOwner() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", alice));
         gateway.mint(100e18, alice);
     }
 
-    function test_mint_onlyOwner_revertItExceededMaxMint() public {
+    function test_mint_onlyOwner_revertIfNoExcessReserve() public {
         mockOracle.updatePrice(1e8);
+        // mint 50 VUSD
+        vm.prank(address(gateway));
+        vusd.mint(alice, 50e18);
+        // add 40 tokens in Treasury to build reserve. Token has 6 decimals.
+        deal(address(token), address(treasury), 40e6);
+
+        vm.expectRevert(abi.encodeWithSignature("NoExcessReserve(uint256,uint256)", 40e18, 50e18));
+        gateway.mint(1e18, bob);
+    }
+
+    function test_mint_onlyOwner_revertIfExceededExcessReserve() public {
+        mockOracle.updatePrice(1e8);
+        // add tokens in Treasury to build reserve. Token has 6 decimals.
+        deal(address(token), address(treasury), 100e6);
+
+        vm.expectRevert(abi.encodeWithSignature("ExceededExcessReserve(uint256,uint256)", 101e18, 100e18));
+        gateway.mint(101e18, bob);
+    }
+
+    function test_mint_onlyOwner_revertIfExceededMaxMint() public {
+        mockOracle.updatePrice(1e8);
+        // add tokens in Treasury to build reserve. Token has 6 decimals.
+        deal(address(token), address(treasury), 200e6);
+
         // update mint limit to 100 VUSD
         gateway.updateMintLimit(100e18);
 
@@ -284,8 +311,9 @@ contract GatewayTest is Test {
 
     function test_redeem_revertIfExceededMaxWithdraw() public {
         uint256 vusdAmount = 100e18;
-        // mint by owner, it is not backed by collateral
-        gateway.mint(vusdAmount, bob);
+        // mint vusd directly, it is not backed by collateral
+        vm.prank(address(gateway));
+        vusd.mint(bob, vusdAmount);
 
         uint256 tokenAmount = gateway.previewRedeem(token, vusdAmount);
         uint256 maxWithdraw = gateway.maxWithdraw(token);
@@ -522,7 +550,8 @@ contract GatewayTest is Test {
         gateway.updateMintLimit(100e18);
         assertEq(gateway.maxMint(), 100e18);
         // Increase total supply via owner mint
-        gateway.mint(60e18, address(this));
+        vm.prank(address(gateway));
+        vusd.mint(address(this), 60e18);
         assertEq(gateway.maxMint(), 40e18);
         // Set limit below current supply → zero
         gateway.updateMintLimit(10e18);
@@ -533,7 +562,8 @@ contract GatewayTest is Test {
         // With zero balance
         assertEq(gateway.maxRedeem(alice), 0);
         // mint 50 VUSD to alice
-        gateway.mint(50e18, alice);
+        vm.prank(address(gateway));
+        vusd.mint(alice, 50e18);
         assertEq(gateway.maxRedeem(alice), 50e18);
     }
 
