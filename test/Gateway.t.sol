@@ -12,6 +12,7 @@ import {VUSD} from "src/VUSD.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockMorphoVaultV2} from "test/mocks/MockMorphoVaultV2.sol";
+import {console} from "forge-std/console.sol";
 
 contract GatewayTest is Test {
     using SafeERC20 for IERC20;
@@ -33,7 +34,7 @@ contract GatewayTest is Test {
         treasury = new Treasury(address(vusd));
         vusd.updateTreasury(address(treasury));
 
-        gateway = new Gateway(address(vusd), type(uint256).max);
+        gateway = new Gateway(address(vusd), type(uint256).max, owner);
         vusd.updateGateway(address(gateway));
 
         token = address(new MockERC20());
@@ -45,6 +46,7 @@ contract GatewayTest is Test {
     function mintVusd(address user, uint256 vusdAmount) internal returns (uint256) {
         uint256 tokenAmount = gateway.previewMint(token, vusdAmount);
         deal(token, user, tokenAmount);
+        console.logAddress(token);
 
         vm.startPrank(user);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
@@ -139,6 +141,8 @@ contract GatewayTest is Test {
         uint256 amount = 1000e18; // 1000 VUSD
         uint256 initialSupply = vusd.totalSupply();
         assertEq(vusd.balanceOf(bob), 0, "Incorrect VUSD balance");
+        // owner can mint max of reserve() - totalSupply. Increase yield by depositing token to treasury
+        deal(token, address(treasury), amount);
         gateway.mint(amount, bob);
         uint256 newSupply = vusd.totalSupply();
         assertEq(newSupply, initialSupply + amount, "owner should be able to mint VUSD");
@@ -150,9 +154,10 @@ contract GatewayTest is Test {
         gateway.mint(100e18, address(0));
     }
 
-    function test_mint_onlyOwner_revertItNotOwner() public {
+    function test_mint_revertItNotAuthorized() public {
+        bytes32 role = gateway.UMM_ROLE();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", alice));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, role));
         gateway.mint(100e18, alice);
     }
 
@@ -161,7 +166,7 @@ contract GatewayTest is Test {
         // update mint limit to 100 VUSD
         gateway.updateMintLimit(100e18);
 
-        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", 101e18, 100e18));
+        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", 101e18, 0));
         gateway.mint(101e18, bob);
     }
 
@@ -284,8 +289,12 @@ contract GatewayTest is Test {
 
     function test_redeem_revertIfExceededMaxWithdraw() public {
         uint256 vusdAmount = 100e18;
-        // mint by owner, it is not backed by collateral
-        gateway.mint(vusdAmount, bob);
+        mintVusd(bob, vusdAmount);
+
+        (address _vault,,,,,) = treasury.tokenConfig(token);
+
+        deal(_vault, address(treasury), 0);
+        deal(token, address(treasury), 0);
 
         uint256 tokenAmount = gateway.previewRedeem(token, vusdAmount);
         uint256 maxWithdraw = gateway.maxWithdraw(token);
@@ -466,10 +475,11 @@ contract GatewayTest is Test {
         assertEq(gateway.mintLimit(), newMintLimit, "Mint limit should be updated");
     }
 
-    function test_updateMintLimit_revertIfNotOwner() public {
+    function test_updateMintLimit_revertIfNotAdmin() public {
         uint256 newMintLimit = 1000 ether; // amount in VUSD decimal
+        bytes32 role = gateway.DEFAULT_ADMIN_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, role));
         gateway.updateMintLimit(newMintLimit);
     }
 
@@ -480,10 +490,11 @@ contract GatewayTest is Test {
         assertEq(gateway.mintFee(), newFee, "Mint fee should be updated");
     }
 
-    function test_updateMintFee_revertIfNotOwner() public {
+    function test_updateMintFee_revertIfNotKeeper() public {
         uint256 newFee = 500;
+        bytes32 role = gateway.KEEPER_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, role));
         gateway.updateMintFee(newFee);
     }
 
@@ -500,10 +511,11 @@ contract GatewayTest is Test {
         assertEq(gateway.redeemFee(), newFee, "Redeem fee should be updated");
     }
 
-    function test_updateRedeemFee_revertIfNotOwner() public {
+    function test_updateRedeemFee_revertIfNotKeeper() public {
         uint256 newFee = 500;
+        bytes32 role = gateway.KEEPER_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, role));
         gateway.updateRedeemFee(newFee);
     }
 
@@ -521,8 +533,8 @@ contract GatewayTest is Test {
         // With zero supply
         gateway.updateMintLimit(100e18);
         assertEq(gateway.maxMint(), 100e18);
-        // Increase total supply via owner mint
-        gateway.mint(60e18, address(this));
+        // Increase total supply by user
+        mintVusd(alice, 60e18);
         assertEq(gateway.maxMint(), 40e18);
         // Set limit below current supply → zero
         gateway.updateMintLimit(10e18);
@@ -533,7 +545,7 @@ contract GatewayTest is Test {
         // With zero balance
         assertEq(gateway.maxRedeem(alice), 0);
         // mint 50 VUSD to alice
-        gateway.mint(50e18, alice);
+        mintVusd(alice, 50e18);
         assertEq(gateway.maxRedeem(alice), 50e18);
     }
 
@@ -544,8 +556,8 @@ contract GatewayTest is Test {
         assertEq(gateway.maxWithdraw(token), 50e18);
     }
 
-    function test_owner_and_treasury_views() public view {
-        assertEq(gateway.owner(), owner);
+    function test_admin_and_treasury_views() public view {
+        assertEq(gateway.getRoleMember(gateway.DEFAULT_ADMIN_ROLE(), 0), owner);
         assertEq(gateway.treasury(), address(treasury));
     }
 }

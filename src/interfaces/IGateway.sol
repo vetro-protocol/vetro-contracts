@@ -118,10 +118,6 @@ interface IGateway {
     /// @return _vusdIn Required VUSD input
     function previewWithdraw(address tokenOut_, uint256 amountOut_) external view returns (uint256 _vusdIn);
 
-    // Other getters
-    /// @notice Returns contract owner address
-    function owner() external view returns (address);
-
     /// @notice Returns treasury contract address
     function treasury() external view returns (address);
 }

@@ -2,6 +2,7 @@
 
 pragma solidity 0.8.30;
 
+import {AccessControlEnumerable} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -13,7 +14,7 @@ import {ITreasury} from "./interfaces/ITreasury.sol";
 import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title Gateway - Handles both minting and redeeming of VUSD
-contract Gateway is IGateway, ReentrancyGuardTransient {
+contract Gateway is IGateway, ReentrancyGuardTransient, AccessControlEnumerable {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -32,6 +33,8 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
 
     string public constant NAME = "VUSD-Gateway";
     string public constant VERSION = "2.0.0";
+    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
+    bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
 
     IVUSD public immutable VUSD;
@@ -49,45 +52,47 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     event UpdatedRedeemFee(uint256 previousRedeemFee, uint256 newRedeemFee);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 vusdAmount, address indexed receiver);
 
-    constructor(address vusd_, uint256 mintLimit_) {
+    constructor(address vusd_, uint256 mintLimit_, address admin_) {
         if (vusd_ == address(0)) revert AddressIsNull();
         VUSD = IVUSD(vusd_);
         mintLimit = mintLimit_;
         VUSD_DECIMALS = IERC20Metadata(vusd_).decimals();
-    }
-
-    modifier onlyOwner() {
-        if (msg.sender != owner()) revert CallerIsNotOwner(msg.sender);
-        _;
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(UMM_ROLE, admin_);
+        _grantRole(KEEPER_ROLE, msg.sender);
     }
 
     /*/////////////////////////////////////////////////////////////
-                            onlyOwner
+                            restricted functions
     /////////////////////////////////////////////////////////////*/
 
     /// @inheritdoc IGateway
-    function mint(uint256 amount_, address receiver_) external onlyOwner {
+    function mint(uint256 amount_, address receiver_) external onlyRole(UMM_ROLE) {
         if (receiver_ == address(0)) revert AddressIsNull();
-        uint256 _maxMintable = maxMint();
+        uint256 _totalSupply = VUSD.totalSupply();
+        uint256 _mintableLimit = mintLimit > _totalSupply ? mintLimit - _totalSupply : 0;
+
+        uint256 _maxMintable = Math.min(_mintableLimit, ITreasury(treasury()).reserve() - _totalSupply);
         if (_maxMintable < amount_) revert ExceededMaxMint(amount_, _maxMintable);
         VUSD.mint(receiver_, amount_);
     }
 
     /// @inheritdoc IGateway
-    function updateMintFee(uint256 newMintFee_) external onlyOwner {
+    function updateMintFee(uint256 newMintFee_) external onlyRole(KEEPER_ROLE) {
+        // TODO: 10% max fee
         if (newMintFee_ >= MAX_BPS) revert InvalidMintFee(newMintFee_);
         emit UpdatedMintFee(mintFee, newMintFee_);
         mintFee = newMintFee_;
     }
 
     /// @inheritdoc IGateway
-    function updateMintLimit(uint256 newMintLimit_) external onlyOwner {
+    function updateMintLimit(uint256 newMintLimit_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emit MintLimitUpdated(mintLimit, newMintLimit_);
         mintLimit = newMintLimit_;
     }
 
     /// @inheritdoc IGateway
-    function updateRedeemFee(uint256 newRedeemFee_) external onlyOwner {
+    function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(KEEPER_ROLE) {
         if (newRedeemFee_ >= MAX_BPS) revert InvalidRedeemFee(newRedeemFee_);
         emit UpdatedRedeemFee(redeemFee, newRedeemFee_);
         redeemFee = newRedeemFee_;
@@ -168,11 +173,6 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     /// @inheritdoc IGateway
     function maxWithdraw(address tokenOut_) public view returns (uint256) {
         return ITreasury(treasury()).withdrawable(tokenOut_);
-    }
-
-    /// @inheritdoc IGateway
-    function owner() public view returns (address) {
-        return VUSD.owner();
     }
 
     /// @inheritdoc IGateway

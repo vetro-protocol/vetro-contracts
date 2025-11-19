@@ -20,4 +20,5 @@ interface ITreasury {
     /// forge-lint: disable-next-line(mixed-case-function)
     function VUSD() external view returns (IVUSD);
     function withdrawable(address token_) external view returns (uint256);
+    function reserve() external view returns (uint256);
 }
