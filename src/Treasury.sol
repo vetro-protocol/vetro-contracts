@@ -315,11 +315,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     /////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice UMM_ROLE: Withdraw excess from reserve.
+     * @notice UMM_ROLE: Withdraw excess tokens from reserve.
      * Note: As treasury reserve is in multiple tokens, there is no guarantee
      * that this function will withdraw all of the excess in given token.
      */
-    function withdrawExcess(address token_) external onlyRole(UMM_ROLE) nonReentrant {
+    function harvest(address token_) external onlyRole(UMM_ROLE) nonReentrant {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
 
         // Compute excess reserve in 18-decimal USD

@@ -520,8 +520,8 @@ contract TreasuryTest is Test {
         assertEq(treasury.reserve(), 0);
     }
 
-    // --- withdrawExcess ---
-    function test_withdrawExcess() public {
+    // --- harvest ---
+    function test_harvest() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
@@ -532,13 +532,13 @@ contract TreasuryTest is Test {
         deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
 
         vm.prank(umm);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         assertEq(token.balanceOf(umm), 200 * TOKEN_UNIT);
         assertEq(token.balanceOf(address(treasury)), 800 * TOKEN_UNIT);
     }
 
-    function test_withdrawExcess_withVaultBalance() public {
+    function test_harvest_withVaultBalance() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
@@ -552,7 +552,7 @@ contract TreasuryTest is Test {
         treasury.push(address(token), tokenAmount - (100 * TOKEN_UNIT));
 
         vm.prank(umm);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         assertEq(token.balanceOf(umm), 400 * TOKEN_UNIT);
         assertEq(token.balanceOf(address(treasury)), 0);
@@ -560,7 +560,7 @@ contract TreasuryTest is Test {
         assertEq(treasury.withdrawable(address(token)), 600 * TOKEN_UNIT);
     }
 
-    function test_withdrawExcess_noExcess() public {
+    function test_harvest_noExcess() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
@@ -572,14 +572,14 @@ contract TreasuryTest is Test {
         uint256 balanceBefore = token.balanceOf(address(treasury));
 
         vm.prank(umm);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         // No tokens should be withdrawn
         assertEq(token.balanceOf(umm), 0);
         assertEq(token.balanceOf(address(treasury)), balanceBefore);
     }
 
-    function test_withdrawExcess_withPriceChange() public {
+    function test_harvest_withPriceChange() public {
         treasury.grantRole(ummRole, alice);
 
         // Mint 900 VUSD
@@ -593,25 +593,25 @@ contract TreasuryTest is Test {
 
         // Alice has UMM_ROLE
         vm.prank(alice);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
 
         assertEq(token.balanceOf(alice), 0);
     }
 
-    function test_withdrawExcess_revertIfNotUMM() public {
+    function test_harvest_revertIfNotUMM() public {
         vm.expectRevert(
             abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, treasury.UMM_ROLE())
         );
         vm.prank(alice);
-        treasury.withdrawExcess(address(token));
+        treasury.harvest(address(token));
     }
 
-    function test_withdrawExcess_revertIfNotWhitelisted() public {
+    function test_harvest_revertIfNotWhitelisted() public {
         treasury.grantRole(ummRole, alice);
 
         MockERC20 invalidToken = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", address(invalidToken)));
         vm.prank(alice);
-        treasury.withdrawExcess(address(invalidToken));
+        treasury.harvest(address(invalidToken));
     }
 }
