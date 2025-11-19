@@ -22,10 +22,12 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     error CallerIsNotOwner(address caller);
     error ExceededMaxMint(uint256 requested, uint256 available);
     error ExceededMaxWithdraw(uint256 requested, uint256 available);
+    error ExceededExcessReserve(uint256 requested, uint256 available);
     error FeeOnTransferToken(address);
     error InvalidMintFee(uint256);
     error InvalidRedeemFee(uint256);
     error MintableIsLessThanMinimum(uint256 vusdOut, uint256 minVusdOut);
+    error NoExcessReserve(uint256 reserve, uint256 supply);
     error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
     error VusdToBurnIsHigherThanMax(uint256 vusdIn, uint256 maxVusdIn);
@@ -68,6 +70,11 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     /// @inheritdoc IGateway
     function mint(uint256 amount_, address receiver_) external onlyOwner {
         if (receiver_ == address(0)) revert AddressIsNull();
+        uint256 _supply = VUSD.totalSupply();
+        uint256 _reserve = ITreasury(treasury()).reserve();
+        if (_reserve <= _supply) revert NoExcessReserve(_reserve, _supply);
+        uint256 _excess = _reserve - _supply;
+        if (amount_ > _excess) revert ExceededExcessReserve(amount_, _excess);
         uint256 _maxMintable = maxMint();
         if (_maxMintable < amount_) revert ExceededMaxMint(amount_, _maxMintable);
         VUSD.mint(receiver_, amount_);
