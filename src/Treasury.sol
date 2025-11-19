@@ -100,7 +100,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     /**
      * @notice onlyOwner: Add token as whitelisted token for VUSD
      * @param token_ token address to add in whitelist.
-     * @param vault_ Morpho vaultV2 address correspond to _token
+     * @param vault_ ERC4626 yield vault address correspond to _token
      * @param oracle_ Chainlink oracle address for token/USD feed
      * @param stalePeriod_ Custom stale period for oracle price
      */
@@ -210,7 +210,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     /////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice onlyGateway: Deposit token to Morpho vault
+     * @notice onlyGateway: Deposit token to yield vault
      * @dev `depositActive` must be true to call deposit.
      * @param token_ token to deposit, must be one of the whitelisted tokens.
      * @param amount_  token amount
