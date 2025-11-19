@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /// forge-lint: disable-next-item(erc20-unchecked-transfer)
-contract MockMorphoVaultV2 {
+contract MockYieldVault {
     /// forge-lint: disable-next-line(screaming-snake-case-immutable)
     address public immutable asset;
     mapping(address => uint256) public balances;

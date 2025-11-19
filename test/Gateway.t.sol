@@ -11,7 +11,7 @@ import {Treasury} from "src/Treasury.sol";
 import {VUSD} from "src/VUSD.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
-import {MockMorphoVaultV2} from "test/mocks/MockMorphoVaultV2.sol";
+import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
 
 contract GatewayTest is Test {
     using SafeERC20 for IERC20;
@@ -25,7 +25,7 @@ contract GatewayTest is Test {
     address bob = makeAddr("bob");
     address token;
     MockChainlinkOracle mockOracle;
-    MockMorphoVaultV2 mockVault;
+    MockYieldVault mockVault;
 
     function setUp() public {
         owner = address(this);
@@ -37,7 +37,7 @@ contract GatewayTest is Test {
         vusd.updateGateway(address(gateway));
 
         token = address(new MockERC20());
-        mockVault = new MockMorphoVaultV2(address(token));
+        mockVault = new MockYieldVault(address(token));
         mockOracle = new MockChainlinkOracle(0.999e8);
         treasury.addToWhitelist(token, address(mockVault), address(mockOracle), 1 hours);
     }
@@ -65,7 +65,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
-        tokenAmount = bound(tokenAmount, 0, type(uint128).max); // MorphoVault has this limit
+        tokenAmount = bound(tokenAmount, 0, type(uint128).max);
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateMintFee(mintFee);
@@ -328,7 +328,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
-        tokenAmount = bound(tokenAmount, 0, type(uint128).max); // MorphoVault has this limit
+        tokenAmount = bound(tokenAmount, 0, type(uint128).max);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -466,7 +466,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
-        tokenAmount = bound(tokenAmount, 0, type(uint128).max); // MorphoVault has this limit
+        tokenAmount = bound(tokenAmount, 0, type(uint128).max);
 
         // Setup test conditions
         mockOracle.updatePrice(price);

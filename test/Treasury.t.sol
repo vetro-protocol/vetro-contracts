@@ -6,7 +6,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Treasury} from "src/Treasury.sol";
 import {VUSD} from "src/VUSD.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
-import {MockMorphoVaultV2} from "test/mocks/MockMorphoVaultV2.sol";
+import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockSwapper} from "test/mocks/MockSwapper.sol";
 
@@ -16,7 +16,7 @@ contract TreasuryTest is Test {
     Treasury treasury;
     VUSD vusd;
     MockERC20 token;
-    MockMorphoVaultV2 mockVault;
+    MockYieldVault mockVault;
     MockChainlinkOracle mockOracle;
     address owner;
     address keeper = makeAddr("keeper");
@@ -36,7 +36,7 @@ contract TreasuryTest is Test {
         vusd.updateTreasury(address(treasury));
         vusd.updateGateway(gateway);
         token = new MockERC20();
-        mockVault = new MockMorphoVaultV2(address(token));
+        mockVault = new MockYieldVault(address(token));
         mockOracle = new MockChainlinkOracle(1e8); // $1
         // Add token to whitelist
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
@@ -47,7 +47,7 @@ contract TreasuryTest is Test {
     // --- addToWhitelist ---
     function test_addToWhitelist_success() public {
         MockERC20 _token2 = new MockERC20();
-        MockMorphoVaultV2 _vault2 = new MockMorphoVaultV2(address(_token2));
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
         MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8);
         treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
         assertTrue(treasury.isWhitelistedToken(address(_token2)));
@@ -492,7 +492,7 @@ contract TreasuryTest is Test {
         // 2. Whitelist a new token with 18 decimals
         MockERC20 _token2 = new MockERC20();
         _token2.setDecimals(18);
-        MockMorphoVaultV2 _vault2 = new MockMorphoVaultV2(address(_token2));
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
         MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8); // $1
         treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
 
