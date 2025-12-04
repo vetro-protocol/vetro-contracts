@@ -12,10 +12,10 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IAggregatorV3} from "./interfaces/chainlink/IAggregatorV3.sol";
 import {ISwapper} from "./interfaces/bloq/ISwapper.sol";
-import {IVUSD} from "./interfaces/IVUSD.sol";
+import {IViat} from "./interfaces/IViat.sol";
 import {ITreasury} from "./interfaces/ITreasury.sol";
 
-/// @title VUSD Treasury
+/// @title VIAT Treasury
 contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     using SafeERC20 for IERC20;
     using Math for uint256;
@@ -35,10 +35,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     error ReservedToken();
     error StalePrice();
     error UnsupportedToken(address);
-    error VUSDMismatch();
+    error ViatMismatch();
     error WithdrawIsPaused(address);
 
-    string public constant NAME = "VUSD-Treasury";
+    /// forge-lint: disable-next-line(mixed-case-variable)
+    string public NAME;
     string public constant VERSION = "2.0.0";
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
     bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
@@ -46,7 +47,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public priceTolerance = 100; // 1% based on BPS
 
-    IVUSD public immutable VUSD;
+    IViat public immutable VIAT;
 
     address public swapper;
 
@@ -76,16 +77,17 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
     event WithdrawnAll(address[] tokens, address indexed receiver);
 
-    constructor(address vusd_) {
-        if (vusd_ == address(0)) revert AddressIsZero();
-        VUSD = IVUSD(vusd_);
+    constructor(address viat_) {
+        if (viat_ == address(0)) revert AddressIsZero();
+        VIAT = IViat(viat_);
+        NAME = string.concat(IERC20Metadata(viat_).symbol(), "-Treasury");
 
         _grantRole(DEFAULT_ADMIN_ROLE, owner());
         _grantRole(KEEPER_ROLE, msg.sender);
     }
 
     modifier onlyGateway() {
-        if (msg.sender != VUSD.gateway()) revert CallerIsNotAuthorized(msg.sender);
+        if (msg.sender != VIAT.gateway()) revert CallerIsNotAuthorized(msg.sender);
         _;
     }
 
@@ -98,10 +100,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
                             onlyOwner
     /////////////////////////////////////////////////////////////*/
     /**
-     * @notice onlyOwner: Add token as whitelisted token for VUSD
+     * @notice onlyOwner: Add token as whitelisted token for viat
      * @param token_ token address to add in whitelist.
      * @param vault_ ERC4626 yield vault address correspond to _token
-     * @param oracle_ Chainlink oracle address for token/USD feed
+     * @param oracle_ Chainlink oracle address for token/viat_base feed e.g. token/USD, token/ETH
      * @param stalePeriod_ Custom stale period for oracle price
      */
     function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_) external onlyOwner {
@@ -141,11 +143,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
 
     /**
      * @notice onlyOwner: Migrate assets to new treasury
-     * @param newTreasury_ Address of new treasury of VUSD
+     * @param newTreasury_ Address of new treasury of viat
      */
     function migrate(address newTreasury_) external onlyOwner {
         if (newTreasury_ == address(0)) revert AddressIsZero();
-        if (address(VUSD) != address(ITreasury(newTreasury_).VUSD())) revert VUSDMismatch();
+        if (address(VIAT) != address(ITreasury(newTreasury_).VIAT())) revert ViatMismatch();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
             address _token = _whitelistedTokens.at(i);
@@ -324,17 +326,17 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     function harvest(address token_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
 
-        // Compute excess reserve in 18-decimal USD
-        uint256 _supply = VUSD.totalSupply();
+        // Compute excess reserve in 18-decimal base
+        uint256 _supply = VIAT.totalSupply();
         uint256 _reserve = reserve();
         if (_reserve <= _supply) return 0; // no excess
-        uint256 _excessUSD = _reserve - _supply;
+        uint256 _excessReserve = _reserve - _supply;
 
         // Get oracle price of token_
         (uint256 price, uint256 unitPrice) =
             _getPrice(IAggregatorV3(tokenConfig[token_].oracle), tokenConfig[token_].stalePeriod, priceTolerance);
 
-        uint256 _excessInTokenDecimals = _excessUSD / (10 ** (18 - tokenConfig[token_].decimals));
+        uint256 _excessInTokenDecimals = _excessReserve / (10 ** (18 - tokenConfig[token_].decimals));
         uint256 _excess = _excessInTokenDecimals.mulDiv(unitPrice, price);
         if (_excess == 0) return 0;
 
@@ -368,7 +370,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     /////////////////////////////////////////////////////////////*/
 
     function gateway() external view returns (address) {
-        return VUSD.gateway();
+        return VIAT.gateway();
     }
 
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice) {
@@ -382,12 +384,12 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         return _whitelistedTokens.contains(token_);
     }
 
-    /// @dev Owner is defined in VUSD token contract only
+    /// @dev Owner is defined in viat token contract only
     function owner() public view returns (address) {
-        return VUSD.owner();
+        return VIAT.owner();
     }
 
-    /// @notice Return total reserve value in USD
+    /// @notice Return total reserve value in USD for viaUSD(ETH for viaETH)
     function reserve() public view returns (uint256 _reserve) {
         uint256 _len = _whitelistedTokens.length();
         uint256 _priceToleranceBps = priceTolerance;
@@ -405,7 +407,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
                 (uint256 _price, uint256 _unitPrice) = _getPrice(
                     IAggregatorV3(tokenConfig[_token].oracle), tokenConfig[_token].stalePeriod, _priceToleranceBps
                 );
-                // Calculate USD value in token decimals
+                // Calculate base value in token decimals
                 uint256 _valueInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
                 // Normalize value to 18 decimals before adding to total reserve
                 _reserve += (_valueInTokenDecimals * (10 ** (18 - tokenConfig[_token].decimals)));
