@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Treasury} from "src/Treasury.sol";
-import {VUSD} from "src/VUSD.sol";
+import {PeggedToken} from "src/PeggedToken.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
@@ -14,7 +14,7 @@ contract TreasuryTest is Test {
     using Math for uint256;
 
     Treasury treasury;
-    VUSD vusd;
+    PeggedToken vcUSD;
     MockERC20 token;
     MockYieldVault mockVault;
     MockChainlinkOracle mockOracle;
@@ -31,10 +31,10 @@ contract TreasuryTest is Test {
 
     function setUp() public {
         owner = address(this);
-        vusd = new VUSD(owner);
-        treasury = new Treasury(address(vusd));
-        vusd.updateTreasury(address(treasury));
-        vusd.updateGateway(gateway);
+        vcUSD = new PeggedToken("vcUSD", "vcUSD", owner);
+        treasury = new Treasury(address(vcUSD));
+        vcUSD.updateTreasury(address(treasury));
+        vcUSD.updateGateway(gateway);
         token = new MockERC20();
         mockVault = new MockYieldVault(address(token));
         mockOracle = new MockChainlinkOracle(1e8); // $1
@@ -105,7 +105,7 @@ contract TreasuryTest is Test {
 
     // --- migrate ---
     function test_migrate_success() public {
-        Treasury _newTreasury = new Treasury(address(vusd));
+        Treasury _newTreasury = new Treasury(address(vcUSD));
         uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
         uint256 _vaultShares = 50 * VAULT_UNIT; // 50 shares
         deal(address(token), address(treasury), _tokenAmount);
@@ -121,10 +121,10 @@ contract TreasuryTest is Test {
         treasury.migrate(address(0));
     }
 
-    function test_migrate_revertOnVUSDMismatch() public {
-        VUSD _fakeVusd = new VUSD(owner);
-        Treasury _newTreasury = new Treasury(address(_fakeVusd));
-        vm.expectRevert(Treasury.VUSDMismatch.selector);
+    function test_migrate_revertOnPeggedTokenMismatch() public {
+        PeggedToken _fakePeggedToken = new PeggedToken("fakeVcUSD", "fakeVcUSD", owner);
+        Treasury _newTreasury = new Treasury(address(_fakePeggedToken));
+        vm.expectRevert(Treasury.PeggedTokenMismatch.selector);
         treasury.migrate(address(_newTreasury));
     }
 
@@ -440,11 +440,11 @@ contract TreasuryTest is Test {
         assertTrue(_tokens.length > 0);
     }
 
-    function test_gateway_returnsVusdGateway() public view {
+    function test_gateway_returnsPeggedTokenGateway() public view {
         assertEq(treasury.gateway(), gateway);
     }
 
-    function test_owner_returnsVusdOwner() public view {
+    function test_owner_returnsPeggedTokenOwner() public view {
         assertEq(treasury.owner(), owner);
     }
 
@@ -525,9 +525,9 @@ contract TreasuryTest is Test {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
-        // Mint 800 VUSD
+        // Mint 800 PeggedToken
         vm.prank(gateway);
-        vusd.mint(alice, 800e18);
+        vcUSD.mint(alice, 800e18);
         // Add 1000 tokens for treasury to create excess of 200 tokens
         deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
 
@@ -542,9 +542,9 @@ contract TreasuryTest is Test {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
 
-        // Mint 600 VUSD
+        // Mint 600 PeggedToken
         vm.prank(gateway);
-        vusd.mint(alice, 600e18);
+        vcUSD.mint(alice, 600e18);
         // Add 1000 tokens in treasury creating excess of 400.
         uint256 tokenAmount = 1000 * TOKEN_UNIT;
         deal(address(token), address(treasury), tokenAmount);
@@ -566,7 +566,7 @@ contract TreasuryTest is Test {
 
         // No excess tokens
         vm.prank(gateway);
-        vusd.mint(owner, 1000e18);
+        vcUSD.mint(owner, 1000e18);
         deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
 
         uint256 balanceBefore = token.balanceOf(address(treasury));
@@ -582,9 +582,9 @@ contract TreasuryTest is Test {
     function test_harvest_withPriceChange() public {
         treasury.grantRole(ummRole, alice);
 
-        // Mint 900 VUSD
+        // Mint 900 PeggedToken
         vm.prank(gateway);
-        vusd.mint(alice, 900e18);
+        vcUSD.mint(alice, 900e18);
         // Set collateral price to $0.9
         mockOracle.updatePrice(0.9e8);
         treasury.updatePriceTolerance(1000);

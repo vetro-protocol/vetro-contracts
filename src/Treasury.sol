@@ -12,10 +12,10 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IAggregatorV3} from "./interfaces/chainlink/IAggregatorV3.sol";
 import {ISwapper} from "./interfaces/bloq/ISwapper.sol";
-import {IVUSD} from "./interfaces/IVUSD.sol";
+import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {ITreasury} from "./interfaces/ITreasury.sol";
 
-/// @title VUSD Treasury
+/// @title PeggedToken Treasury
 contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     using SafeERC20 for IERC20;
     using Math for uint256;
@@ -35,18 +35,18 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     error ReservedToken();
     error StalePrice();
     error UnsupportedToken(address);
-    error VUSDMismatch();
+    error PeggedTokenMismatch();
     error WithdrawIsPaused(address);
 
-    string public constant NAME = "VUSD-Treasury";
-    string public constant VERSION = "2.0.0";
+    string public NAME;
+    string public constant VERSION = "1.0.0";
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
     bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
 
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public priceTolerance = 100; // 1% based on BPS
 
-    IVUSD public immutable VUSD;
+    IPeggedToken public immutable PEGGED_TOKEN;
 
     address public swapper;
 
@@ -76,16 +76,17 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
     event WithdrawnAll(address[] tokens, address indexed receiver);
 
-    constructor(address vusd_) {
-        if (vusd_ == address(0)) revert AddressIsZero();
-        VUSD = IVUSD(vusd_);
+    constructor(address peggedToken_) {
+        if (peggedToken_ == address(0)) revert AddressIsZero();
+        PEGGED_TOKEN = IPeggedToken(peggedToken_);
+        NAME = string.concat(IERC20Metadata(peggedToken_).symbol(), "-Treasury");
 
         _grantRole(DEFAULT_ADMIN_ROLE, owner());
         _grantRole(KEEPER_ROLE, msg.sender);
     }
 
     modifier onlyGateway() {
-        if (msg.sender != VUSD.gateway()) revert CallerIsNotAuthorized(msg.sender);
+        if (msg.sender != PEGGED_TOKEN.gateway()) revert CallerIsNotAuthorized(msg.sender);
         _;
     }
 
@@ -98,7 +99,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
                             onlyOwner
     /////////////////////////////////////////////////////////////*/
     /**
-     * @notice onlyOwner: Add token as whitelisted token for VUSD
+     * @notice onlyOwner: Add token as whitelisted token for PeggedToken
      * @param token_ token address to add in whitelist.
      * @param vault_ ERC4626 yield vault address correspond to _token
      * @param oracle_ Chainlink oracle address for token/USD feed
@@ -141,11 +142,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
 
     /**
      * @notice onlyOwner: Migrate assets to new treasury
-     * @param newTreasury_ Address of new treasury of VUSD
+     * @param newTreasury_ Address of new treasury of PeggedToken
      */
     function migrate(address newTreasury_) external onlyOwner {
         if (newTreasury_ == address(0)) revert AddressIsZero();
-        if (address(VUSD) != address(ITreasury(newTreasury_).VUSD())) revert VUSDMismatch();
+        if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
             address _token = _whitelistedTokens.at(i);
@@ -325,7 +326,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
 
         // Compute excess reserve in 18-decimal USD
-        uint256 _supply = VUSD.totalSupply();
+        uint256 _supply = PEGGED_TOKEN.totalSupply();
         uint256 _reserve = reserve();
         if (_reserve <= _supply) return 0; // no excess
         uint256 _excessUSD = _reserve - _supply;
@@ -368,7 +369,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     /////////////////////////////////////////////////////////////*/
 
     function gateway() external view returns (address) {
-        return VUSD.gateway();
+        return PEGGED_TOKEN.gateway();
     }
 
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice) {
@@ -382,9 +383,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         return _whitelistedTokens.contains(token_);
     }
 
-    /// @dev Owner is defined in VUSD token contract only
+    /// @dev Owner is defined in PeggedToken token contract only
     function owner() public view returns (address) {
-        return VUSD.owner();
+        return PEGGED_TOKEN.owner();
     }
 
     /// @notice Return total reserve value in USD

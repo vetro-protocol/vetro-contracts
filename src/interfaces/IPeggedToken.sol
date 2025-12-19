@@ -4,8 +4,8 @@ pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 
-/// @title IVUSD - Interface for VUSD stablecoin
-interface IVUSD is IERC20 {
+/// @title IPeggedToken - Interface for PeggedToken stablecoin
+interface IPeggedToken is IERC20 {
     /**
      * Write Functions
      */

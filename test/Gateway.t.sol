@@ -8,7 +8,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Gateway} from "src/Gateway.sol";
 import {Treasury} from "src/Treasury.sol";
-import {VUSD} from "src/VUSD.sol";
+import {PeggedToken} from "src/PeggedToken.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
@@ -17,7 +17,7 @@ contract GatewayTest is Test {
     using SafeERC20 for IERC20;
     using Math for uint256;
 
-    VUSD vusd;
+    PeggedToken vcUSD;
     Gateway gateway;
     Treasury treasury;
     address owner;
@@ -29,12 +29,12 @@ contract GatewayTest is Test {
 
     function setUp() public {
         owner = address(this);
-        vusd = new VUSD(owner);
-        treasury = new Treasury(address(vusd));
-        vusd.updateTreasury(address(treasury));
+        vcUSD = new PeggedToken("vcUSD", "vcUSD", owner);
+        treasury = new Treasury(address(vcUSD));
+        vcUSD.updateTreasury(address(treasury));
 
-        gateway = new Gateway(address(vusd), type(uint256).max);
-        vusd.updateGateway(address(gateway));
+        gateway = new Gateway(address(vcUSD), type(uint256).max);
+        vcUSD.updateGateway(address(gateway));
 
         token = address(new MockERC20());
         mockVault = new MockYieldVault(address(token));
@@ -42,15 +42,15 @@ contract GatewayTest is Test {
         treasury.addToWhitelist(token, address(mockVault), address(mockOracle), 1 hours);
     }
 
-    function mintVusd(address user, uint256 vusdAmount) internal returns (uint256) {
-        uint256 tokenAmount = gateway.previewMint(token, vusdAmount);
+    function mintPeggedToken(address user, uint256 peggedTokenAmount) internal returns (uint256) {
+        uint256 tokenAmount = gateway.previewMint(token, peggedTokenAmount);
         deal(token, user, tokenAmount);
 
         vm.startPrank(user);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
-        gateway.mint(token, vusdAmount, tokenAmount, user);
+        gateway.mint(token, peggedTokenAmount, tokenAmount, user);
         vm.stopPrank();
-        return vusd.balanceOf(user);
+        return vcUSD.balanceOf(user);
     }
 
     function parseAmount(uint256 fromAmount, address fromToken, address toToken) internal view returns (uint256) {
@@ -71,15 +71,15 @@ contract GatewayTest is Test {
         gateway.updateMintFee(mintFee);
         deal(token, bob, tokenAmount);
 
-        uint256 expectedVusd = gateway.previewDeposit(token, tokenAmount);
+        uint256 expectedPeggedToken = gateway.previewDeposit(token, tokenAmount);
         uint256 sharesBefore = mockVault.balanceOf(address(treasury));
 
         vm.startPrank(bob);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
-        gateway.deposit(token, tokenAmount, expectedVusd, bob);
+        gateway.deposit(token, tokenAmount, expectedPeggedToken, bob);
         vm.stopPrank();
 
-        assertEq(vusd.balanceOf(bob), expectedVusd, "Incorrect VUSD minted");
+        assertEq(vcUSD.balanceOf(bob), expectedPeggedToken, "Incorrect PeggedToken minted");
 
         uint256 sharesAfter = mockVault.balanceOf(address(treasury));
         assertEq(sharesAfter, sharesBefore + mockVault.convertToShares(tokenAmount), "Incorrect shares in treasury");
@@ -111,7 +111,7 @@ contract GatewayTest is Test {
 
     function test_deposit_revertIfExceededMaxMint() public {
         mockOracle.updatePrice(1e8);
-        // update mint limit to 100 VUSD
+        // update mint limit to 100 PEGGEDTOKEN
         gateway.updateMintLimit(100e18);
 
         uint256 amount = parseAmount(1000, address(0), token);
@@ -139,13 +139,13 @@ contract GatewayTest is Test {
         // add tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 10000e6);
 
-        uint256 amount = 1000e18; // 1000 VUSD
-        uint256 initialSupply = vusd.totalSupply();
-        assertEq(vusd.balanceOf(bob), 0, "Incorrect VUSD balance");
+        uint256 amount = 1000e18; // 1000 PeggedToken
+        uint256 initialSupply = vcUSD.totalSupply();
+        assertEq(vcUSD.balanceOf(bob), 0, "Incorrect PeggedToken balance");
         gateway.mint(amount, bob);
-        uint256 newSupply = vusd.totalSupply();
-        assertEq(newSupply, initialSupply + amount, "owner should be able to mint VUSD");
-        assertEq(vusd.balanceOf(bob), amount, "Incorrect VUSD balance");
+        uint256 newSupply = vcUSD.totalSupply();
+        assertEq(newSupply, initialSupply + amount, "owner should be able to mint PeggedToken");
+        assertEq(vcUSD.balanceOf(bob), amount, "Incorrect PeggedToken balance");
     }
 
     function test_mint_onlyOwner_revertIfReceiverIsZeroAddress() public {
@@ -161,9 +161,9 @@ contract GatewayTest is Test {
 
     function test_mint_onlyOwner_revertIfNoExcessReserve() public {
         mockOracle.updatePrice(1e8);
-        // mint 50 VUSD
+        // mint 50 PeggedToken
         vm.prank(address(gateway));
-        vusd.mint(alice, 50e18);
+        vcUSD.mint(alice, 50e18);
         // add 40 tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 40e6);
 
@@ -185,7 +185,7 @@ contract GatewayTest is Test {
         // add tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 200e6);
 
-        // update mint limit to 100 VUSD
+        // update mint limit to 100 PeggedToken
         gateway.updateMintLimit(100e18);
 
         vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", 101e18, 100e18));
@@ -193,29 +193,29 @@ contract GatewayTest is Test {
     }
 
     // --- mint ---
-    function testFuzz_mint(int256 price, uint256 mintFee, uint256 vusdAmount) public {
+    function testFuzz_mint(int256 price, uint256 mintFee, uint256 peggedTokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
-        vusdAmount = bound(vusdAmount, 0, type(uint256).max / 1e18);
+        peggedTokenAmount = bound(peggedTokenAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateMintFee(mintFee);
 
-        uint256 tokenAmount = gateway.previewMint(token, vusdAmount);
+        uint256 tokenAmount = gateway.previewMint(token, peggedTokenAmount);
         deal(token, bob, tokenAmount);
 
-        uint256 vusdBalanceBefore = vusd.balanceOf(bob);
+        uint256 peggedTokenBalanceBefore = vcUSD.balanceOf(bob);
         uint256 sharesBefore = mockVault.balanceOf(address(treasury));
 
         vm.startPrank(bob);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
-        gateway.mint(token, vusdAmount, tokenAmount, bob);
+        gateway.mint(token, peggedTokenAmount, tokenAmount, bob);
         vm.stopPrank();
 
-        // Verify VUSD minted
-        assertEq(vusd.balanceOf(bob), vusdBalanceBefore + vusdAmount, "Incorrect VUSD minted");
+        // Verify PeggedToken minted
+        assertEq(vcUSD.balanceOf(bob), peggedTokenBalanceBefore + peggedTokenAmount, "Incorrect PeggedToken minted");
 
         // Verify tokens deposited in vault
         uint256 sharesAfter = mockVault.balanceOf(address(treasury));
@@ -223,21 +223,21 @@ contract GatewayTest is Test {
     }
 
     function test_mint_revertIfTokenIsUnsupported() public {
-        uint256 vusdAmount = 1000e18;
+        uint256 peggedTokenAmount = 1000e18;
         address token2 = address(new MockERC20());
-        uint256 tokenAmount = gateway.previewMint(token, vusdAmount);
+        uint256 tokenAmount = gateway.previewMint(token, peggedTokenAmount);
         deal(token2, alice, tokenAmount);
 
         vm.startPrank(alice);
         IERC20(token2).forceApprove(address(gateway), tokenAmount);
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", token2));
-        gateway.mint(token2, vusdAmount, tokenAmount, alice);
+        gateway.mint(token2, peggedTokenAmount, tokenAmount, alice);
         vm.stopPrank();
     }
 
     function test_mint_revertIfTokenAmountIsHigherThanMax() public {
-        uint256 vusdAmount = 1000e18;
-        uint256 tokenAmount = gateway.previewMint(token, vusdAmount);
+        uint256 peggedTokenAmount = 1000e18;
+        uint256 tokenAmount = gateway.previewMint(token, peggedTokenAmount);
         deal(token, alice, tokenAmount);
 
         vm.startPrank(alice);
@@ -245,47 +245,49 @@ contract GatewayTest is Test {
         vm.expectRevert(
             abi.encodeWithSignature("TokenAmountIsHigherThanMax(uint256,uint256)", tokenAmount, tokenAmount - 1)
         );
-        gateway.mint(token, vusdAmount, tokenAmount - 1, alice);
+        gateway.mint(token, peggedTokenAmount, tokenAmount - 1, alice);
         vm.stopPrank();
     }
 
     function test_mint_revertIfExceededMaxMint() public {
-        // Set mint limit to 100 VUSD
+        // Set mint limit to 100 PeggedToken
         gateway.updateMintLimit(100e18);
 
-        uint256 vusdAmount = 101e18; // Try to mint more than limit
-        uint256 tokenAmount = gateway.previewMint(token, vusdAmount);
+        uint256 peggedTokenAmount = 101e18; // Try to mint more than limit
+        uint256 tokenAmount = gateway.previewMint(token, peggedTokenAmount);
         deal(token, alice, tokenAmount);
 
         vm.startPrank(alice);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
-        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", vusdAmount, 100e18));
-        gateway.mint(token, vusdAmount, tokenAmount, alice);
+        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", peggedTokenAmount, 100e18));
+        gateway.mint(token, peggedTokenAmount, tokenAmount, alice);
         vm.stopPrank();
     }
 
     // --- redeem ---
-    function testFuzz_redeem(int256 price, uint256 redeemFee, uint256 vusdAmount) public {
+    function testFuzz_redeem(int256 price, uint256 redeemFee, uint256 peggedTokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
-        vusdAmount = bound(vusdAmount, 0, type(uint256).max / 1e18);
+        peggedTokenAmount = bound(peggedTokenAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
 
-        // Mint VUSD for testing
-        mintVusd(alice, vusdAmount);
+        // Mint PeggedToken for testing
+        mintPeggedToken(alice, peggedTokenAmount);
 
-        uint256 expectedToken = gateway.previewRedeem(token, vusdAmount);
+        uint256 expectedToken = gateway.previewRedeem(token, peggedTokenAmount);
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
-        uint256 vusdBalanceBefore = vusd.balanceOf(alice);
+        uint256 peggedTokenBalanceBefore = vcUSD.balanceOf(alice);
 
         vm.prank(alice);
-        gateway.redeem(token, vusdAmount, expectedToken, alice);
+        gateway.redeem(token, peggedTokenAmount, expectedToken, alice);
 
-        assertEq(vusd.balanceOf(alice), vusdBalanceBefore - vusdAmount, "VUSD balance should decrease");
+        assertEq(
+            vcUSD.balanceOf(alice), peggedTokenBalanceBefore - peggedTokenAmount, "PeggedToken balance should decrease"
+        );
         assertEq(IERC20(token).balanceOf(alice) - tokenBalanceBefore, expectedToken, "Incorrect tokens received");
     }
 
@@ -299,28 +301,28 @@ contract GatewayTest is Test {
     }
 
     function test_redeem_revertIfRedeemableIsNotEnough() public {
-        uint256 vusdAmount = mintVusd(bob, 100e18);
-        uint256 redeemable = gateway.previewRedeem(token, vusdAmount);
+        uint256 peggedTokenAmount = mintPeggedToken(bob, 100e18);
+        uint256 redeemable = gateway.previewRedeem(token, peggedTokenAmount);
 
         vm.prank(bob);
         vm.expectRevert(
             abi.encodeWithSignature("RedeemableIsLessThanMinimum(uint256,uint256)", redeemable, redeemable + 1)
         );
-        gateway.redeem(token, vusdAmount, redeemable + 1, bob);
+        gateway.redeem(token, peggedTokenAmount, redeemable + 1, bob);
     }
 
     function test_redeem_revertIfExceededMaxWithdraw() public {
-        uint256 vusdAmount = 100e18;
-        // mint vusd directly, it is not backed by collateral
+        uint256 peggedTokenAmount = 100e18;
+        // mint peggedToken directly, it is not backed by collateral
         vm.prank(address(gateway));
-        vusd.mint(bob, vusdAmount);
+        vcUSD.mint(bob, peggedTokenAmount);
 
-        uint256 tokenAmount = gateway.previewRedeem(token, vusdAmount);
+        uint256 tokenAmount = gateway.previewRedeem(token, peggedTokenAmount);
         uint256 maxWithdraw = gateway.maxWithdraw(token);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("ExceededMaxWithdraw(uint256,uint256)", tokenAmount, maxWithdraw));
-        gateway.redeem(token, vusdAmount, tokenAmount, bob);
+        gateway.redeem(token, peggedTokenAmount, tokenAmount, bob);
     }
 
     // --- withdraw ---
@@ -334,17 +336,19 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
 
-        // Mint VUSD for testing
-        uint256 vusdAmount = gateway.previewWithdraw(token, tokenAmount);
-        mintVusd(alice, vusdAmount);
+        // Mint PeggedToken for testing
+        uint256 peggedTokenAmount = gateway.previewWithdraw(token, tokenAmount);
+        mintPeggedToken(alice, peggedTokenAmount);
 
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
-        uint256 vusdBalanceBefore = vusd.balanceOf(alice);
+        uint256 peggedTokenBalanceBefore = vcUSD.balanceOf(alice);
 
         vm.prank(alice);
-        gateway.withdraw(token, tokenAmount, vusdAmount, alice);
+        gateway.withdraw(token, tokenAmount, peggedTokenAmount, alice);
 
-        assertEq(vusd.balanceOf(alice), vusdBalanceBefore - vusdAmount, "VUSD balance should decrease");
+        assertEq(
+            vcUSD.balanceOf(alice), peggedTokenBalanceBefore - peggedTokenAmount, "PeggedToken balance should decrease"
+        );
         assertEq(IERC20(token).balanceOf(alice) - tokenBalanceBefore, tokenAmount, "Incorrect tokens received");
     }
 
@@ -357,25 +361,27 @@ contract GatewayTest is Test {
         gateway.withdraw(token2, amount, 1, alice);
     }
 
-    function test_withdraw_revertIfVusdAmountIsHigherThanMax() public {
+    function test_withdraw_revertIfPeggedTokenAmountIsHigherThanMax() public {
         uint256 tokenAmount = 1000e6;
-        uint256 vusdAmount = gateway.previewWithdraw(token, tokenAmount);
+        uint256 peggedTokenAmount = gateway.previewWithdraw(token, tokenAmount);
 
         vm.prank(bob);
         vm.expectRevert(
-            abi.encodeWithSignature("VusdToBurnIsHigherThanMax(uint256,uint256)", vusdAmount, vusdAmount - 1)
+            abi.encodeWithSignature(
+                "PeggedTokenToBurnIsHigherThanMax(uint256,uint256)", peggedTokenAmount, peggedTokenAmount - 1
+            )
         );
-        gateway.withdraw(token, tokenAmount, vusdAmount - 1, bob);
+        gateway.withdraw(token, tokenAmount, peggedTokenAmount - 1, bob);
     }
 
     function test_withdraw_revertIfExceededMaxWithdraw() public {
         uint256 tokenAmount = 1000e6;
-        uint256 vusdAmount = gateway.previewWithdraw(token, tokenAmount);
+        uint256 peggedTokenAmount = gateway.previewWithdraw(token, tokenAmount);
         uint256 maxWithdraw = gateway.maxWithdraw(token);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("ExceededMaxWithdraw(uint256,uint256)", tokenAmount, maxWithdraw));
-        gateway.withdraw(token, tokenAmount, vusdAmount, bob);
+        gateway.withdraw(token, tokenAmount, peggedTokenAmount, bob);
     }
 
     // --- previewDeposit ---
@@ -389,16 +395,16 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(price);
         gateway.updateMintFee(mintFee);
 
-        // Calculate expected VUSD amount
+        // Calculate expected PeggedToken amount
         (uint256 latestPrice, uint256 unitPrice) = treasury.getPrice(token);
         uint256 maxBps = gateway.MAX_BPS();
         uint256 amountAfterFee = amount.mulDiv((maxBps - gateway.mintFee()), maxBps);
-        uint256 expectedVusd = latestPrice >= unitPrice
-            ? parseAmount(amountAfterFee, token, address(vusd))
-            : parseAmount(amountAfterFee.mulDiv(latestPrice, unitPrice), token, address(vusd));
+        uint256 expectedPeggedToken = latestPrice >= unitPrice
+            ? parseAmount(amountAfterFee, token, address(vcUSD))
+            : parseAmount(amountAfterFee.mulDiv(latestPrice, unitPrice), token, address(vcUSD));
 
-        uint256 actualVusd = gateway.previewDeposit(token, amount);
-        assertEq(actualVusd, expectedVusd, "Incorrect VUSD amount");
+        uint256 actualPeggedToken = gateway.previewDeposit(token, amount);
+        assertEq(actualPeggedToken, expectedPeggedToken, "Incorrect PeggedToken amount");
     }
 
     function test_previewDeposit_revertForUnsupportedToken() public {
@@ -408,11 +414,11 @@ contract GatewayTest is Test {
     }
 
     // --- previewMint ---
-    function testFuzz_previewMint(int256 price, uint256 mintFee, uint256 vusdAmount) public {
+    function testFuzz_previewMint(int256 price, uint256 mintFee, uint256 peggedTokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
-        vusdAmount = bound(vusdAmount, 0, type(uint256).max / 1e18);
+        peggedTokenAmount = bound(peggedTokenAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -420,10 +426,10 @@ contract GatewayTest is Test {
 
         // Calculate expected token amount
         uint256 oneToken = parseAmount(1, address(0), token);
-        uint256 vusdForOneToken = gateway.previewDeposit(token, oneToken);
-        uint256 expectedToken = vusdAmount.mulDiv(oneToken, vusdForOneToken, Math.Rounding.Ceil);
+        uint256 peggedTokenForOneToken = gateway.previewDeposit(token, oneToken);
+        uint256 expectedToken = peggedTokenAmount.mulDiv(oneToken, peggedTokenForOneToken, Math.Rounding.Ceil);
 
-        uint256 actualToken = gateway.previewMint(token, vusdAmount);
+        uint256 actualToken = gateway.previewMint(token, peggedTokenAmount);
         assertEq(actualToken, expectedToken, "Incorrect token amount");
     }
 
@@ -434,11 +440,11 @@ contract GatewayTest is Test {
     }
 
     // --- previewRedeem ---
-    function testFuzz_previewRedeem(int256 price, uint256 redeemFee, uint256 vusdAmount) public {
+    function testFuzz_previewRedeem(int256 price, uint256 redeemFee, uint256 peggedTokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8); // Price within 0.2% of $1
         redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
-        vusdAmount = bound(vusdAmount, 0, type(uint256).max / 1e18);
+        peggedTokenAmount = bound(peggedTokenAmount, 0, type(uint256).max / 1e18);
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
@@ -446,12 +452,12 @@ contract GatewayTest is Test {
         // Calculate expected token amount
         (uint256 latestPrice, uint256 unitPrice) = treasury.getPrice(token);
         uint256 maxBps = gateway.MAX_BPS();
-        uint256 vusdAfterFee = vusdAmount.mulDiv((maxBps - gateway.redeemFee()), maxBps);
+        uint256 peggedTokenAfterFee = peggedTokenAmount.mulDiv((maxBps - gateway.redeemFee()), maxBps);
         uint256 expectedToken = latestPrice <= unitPrice
-            ? parseAmount(vusdAfterFee, address(vusd), token)
-            : parseAmount(vusdAfterFee.mulDiv(unitPrice, latestPrice), address(vusd), token);
+            ? parseAmount(peggedTokenAfterFee, address(vcUSD), token)
+            : parseAmount(peggedTokenAfterFee.mulDiv(unitPrice, latestPrice), address(vcUSD), token);
 
-        uint256 actualToken = gateway.previewRedeem(token, vusdAmount);
+        uint256 actualToken = gateway.previewRedeem(token, peggedTokenAmount);
         assertEq(actualToken, expectedToken, "Incorrect token amount");
     }
 
@@ -472,13 +478,13 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
 
-        // Calculate expected VUSD amount
-        uint256 oneVusd = parseAmount(1, address(0), address(vusd));
-        uint256 tokenForOneVusd = gateway.previewRedeem(token, oneVusd);
-        uint256 expectedVusd = tokenAmount.mulDiv(oneVusd, tokenForOneVusd, Math.Rounding.Ceil);
+        // Calculate expected PeggedToken amount
+        uint256 onePeggedToken = parseAmount(1, address(0), address(vcUSD));
+        uint256 tokenForOnePeggedToken = gateway.previewRedeem(token, onePeggedToken);
+        uint256 expectedPeggedToken = tokenAmount.mulDiv(onePeggedToken, tokenForOnePeggedToken, Math.Rounding.Ceil);
 
-        uint256 actualVusd = gateway.previewWithdraw(token, tokenAmount);
-        assertEq(actualVusd, expectedVusd, "Incorrect VUSD amount");
+        uint256 actualPeggedToken = gateway.previewWithdraw(token, tokenAmount);
+        assertEq(actualPeggedToken, expectedPeggedToken, "Incorrect PeggedToken amount");
     }
 
     function test_previewWithdraw_revertForUnsupportedToken() public {
@@ -489,13 +495,13 @@ contract GatewayTest is Test {
 
     // --- update mint limit ---
     function test_updateMintLimit() public {
-        uint256 newMintLimit = 1000 ether; // amount in VUSD decimal
+        uint256 newMintLimit = 1000 ether; // amount in PeggedToken decimal
         gateway.updateMintLimit(newMintLimit);
         assertEq(gateway.mintLimit(), newMintLimit, "Mint limit should be updated");
     }
 
     function test_updateMintLimit_revertIfNotOwner() public {
-        uint256 newMintLimit = 1000 ether; // amount in VUSD decimal
+        uint256 newMintLimit = 1000 ether; // amount in PeggedToken decimal
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
         gateway.updateMintLimit(newMintLimit);
@@ -551,7 +557,7 @@ contract GatewayTest is Test {
         assertEq(gateway.maxMint(), 100e18);
         // Increase total supply via owner mint
         vm.prank(address(gateway));
-        vusd.mint(address(this), 60e18);
+        vcUSD.mint(address(this), 60e18);
         assertEq(gateway.maxMint(), 40e18);
         // Set limit below current supply → zero
         gateway.updateMintLimit(10e18);
@@ -561,9 +567,9 @@ contract GatewayTest is Test {
     function test_maxRedeem() public {
         // With zero balance
         assertEq(gateway.maxRedeem(alice), 0);
-        // mint 50 VUSD to alice
+        // mint 50 PeggedToken to alice
         vm.prank(address(gateway));
-        vusd.mint(alice, 50e18);
+        vcUSD.mint(alice, 50e18);
         assertEq(gateway.maxRedeem(alice), 50e18);
     }
 

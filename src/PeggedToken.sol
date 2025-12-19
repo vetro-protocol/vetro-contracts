@@ -9,8 +9,8 @@ import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20P
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-/// @title VUSD, A stablecoin pegged to the US Dollar, backed by interest-generating collateral.
-contract VUSD is ERC20Permit, ERC20Burnable, Ownable2Step {
+/// @title PeggedToken, A token pegged to the USD/ETH/BTC, backed by yield-generating collateral.
+contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 
@@ -31,14 +31,18 @@ contract VUSD is ERC20Permit, ERC20Burnable, Ownable2Step {
     event AddedToBlacklist(address indexed account);
     event RemovedFromBlacklist(address indexed account);
 
-    constructor(address owner_) ERC20Permit("VUSD") ERC20("VUSD", "VUSD") Ownable(owner_) {}
+    constructor(string memory name_, string memory symbol_, address owner_)
+        ERC20Permit(name_)
+        ERC20(name_, symbol_)
+        Ownable(owner_)
+    {}
 
     /**
-     * @notice Burn VUSD from account.
+     * @notice Burn PeggedToken e.g. vcUSD from account.
      * The caller must have allowance for accounts's tokens.
      * If Gateway is the caller then approval is not required.
-     * @param account_ VUSD will be burnt from this address
-     * @param amount_ VUSD amount to burn
+     * @param account_ PeggedToken will be burnt from this address
+     * @param amount_ PeggedToken amount to burn
      *
      * @inheritdoc ERC20Burnable
      */
@@ -50,9 +54,9 @@ contract VUSD is ERC20Permit, ERC20Burnable, Ownable2Step {
     }
 
     /**
-     * @notice onlyGateway:: Mint VUSD
-     * @param account_ Address where VUSD will be minted
-     * @param amount_ VUSD amount to mint
+     * @notice onlyGateway:: Mint PeggedToken e.g. vcUSD
+     * @param account_ Address where PeggedToken will be minted
+     * @param amount_ PeggedToken amount to mint
      */
     function mint(address account_, uint256 amount_) external {
         if (msg.sender != gateway) revert CallerIsNotGateway(msg.sender);
@@ -79,7 +83,7 @@ contract VUSD is ERC20Permit, ERC20Burnable, Ownable2Step {
     }
 
     /**
-     * @notice Update VUSD gateway address
+     * @notice Update PeggedToken gateway address
      * @param newGateway_ new gateway address
      */
     function updateGateway(address newGateway_) external onlyOwner {
@@ -91,7 +95,7 @@ contract VUSD is ERC20Permit, ERC20Burnable, Ownable2Step {
     }
 
     /**
-     * @notice Update VUSD treasury address
+     * @notice Update PeggedToken treasury address
      * @param newTreasury_ new treasury address
      */
     function updateTreasury(address newTreasury_) external onlyOwner {
