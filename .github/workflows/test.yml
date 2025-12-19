@@ -28,4 +28,5 @@ jobs:
       - name: Run Forge tests
         run: |
           forge test -vvv
-        id: test
+        env:
+          ETHEREUM_FORK_NODE_URL: ${{ secrets.ETHEREUM_FORK_NODE_URL }}
