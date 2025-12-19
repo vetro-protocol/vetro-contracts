@@ -86,7 +86,7 @@ interface IGateway {
 
     // Max amounts
     /// @notice Returns maximum deposit amount possible
-    function maxDeposit() external view returns (uint256);
+    function maxDeposit() external pure returns (uint256);
 
     /// @notice Returns maximum mint amount possible
     function maxMint() external view returns (uint256);

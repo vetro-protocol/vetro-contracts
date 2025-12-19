@@ -33,7 +33,7 @@ contract PeggedTokenTest is Test {
     function test_updateGateway_revertIfTreasuryIsNotSet() public {
         PeggedToken vcUSD2 = new PeggedToken("vcUSD", "vcUSD", owner);
 
-        vm.expectRevert("TreasuryIsNull()");
+        vm.expectRevert(PeggedToken.TreasuryCanNotBeZero.selector);
         vcUSD2.updateGateway(carol);
     }
 
@@ -44,7 +44,7 @@ contract PeggedTokenTest is Test {
     }
 
     function test_updateGateway_revertIfZeroAddress() public {
-        vm.expectRevert("AddressIsNull()");
+        vm.expectRevert(PeggedToken.AddressIsZero.selector);
         vcUSD.updateGateway(address(0));
     }
 
@@ -64,7 +64,7 @@ contract PeggedTokenTest is Test {
     }
 
     function test_updateTreasury_revertIfZeroAddress() public {
-        vm.expectRevert("AddressIsNull()");
+        vm.expectRevert(PeggedToken.AddressIsZero.selector);
         vcUSD.updateTreasury(address(0));
     }
 
@@ -173,7 +173,7 @@ contract PeggedTokenTest is Test {
     }
 
     function test_addToBlacklist_revertIfZeroAddress() public {
-        vm.expectRevert("AddressIsNull()");
+        vm.expectRevert(PeggedToken.AddressIsZero.selector);
         vcUSD.addToBlacklist(address(0));
     }
 

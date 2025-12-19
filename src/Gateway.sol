@@ -18,7 +18,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
-    error AddressIsNull();
+    error AddressIsZero();
     error CallerIsNotOwner(address caller);
     error ExceededMaxMint(uint256 requested, uint256 available);
     error ExceededMaxWithdraw(uint256 requested, uint256 available);
@@ -52,7 +52,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
 
     constructor(address peggedToken_, uint256 mintLimit_) {
-        if (peggedToken_ == address(0)) revert AddressIsNull();
+        if (peggedToken_ == address(0)) revert AddressIsZero();
         PEGGED_TOKEN = IPeggedToken(peggedToken_);
         mintLimit = mintLimit_;
         PEGGED_TOKEN_DECIMALS = IERC20Metadata(peggedToken_).decimals();
@@ -70,7 +70,7 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function mint(uint256 amount_, address receiver_) external onlyOwner {
-        if (receiver_ == address(0)) revert AddressIsNull();
+        if (receiver_ == address(0)) revert AddressIsZero();
         uint256 _supply = PEGGED_TOKEN.totalSupply();
         uint256 _reserve = ITreasury(treasury()).reserve();
         if (_reserve <= _supply) revert NoExcessReserve(_reserve, _supply);
@@ -211,10 +211,10 @@ contract Gateway is IGateway, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function previewWithdraw(address tokenOut_, uint256 amountOut) public view returns (uint256) {
+    function previewWithdraw(address tokenOut_, uint256 amountOut_) public view returns (uint256) {
         uint256 _onePeggedToken = 10 ** PEGGED_TOKEN_DECIMALS;
         uint256 _tokensForOnePeggedToken = _calculateTokenOutput(tokenOut_, _onePeggedToken);
-        return amountOut.mulDiv(_onePeggedToken, _tokensForOnePeggedToken, Math.Rounding.Ceil);
+        return amountOut_.mulDiv(_onePeggedToken, _tokensForOnePeggedToken, Math.Rounding.Ceil);
     }
 
     /// @inheritdoc IGateway

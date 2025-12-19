@@ -149,7 +149,7 @@ contract GatewayTest is Test {
     }
 
     function test_mint_onlyOwner_revertIfReceiverIsZeroAddress() public {
-        vm.expectRevert(Gateway.AddressIsNull.selector);
+        vm.expectRevert(Gateway.AddressIsZero.selector);
         gateway.mint(100e18, address(0));
     }
 

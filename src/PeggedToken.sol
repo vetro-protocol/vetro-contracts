@@ -14,9 +14,9 @@ contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 
-    error AddressIsNull();
+    error AddressIsZero();
     error CallerIsNotGateway(address);
-    error TreasuryIsNull();
+    error TreasuryCanNotBeZero();
     error AlreadyBlacklisted(address);
     error Blacklisted(address);
     error NotBlacklisted(address);
@@ -68,7 +68,7 @@ contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
      * @param account_ address to blacklist
      */
     function addToBlacklist(address account_) external onlyOwner {
-        if (account_ == address(0)) revert AddressIsNull();
+        if (account_ == address(0)) revert AddressIsZero();
         if (!_blacklistedAddresses.add(account_)) revert AlreadyBlacklisted(account_);
         emit AddedToBlacklist(account_);
     }
@@ -88,8 +88,8 @@ contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
      */
     function updateGateway(address newGateway_) external onlyOwner {
         // Must set treasury before setting gateway
-        if (treasury == address(0)) revert TreasuryIsNull();
-        if (newGateway_ == address(0)) revert AddressIsNull();
+        if (treasury == address(0)) revert TreasuryCanNotBeZero();
+        if (newGateway_ == address(0)) revert AddressIsZero();
         emit UpdatedGateway(gateway, newGateway_);
         gateway = newGateway_;
     }
@@ -99,7 +99,7 @@ contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
      * @param newTreasury_ new treasury address
      */
     function updateTreasury(address newTreasury_) external onlyOwner {
-        if (newTreasury_ == address(0)) revert AddressIsNull();
+        if (newTreasury_ == address(0)) revert AddressIsZero();
         emit UpdatedTreasury(treasury, newTreasury_);
         treasury = newTreasury_;
     }
