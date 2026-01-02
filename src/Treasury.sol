@@ -63,14 +63,14 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
 
     EnumerableSet.AddressSet private _whitelistedTokens;
 
-    event AddedToWhitelist(address indexed token, address vault, address oracle);
+    event AddedToWhitelist(address indexed token, address indexed vault, address indexed oracle);
     event ExcessWithdrawn(address indexed token, uint256 amount);
     event RemovedFromWhitelist(address indexed token);
     event Migrated(address indexed newTreasury);
     event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
-    event ToggledDepositActive(bool newValue);
-    event ToggledWithdrawActive(bool newValue);
+    event ToggledDepositActive(address indexed token, bool newValue);
+    event ToggledWithdrawActive(address indexed token, bool newValue);
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
@@ -177,7 +177,12 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         emit Swept(fromToken_, _amount, receiver_);
     }
 
-    /// @notice onlyOwner: Update oracle and stale period
+    /**
+     * @notice onlyOwner: Update oracle and stale period
+     * @param token_ Token to update oracle configuration for
+     * @param oracle_ New Chainlink oracle address
+     * @param newStalePeriod_ New stale period threshold in seconds
+     */
     function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyOwner {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (oracle_ == address(0)) revert AddressIsZero();
@@ -284,17 +289,21 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         }
     }
 
+    /// @notice KEEPER_ROLE: Toggle deposit activity for a whitelisted token
+    /// @param token_ Token to toggle deposit activity
     function toggleDepositActive(address token_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         bool _current = tokenConfig[token_].depositActive;
-        emit ToggledDepositActive(!_current);
+        emit ToggledDepositActive(token_, !_current);
         tokenConfig[token_].depositActive = !_current;
     }
 
+    /// @notice KEEPER_ROLE: Toggle withdraw activity for a whitelisted token
+    /// @param token_ Token to toggle withdraw activity
     function toggleWithdrawActive(address token_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         bool _current = tokenConfig[token_].withdrawActive;
-        emit ToggledWithdrawActive(!_current);
+        emit ToggledWithdrawActive(token_, !_current);
         tokenConfig[token_].withdrawActive = !_current;
     }
 

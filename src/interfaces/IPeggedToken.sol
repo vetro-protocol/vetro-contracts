@@ -11,7 +11,6 @@ interface IPeggedToken is IERC20 {
      */
     function burnFrom(address account_, uint256 amount_) external;
     function mint(address account_, uint256 amount_) external;
-    function multiTransfer(address[] memory recipients_, uint256[] memory amounts_) external returns (bool);
 
     /**
      * View Functions
