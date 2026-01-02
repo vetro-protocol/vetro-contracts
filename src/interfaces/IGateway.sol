@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {IVUSD} from "./IVUSD.sol";
+import {IPeggedToken} from "./IPeggedToken.sol";
 
-/// @title IGateway - Interface for VUSD Gateway
+/// @title IGateway - Interface for PeggedToken Gateway
 interface IGateway {
     /**
      * Write Functions
      */
     // onlyOwner functions
-    /// @notice Mints VUSD tokens directly (admin function)
-    /// @param amount_ Amount of VUSD to mint
-    /// @param receiver_ Address to receive the minted VUSD
+    /// @notice Mints PeggedToken tokens directly (admin function)
+    /// @param amount_ Amount of PeggedToken to mint
+    /// @param receiver_ Address to receive the minted PeggedToken
     function mint(uint256 amount_, address receiver_) external;
 
     /// @notice Updates the mint fee percentage
@@ -19,7 +19,7 @@ interface IGateway {
     function updateMintFee(uint256 newMintFee_) external;
 
     /// @notice Updates the maximum mint limit
-    /// @param newMintLimit_ New maximum mint limit in VUSD
+    /// @param newMintLimit_ New maximum mint limit in PeggedToken
     function updateMintLimit(uint256 newMintLimit_) external;
 
     /// @notice Updates the redeem fee percentage
@@ -27,43 +27,43 @@ interface IGateway {
     function updateRedeemFee(uint256 newRedeemFee_) external;
 
     // user functions
-    /// @notice Deposits tokens to receive VUSD
+    /// @notice Deposits tokens to receive PeggedToken
     /// @param tokenIn_ Token to deposit
     /// @param amountIn_ Amount of tokens to deposit
-    /// @param minVusdOut_ Minimum VUSD to receive
-    /// @param receiver_ Address to receive the VUSD
-    /// @return Amount of VUSD minted
-    function deposit(address tokenIn_, uint256 amountIn_, uint256 minVusdOut_, address receiver_)
+    /// @param minPeggedTokenOut_ Minimum PeggedToken to receive
+    /// @param receiver_ Address to receive the PeggedToken
+    /// @return Amount of PeggedToken minted
+    function deposit(address tokenIn_, uint256 amountIn_, uint256 minPeggedTokenOut_, address receiver_)
         external
         returns (uint256);
 
-    /// @notice Mints exact VUSD amount by depositing tokens
+    /// @notice Mints exact PeggedToken amount by depositing tokens
     /// @param tokenIn_ Token to deposit
-    /// @param vusdOut_ Exact VUSD amount to mint
+    /// @param peggedTokenOut_ Exact PeggedToken amount to mint
     /// @param maxAmountIn_ Maximum tokens to deposit
-    /// @param receiver_ Address to receive the VUSD
+    /// @param receiver_ Address to receive the PeggedToken
     /// @return Amount of tokens deposited
-    function mint(address tokenIn_, uint256 vusdOut_, uint256 maxAmountIn_, address receiver_)
+    function mint(address tokenIn_, uint256 peggedTokenOut_, uint256 maxAmountIn_, address receiver_)
         external
         returns (uint256);
 
-    /// @notice Redeems VUSD for exact token amount
+    /// @notice Redeems PeggedToken for exact token amount
     /// @param tokenOut_ Token to receive
-    /// @param vusdIn_ VUSD amount to burn
+    /// @param peggedTokenIn_ PeggedToken amount to burn
     /// @param minAmountOut_ Minimum tokens to receive
     /// @param receiver_ Address to receive the tokens
     /// @return Amount of tokens received
-    function redeem(address tokenOut_, uint256 vusdIn_, uint256 minAmountOut_, address receiver_)
+    function redeem(address tokenOut_, uint256 peggedTokenIn_, uint256 minAmountOut_, address receiver_)
         external
         returns (uint256);
 
-    /// @notice Withdraws exact token amount by burning VUSD
+    /// @notice Withdraws exact token amount by burning PeggedToken
     /// @param tokenOut_ Token to receive
     /// @param amountOut_ Exact token amount to receive
-    /// @param maxVusdIn_ Maximum VUSD to burn
+    /// @param maxPeggedTokenIn_ Maximum PeggedToken to burn
     /// @param receiver_ Address to receive the tokens
-    /// @return Amount of VUSD burnt
-    function withdraw(address tokenOut_, uint256 amountOut_, uint256 maxVusdIn_, address receiver_)
+    /// @return Amount of PeggedToken burnt
+    function withdraw(address tokenOut_, uint256 amountOut_, uint256 maxPeggedTokenIn_, address receiver_)
         external
         returns (uint256);
 
@@ -71,9 +71,9 @@ interface IGateway {
      * View Functions
      */
     // State getters
-    /// @notice Returns VUSD token contract
+    /// @notice Returns PeggedToken token contract
     /// forge-lint: disable-next-line(mixed-case-function)
-    function VUSD() external view returns (IVUSD);
+    function PEGGED_TOKEN() external view returns (IPeggedToken);
 
     /// @notice Returns current mint fee in basis points
     function mintFee() external view returns (uint256);
@@ -81,7 +81,7 @@ interface IGateway {
     /// @notice Returns current redeem fee in basis points
     function redeemFee() external view returns (uint256);
 
-    /// @notice Returns current mint limit in VUSD
+    /// @notice Returns current mint limit in PeggedToken
     function mintLimit() external view returns (uint256);
 
     // Max amounts
@@ -91,7 +91,7 @@ interface IGateway {
     /// @notice Returns maximum mint amount possible
     function maxMint() external view returns (uint256);
 
-    /// @notice Returns maximum VUSD amount owner can redeem
+    /// @notice Returns maximum PeggedToken amount owner can redeem
     /// @param owner_ Address to check redeem limit for
     function maxRedeem(address owner_) external view returns (uint256);
 
@@ -100,29 +100,29 @@ interface IGateway {
     function maxWithdraw(address tokenOut_) external view returns (uint256);
 
     // Preview functions
-    /// @notice Simulates deposit of tokens for VUSD
+    /// @notice Simulates deposit of tokens for PeggedToken
     /// @param tokenIn_ Token to deposit
     /// @param amountIn_ Amount of tokens to deposit
-    /// @return _vusdOut Expected VUSD output
-    function previewDeposit(address tokenIn_, uint256 amountIn_) external view returns (uint256 _vusdOut);
+    /// @return _peggedTokenOut Expected PeggedToken output
+    function previewDeposit(address tokenIn_, uint256 amountIn_) external view returns (uint256 _peggedTokenOut);
 
-    /// @notice Simulates minting exact VUSD amount
+    /// @notice Simulates minting exact PeggedToken amount
     /// @param tokenIn_ Token to deposit
-    /// @param vusdOut_ VUSD amount to mint
+    /// @param peggedTokenOut_ PeggedToken amount to mint
     /// @return _amountIn Required token input
-    function previewMint(address tokenIn_, uint256 vusdOut_) external view returns (uint256 _amountIn);
+    function previewMint(address tokenIn_, uint256 peggedTokenOut_) external view returns (uint256 _amountIn);
 
-    /// @notice Simulates redeeming VUSD for tokens
+    /// @notice Simulates redeeming PeggedToken for tokens
     /// @param tokenOut_ Token to receive
-    /// @param vusdIn_ VUSD amount to redeem
+    /// @param peggedTokenIn_ PeggedToken amount to redeem
     /// @return _amountOut Expected token output
-    function previewRedeem(address tokenOut_, uint256 vusdIn_) external view returns (uint256 _amountOut);
+    function previewRedeem(address tokenOut_, uint256 peggedTokenIn_) external view returns (uint256 _amountOut);
 
     /// @notice Simulates withdrawing exact token amount
     /// @param tokenOut_ Token to withdraw
     /// @param amountOut_ Token amount to withdraw
-    /// @return _vusdIn Required VUSD input
-    function previewWithdraw(address tokenOut_, uint256 amountOut_) external view returns (uint256 _vusdIn);
+    /// @return _peggedTokenIn Required PeggedToken input
+    function previewWithdraw(address tokenOut_, uint256 amountOut_) external view returns (uint256 _peggedTokenIn);
 
     // Other getters
     /// @notice Returns contract owner address

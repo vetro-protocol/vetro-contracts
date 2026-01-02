@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {IVUSD} from "./IVUSD.sol";
+import {IPeggedToken} from "./IPeggedToken.sol";
 
-/// @title ITreasury - Interface for VUSD Treasury
+/// @title ITreasury - Interface for PeggedToken Treasury
 interface ITreasury {
     /**
      * Write Functions
@@ -19,6 +19,6 @@ interface ITreasury {
     function isWhitelistedToken(address token_) external view returns (bool);
     function reserve() external view returns (uint256 _reserve);
     /// forge-lint: disable-next-line(mixed-case-function)
-    function VUSD() external view returns (IVUSD);
+    function PEGGED_TOKEN() external view returns (IPeggedToken);
     function withdrawable(address token_) external view returns (uint256);
 }
