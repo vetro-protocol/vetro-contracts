@@ -20,6 +20,7 @@ contract TreasuryTest is Test {
     MockChainlinkOracle mockOracle;
     address owner;
     address keeper = makeAddr("keeper");
+    address maintainer = makeAddr("maintainer");
     address gateway = makeAddr("gateway");
     address alice = makeAddr("alice");
 
@@ -42,6 +43,7 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
         keeperRole = treasury.KEEPER_ROLE();
         ummRole = treasury.UMM_ROLE();
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), maintainer);
     }
 
     // --- addToWhitelist ---
@@ -156,6 +158,7 @@ contract TreasuryTest is Test {
     // --- updateOracle ---
     function test_updateOracle_success() public {
         address _newOracle = address(new MockChainlinkOracle(2e8));
+        vm.prank(maintainer);
         treasury.updateOracle(address(token), _newOracle, 2 hours);
         (, address _oracle, uint256 _stalePeriod,,,) = treasury.tokenConfig(address(token));
         assertEq(_oracle, _newOracle);
@@ -166,22 +169,26 @@ contract TreasuryTest is Test {
         MockERC20 _token2 = new MockERC20();
         MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8);
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        vm.prank(maintainer);
         treasury.updateOracle(address(_token2), address(_oracle2), 1 hours);
     }
 
     function test_updateOracle_revertOnZeroAddress() public {
         vm.expectRevert(Treasury.AddressIsZero.selector);
+        vm.prank(maintainer);
         treasury.updateOracle(address(token), address(0), 1 hours);
     }
 
     function test_updateOracle_revertOnStalePeriodZero() public {
         MockChainlinkOracle _newOracle = new MockChainlinkOracle(2e8);
         vm.expectRevert(Treasury.InvalidStalePeriod.selector);
+        vm.prank(maintainer);
         treasury.updateOracle(address(token), address(_newOracle), 0);
     }
 
     // --- updatePriceTolerance ---
     function test_updatePriceTolerance_success() public {
+        vm.prank(maintainer);
         treasury.updatePriceTolerance(500);
         assertEq(treasury.priceTolerance(), 500);
     }
@@ -189,18 +196,21 @@ contract TreasuryTest is Test {
     function test_updatePriceTolerance_revertIfTooHigh() public {
         uint256 _max = treasury.MAX_BPS();
         vm.expectRevert(Treasury.InvalidPriceTolerance.selector);
+        vm.prank(maintainer);
         treasury.updatePriceTolerance(_max + 1);
     }
 
     // --- updateSwapper ---
     function test_updateSwapper_success() public {
         address _newSwapper = makeAddr("newSwapper");
+        vm.prank(maintainer);
         treasury.updateSwapper(_newSwapper);
         assertEq(treasury.swapper(), _newSwapper);
     }
 
     function test_updateSwapper_revertOnZeroAddress() public {
         vm.expectRevert(Treasury.AddressIsZero.selector);
+        vm.prank(maintainer);
         treasury.updateSwapper(address(0));
     }
 

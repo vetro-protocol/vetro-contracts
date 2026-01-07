@@ -42,6 +42,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     string public constant VERSION = "1.0.0";
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
     bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
+    bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
 
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public priceTolerance = 100; // 1% based on BPS
@@ -83,6 +84,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
 
         _grantRole(DEFAULT_ADMIN_ROLE, owner());
         _grantRole(KEEPER_ROLE, msg.sender);
+        _grantRole(MAINTAINER_ROLE, msg.sender);
     }
 
     modifier onlyGateway() {
@@ -177,13 +179,17 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         emit Swept(fromToken_, _amount, receiver_);
     }
 
+    /*/////////////////////////////////////////////////////////////
+                            MAINTAINER_ROLE
+    /////////////////////////////////////////////////////////////*/
+
     /**
-     * @notice onlyOwner: Update oracle and stale period
+     * @notice MAINTAINER_ROLE: Update oracle and stale period
      * @param token_ Token to update oracle configuration for
      * @param oracle_ New Chainlink oracle address
      * @param newStalePeriod_ New stale period threshold in seconds
      */
-    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyOwner {
+    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyRole(MAINTAINER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (oracle_ == address(0)) revert AddressIsZero();
         if (newStalePeriod_ == 0) revert InvalidStalePeriod();
@@ -194,18 +200,18 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         emit UpdatedOracle(token_, oracle_, newStalePeriod_);
     }
 
-    /// @notice onlyOwner: Update oracle price tolerance
-    function updatePriceTolerance(uint256 newPriceTolerance_) external onlyOwner {
+    /// @notice MAINTAINER_ROLE: Update oracle price tolerance
+    function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
         if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
         emit UpdatedPriceTolerance(priceTolerance, newPriceTolerance_);
         priceTolerance = newPriceTolerance_;
     }
 
     /**
-     * @notice onlyOwner: Update swapper address
+     * @notice MAINTAINER_ROLE: Update swapper address
      * @param swapper_ new swapper address
      */
-    function updateSwapper(address swapper_) external onlyOwner {
+    function updateSwapper(address swapper_) external onlyRole(MAINTAINER_ROLE) {
         if (swapper_ == address(0)) revert AddressIsZero();
         emit UpdatedSwapper(address(swapper), swapper_);
         swapper = swapper_;
