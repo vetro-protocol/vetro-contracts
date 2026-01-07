@@ -31,7 +31,7 @@ contract GatewayTest is Test {
     function setUp() public {
         owner = address(this);
         vcUSD = new PeggedToken("vcUSD", "vcUSD", owner);
-        treasury = new Treasury(address(vcUSD));
+        treasury = new Treasury(address(vcUSD), owner);
         vcUSD.updateTreasury(address(treasury));
 
         // Deploy Gateway implementation
@@ -120,7 +120,7 @@ contract GatewayTest is Test {
 
     function test_deposit_revertIfMaxMintExceeded() public {
         mockOracle.updatePrice(1e8);
-        // update mint limit to 100 PEGGEDTOKEN
+        // update mint limit to 100 PEGGED_TOKEN
         gateway.updateMintLimit(100e18);
 
         uint256 amount = parseAmount(1000, address(0), token);

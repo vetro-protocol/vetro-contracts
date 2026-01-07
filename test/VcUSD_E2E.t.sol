@@ -35,7 +35,7 @@ contract VcUSD_E2E_Test is Test {
         usdcVault = tvUSDC;
         // Deploy core contracts
         vcUSD = new PeggedToken("viaUSD", "viaUSD", owner);
-        treasury = new Treasury(address(vcUSD));
+        treasury = new Treasury(address(vcUSD), owner);
         vcUSD.updateTreasury(address(treasury));
 
         // Deploy Gateway implementation

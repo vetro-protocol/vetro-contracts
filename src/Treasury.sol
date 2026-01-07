@@ -2,7 +2,9 @@
 
 pragma solidity 0.8.30;
 
-import {AccessControlEnumerable} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
+import {
+    AccessControlDefaultAdminRules
+} from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -16,7 +18,7 @@ import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {ITreasury} from "./interfaces/ITreasury.sol";
 
 /// @title PeggedToken Treasury
-contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
+contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -77,12 +79,16 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
     event WithdrawnAll(address[] tokens, address indexed receiver);
 
-    constructor(address peggedToken_) {
+    constructor(address peggedToken_, address admin_)
+        AccessControlDefaultAdminRules(
+            3 days, // delay for admin transfers
+            admin_ // initial admin
+        )
+    {
         if (peggedToken_ == address(0)) revert AddressIsZero();
         PEGGED_TOKEN = IPeggedToken(peggedToken_);
         NAME = string.concat(IERC20Metadata(peggedToken_).symbol(), "-Treasury");
 
-        _grantRole(DEFAULT_ADMIN_ROLE, owner());
         _grantRole(KEEPER_ROLE, msg.sender);
         _grantRole(MAINTAINER_ROLE, msg.sender);
     }
@@ -396,11 +402,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     /// @notice Returns whether given token is whitelisted
     function isWhitelistedToken(address token_) external view returns (bool) {
         return _whitelistedTokens.contains(token_);
-    }
-
-    /// @dev Owner is defined in PeggedToken token contract only
-    function owner() public view returns (address) {
-        return PEGGED_TOKEN.owner();
     }
 
     /// @notice Return total reserve value in USD

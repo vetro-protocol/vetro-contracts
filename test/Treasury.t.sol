@@ -33,7 +33,7 @@ contract TreasuryTest is Test {
     function setUp() public {
         owner = address(this);
         vcUSD = new PeggedToken("vcUSD", "vcUSD", owner);
-        treasury = new Treasury(address(vcUSD));
+        treasury = new Treasury(address(vcUSD), owner);
         vcUSD.updateTreasury(address(treasury));
         vcUSD.updateGateway(gateway);
         token = new MockERC20();
@@ -107,7 +107,7 @@ contract TreasuryTest is Test {
 
     // --- migrate ---
     function test_migrate_success() public {
-        Treasury _newTreasury = new Treasury(address(vcUSD));
+        Treasury _newTreasury = new Treasury(address(vcUSD), owner);
         uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
         uint256 _vaultShares = 50 * VAULT_UNIT; // 50 shares
         deal(address(token), address(treasury), _tokenAmount);
@@ -125,7 +125,7 @@ contract TreasuryTest is Test {
 
     function test_migrate_revertOnPeggedTokenMismatch() public {
         PeggedToken _fakePeggedToken = new PeggedToken("fakeVcUSD", "fakeVcUSD", owner);
-        Treasury _newTreasury = new Treasury(address(_fakePeggedToken));
+        Treasury _newTreasury = new Treasury(address(_fakePeggedToken), owner);
         vm.expectRevert(Treasury.PeggedTokenMismatch.selector);
         treasury.migrate(address(_newTreasury));
     }
