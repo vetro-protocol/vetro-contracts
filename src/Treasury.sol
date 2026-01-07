@@ -98,22 +98,20 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         _;
     }
 
-    modifier onlyOwner() {
-        if (msg.sender != owner()) revert CallerIsNotAuthorized(msg.sender);
-        _;
-    }
-
     /*/////////////////////////////////////////////////////////////
-                            onlyOwner
-    /////////////////////////////////////////////////////////////*/
+                            DEFAULT_ADMIN_ROLE
+    /*/////////////////////////////////////////////////////////////
     /**
-     * @notice onlyOwner: Add token as whitelisted token for PeggedToken
+     * @notice DEFAULT_ADMIN_ROLE: Add token as whitelisted token for PeggedToken
      * @param token_ token address to add in whitelist.
      * @param vault_ ERC4626 yield vault address correspond to _token
      * @param oracle_ Chainlink oracle address for token/USD feed
      * @param stalePeriod_ Custom stale period for oracle price
      */
-    function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_) external onlyOwner {
+    function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         if (token_ == address(0) || vault_ == address(0) || oracle_ == address(0)) revert AddressIsZero();
         if (stalePeriod_ == 0) revert InvalidStalePeriod();
         uint8 _decimals = IERC20Metadata(token_).decimals();
@@ -135,11 +133,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     }
 
     /**
-     * @notice onlyOwner: Remove token from whitelist
+     * @notice DEFAULT_ADMIN_ROLE: Remove token from whitelist
      * @dev Removing token even if treasury has some balance of that token is intended behavior.
      * @param token_ token address to remove from whitelist.
      */
-    function removeFromWhitelist(address token_) external onlyOwner {
+    function removeFromWhitelist(address token_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
         IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
         if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
@@ -149,10 +147,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     }
 
     /**
-     * @notice onlyOwner: Migrate assets to new treasury
+     * @notice DEFAULT_ADMIN_ROLE: Migrate assets to new treasury
      * @param newTreasury_ Address of new treasury of PeggedToken
      */
-    function migrate(address newTreasury_) external onlyOwner {
+    function migrate(address newTreasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTreasury_ == address(0)) revert AddressIsZero();
         if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
         uint256 _len = _whitelistedTokens.length();
@@ -167,12 +165,12 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     }
 
     /**
-     * @notice onlyOwner: Sweep any ERC20 token to owner address
-     * @dev OnlyOwner can call this and vault shares are not allowed to sweep
+     * @notice DEFAULT_ADMIN_ROLE: Sweep any ERC20 token to owner address
+     * @dev DEFAULT_ADMIN_ROLE can call this and vault shares are not allowed to sweep
      * @param fromToken_ Token address to sweep
      * @param receiver_ recipient of tokens being swept
      */
-    function sweep(address fromToken_, address receiver_) external onlyOwner {
+    function sweep(address fromToken_, address receiver_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
         if (_whitelistedTokens.contains(fromToken_)) revert ReservedToken();
         uint256 _len = _whitelistedTokens.length();

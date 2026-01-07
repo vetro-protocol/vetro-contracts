@@ -29,6 +29,10 @@ contract TreasuryTest is Test {
 
     bytes32 keeperRole;
     bytes32 ummRole;
+    bytes32 defaultAdminRole;
+
+    bytes4 constant UNAUTHORIZED_ACCOUNT_SELECTOR =
+        bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
 
     function setUp() public {
         owner = address(this);
@@ -43,6 +47,7 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
         keeperRole = treasury.KEEPER_ROLE();
         ummRole = treasury.UMM_ROLE();
+        defaultAdminRole = treasury.DEFAULT_ADMIN_ROLE();
         treasury.grantRole(treasury.MAINTAINER_ROLE(), maintainer);
     }
 
@@ -83,6 +88,15 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
     }
 
+    function test_addToWhitelist_revertIfNotDefaultAdmin() public {
+        MockERC20 _token2 = new MockERC20();
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
+        MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8);
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
+        vm.prank(alice);
+        treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
+    }
+
     // --- removeFromWhitelist ---
     function test_removeFromWhitelist_success() public {
         treasury.removeFromWhitelist(address(token));
@@ -102,6 +116,12 @@ contract TreasuryTest is Test {
         treasury.deposit(address(token), _tokenAmount);
         assertTrue(mockVault.balanceOf(address(treasury)) > 0);
         vm.expectRevert(Treasury.BalanceShouldBeZero.selector);
+        treasury.removeFromWhitelist(address(token));
+    }
+
+    function test_removeFromWhitelist_revertIfNotDefaultAdmin() public {
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
+        vm.prank(alice);
         treasury.removeFromWhitelist(address(token));
     }
 
@@ -130,6 +150,13 @@ contract TreasuryTest is Test {
         treasury.migrate(address(_newTreasury));
     }
 
+    function test_migrate_revertIfNotDefaultAdmin() public {
+        Treasury _newTreasury = new Treasury(address(vcUSD), owner);
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
+        vm.prank(alice);
+        treasury.migrate(address(_newTreasury));
+    }
+
     // --- sweep ---
     function test_sweep_success() public {
         MockERC20 _other = new MockERC20();
@@ -153,6 +180,13 @@ contract TreasuryTest is Test {
     function test_sweep_revertOnVaultShareToken() public {
         vm.expectRevert(Treasury.ReservedToken.selector);
         treasury.sweep(address(mockVault), alice);
+    }
+
+    function test_sweep_revertIfNotDefaultAdmin() public {
+        MockERC20 _other = new MockERC20();
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
+        vm.prank(alice);
+        treasury.sweep(address(_other), alice);
     }
 
     // --- updateOracle ---
