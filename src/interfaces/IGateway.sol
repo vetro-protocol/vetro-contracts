@@ -26,6 +26,21 @@ interface IGateway {
     /// @param newRedeemFee_ New fee in basis points (1 = 0.01%)
     function updateRedeemFee(uint256 newRedeemFee_) external;
 
+    /// @notice Toggles the withdrawal delay feature on/off
+    function toggleWithdrawalDelay() external;
+
+    /// @notice Updates the withdrawal delay period
+    /// @param newDelay_ New delay period in seconds
+    function updateWithdrawalDelay(uint256 newDelay_) external;
+
+    /// @notice Adds address to instant redeem whitelist
+    /// @param account_ Address to whitelist
+    function addToInstantRedeemWhitelist(address account_) external;
+
+    /// @notice Removes address from instant redeem whitelist
+    /// @param account_ Address to remove from whitelist
+    function removeFromInstantRedeemWhitelist(address account_) external;
+
     // user functions
     /// @notice Deposits tokens to receive PeggedToken
     /// @param tokenIn_ Token to deposit
@@ -66,6 +81,15 @@ interface IGateway {
     function withdraw(address tokenOut_, uint256 amountOut_, uint256 maxPeggedTokenIn_, address receiver_)
         external
         returns (uint256);
+
+    /// @notice Requests a redeem with delay period (locks peggedToken in contract)
+    /// @param tokenOut_ Token to redeem for
+    /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
+    function requestRedeem(address tokenOut_, uint256 peggedTokenAmount_) external;
+
+    /// @notice Cancels redeem request and returns locked peggedToken to user
+    /// @param tokenOut_ Token address for the request to cancel
+    function cancelRedeemRequest(address tokenOut_) external;
 
     /**
      * View Functions
@@ -130,4 +154,37 @@ interface IGateway {
 
     /// @notice Returns treasury contract address
     function treasury() external view returns (address);
+
+    /// @notice Returns withdrawal delay enabled status
+    function withdrawalDelayEnabled() external view returns (bool);
+
+    /// @notice Returns withdrawal delay period in seconds
+    function withdrawalDelay() external view returns (uint256);
+
+    /// @notice Gets redeem request details for a user and specific token
+    /// @param user_ User address
+    /// @param tokenOut_ Token address
+    /// @return amountLocked Amount of peggedToken locked in Gateway contract
+    /// @return claimableAt Timestamp when request can be claimed
+    function getRedeemRequest(address user_, address tokenOut_)
+        external
+        view
+        returns (uint256 amountLocked, uint256 claimableAt);
+
+    /// @notice Checks if address is whitelisted for instant redeem/withdraw
+    /// @param account_ Address to check
+    /// @return True if whitelisted
+    function isInstantRedeemWhitelisted(address account_) external view returns (bool);
+
+    /// @notice Gets all whitelisted addresses
+    /// @return Array of whitelisted addresses
+    function getInstantRedeemWhitelist() external view returns (address[] memory);
+
+    /// @notice Gets total peggedToken requested for redemption for a specific token
+    /// @param tokenOut_ Token address to check queue for
+    /// @return Total peggedToken amount in redemption queue for the token
+    function getRedeemQueueForToken(address tokenOut_) external view returns (uint256);
+
+    /// @notice Returns the name of the Gateway
+    function NAME() external view returns (string memory);
 }
