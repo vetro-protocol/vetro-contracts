@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {Gateway} from "src/Gateway.sol";
 import {Treasury} from "src/Treasury.sol";
@@ -37,9 +38,19 @@ contract VcUSD_E2E_Test is Test {
         treasury = new Treasury(address(vcUSD));
         vcUSD.updateTreasury(address(treasury));
 
-        // Set a large mint limit for E2E
-        gateway = new Gateway(address(vcUSD), type(uint256).max);
+        // Deploy Gateway implementation
+        Gateway implementation = new Gateway();
+
+        // Deploy proxy and initialize with a large mint limit for E2E
+        bytes memory initData =
+            abi.encodeWithSelector(Gateway.initialize.selector, address(vcUSD), type(uint256).max, 7 days);
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+        gateway = Gateway(address(proxy));
+
         vcUSD.updateGateway(address(gateway));
+
+        // Disable withdrawal delay for E2E tests (allows instant redemptions)
+        gateway.toggleWithdrawalDelay();
 
         // Whitelist USDC backed by real usdcVault using Chainlink USDC/USD feed
         treasury.addToWhitelist(USDC, usdcVault, USDC_USD_FEED, 24 hours);
@@ -133,4 +144,3 @@ contract VcUSD_E2E_Test is Test {
         assertEq(treasury.reserve(), vcUSD.totalSupply());
     }
 }
-

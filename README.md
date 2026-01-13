@@ -14,6 +14,7 @@ Version 2.0 introduces a modular and robust architecture that separates user int
 -   **Automated Liquidity Provisioning**: A portion of the generated yield can be used to deepen liquidity on decentralized exchanges.
 -   **Modular & Secure Architecture**: Core logic is split into `Gateway`, `Treasury`, and `PeggedToken` contracts for clarity and security.
 -   **Flexible User Actions**: Users can either specify the input amount (`deposit`/`redeem`) or the desired output amount (`mint`/`withdraw`).
+-   **Withdrawal Delay System**: Optional time-lock mechanism for redemptions with instant redeem whitelist for trusted addresses.
 -   **Robust Governance**: A secure Owner-Keeper model separates strategic decisions from routine operational tasks.
 -   **Secure and Audited**: Built with security as a first principle, with comprehensive test coverage.
 
@@ -45,9 +46,60 @@ graph TD
 
 ### Core Components
 
-1.  **`Gateway.sol`**: The single entry and exit point for all users. It handles the logic for the four primary user actions (`deposit`, `mint`, `redeem`, `withdraw`). To execute all calculations securely, the Gateway queries the `Treasury` for real-time asset prices and uses this data along with fees, price tolerance, and mint limits.
+1.  **`Gateway.sol`**: The single entry and exit point for all users. It handles the logic for the four primary user actions (`deposit`, `mint`, `redeem`, `withdraw`) as well as the withdrawal delay system for enhanced security. To execute all calculations securely, the Gateway queries the `Treasury` for real-time asset prices and uses this data along with fees, price tolerance, and mint limits.
 2.  **`Treasury.sol`**: The custodian of all collateral. It manages the whitelist of supported assets, interfaces with yield-generating protocols, and integrates with Chainlink oracles. It serves as the single source of truth for asset prices and risk parameters.
 3.  **`PeggedToken.sol`**: The ERC20 pegged token contract (e.g., vcUSD, vcETH, vcBTC). It includes `ERC20Permit` for gasless approvals and ensures that only the `Gateway` contract can mint new tokens.
+
+## Withdrawal Delay & Redeem Request System
+
+The Gateway implements an optional withdrawal delay mechanism that adds a time-lock to redemption operations, providing an additional layer of security for the protocol and its users.
+
+### How It Works
+
+When the withdrawal delay is **enabled**, users have two options for redeeming their pegged tokens:
+
+#### Option 1: Request Redeem (Delayed Withdrawal)
+
+Users can submit a redemption request that locks their pegged tokens in the Gateway contract for a configurable delay period (e.g., 7 days):
+
+1. **`requestRedeem(tokenOut, peggedTokenAmount)`**: Locks the specified amount of pegged tokens in the Gateway and initiates a redemption request. After the delay period passes, the user can execute `redeem()` or `withdraw()` using their locked balance.
+
+2. **`cancelRedeemRequest(tokenOut)`**: Users can cancel their pending request at any time before claiming, which immediately returns their locked tokens.
+
+3. **Multiple Requests**: If a user submits a new request while having an active one for the same token, the amounts are merged and the delay timer resets.
+
+4. **Per-Token Requests**: Each user can have separate active requests for different output tokens (e.g., one request for USDC, another for DAI).
+
+#### Option 2: Instant Redeem (Whitelisted Addresses)
+
+Certain addresses can be added to the **instant redeem whitelist** by the protocol owner, allowing them to bypass the withdrawal delay entirely:
+
+- Whitelisted addresses can call `redeem()` or `withdraw()` directly without submitting a request
+- Useful for protocol-owned liquidity, integrations, or trusted contracts
+- Owner can manage whitelist via `addToInstantRedeemWhitelist()` and `removeFromInstantRedeemWhitelist()`
+
+### Configuration
+
+The withdrawal delay system can be configured by the protocol owner:
+
+- **`toggleWithdrawalDelay()`**: Enable or disable the withdrawal delay feature globally. When disabled, all users can redeem instantly.
+- **`updateWithdrawalDelay(newDelay)`**: Adjust the delay period (e.g., change from 7 days to 14 days).
+
+### Benefits
+
+**For Users:**
+
+- **Enhanced Security**: Time-lock provides a buffer period to detect and respond to potential security issues
+- **Flexibility**: Users can cancel requests if they change their mind
+- **Partial Redemptions**: Users can redeem a portion of their requested amount while keeping the rest locked
+- **Excess Redemptions**: Users with claimable requests can redeem more than their locked amount (the excess requires instant redeem permission)
+
+**For Treasury Management:**
+
+- **Liquidity Planning**: The protocol can query pending redemption amounts per token via `getRedeemQueueForToken(tokenOut)` to understand upcoming withdrawal demand
+- **Proactive Buffer Management**: Treasury keepers can maintain appropriate liquidity buffers based on the withdrawal queue, ensuring sufficient funds are available when requests become claimable
+- **Optimized Yield Strategy**: By knowing which tokens and amounts are queued for withdrawal, the protocol can proactively withdraw from yield vaults only when needed, maximizing yield generation while ensuring liquidity for redemptions
+- **Risk Management**: The queue provides visibility into potential large withdrawals, allowing the protocol to prepare and manage liquidity risk effectively
 
 ## Governance: The Owner-Keeper Model
 
