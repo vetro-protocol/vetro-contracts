@@ -22,6 +22,7 @@ contract GatewayTest is Test {
     Gateway gateway;
     Treasury treasury;
     address owner;
+    address admin = makeAddr("admin");
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
     address token;
@@ -31,7 +32,7 @@ contract GatewayTest is Test {
     function setUp() public {
         owner = address(this);
         vcUSD = new PeggedToken("vcUSD", "vcUSD", owner);
-        treasury = new Treasury(address(vcUSD), owner);
+        treasury = new Treasury(address(vcUSD), admin);
         vcUSD.updateTreasury(address(treasury));
 
         // Deploy Gateway implementation
@@ -48,7 +49,11 @@ contract GatewayTest is Test {
         token = address(new MockERC20());
         mockVault = new MockYieldVault(address(token));
         mockOracle = new MockChainlinkOracle(0.999e8);
+
+        vm.startPrank(admin);
         treasury.addToWhitelist(token, address(mockVault), address(mockOracle), 1 hours);
+        treasury.grantRole(treasury.UMM_ROLE(), owner);
+        vm.stopPrank();
     }
 
     function mintPeggedToken(address user, uint256 vcUSDAmount) internal returns (uint256) {
@@ -121,6 +126,7 @@ contract GatewayTest is Test {
     function test_deposit_revertIfMaxMintExceeded() public {
         mockOracle.updatePrice(1e8);
         // update mint limit to 100 PEGGED_TOKEN
+        vm.prank(admin);
         gateway.updateMintLimit(100e18);
 
         uint256 amount = parseAmount(1000, address(0), token);
@@ -143,8 +149,8 @@ contract GatewayTest is Test {
         gateway.deposit(address(token), amt, 0, address(this));
     }
 
-    // --- mint only owner ---
-    function test_mint_onlyOwner() public {
+    // --- mint only UMM role ---
+    function test_mint_onlyUMMRole() public {
         // add tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 10000e6);
 
@@ -153,22 +159,23 @@ contract GatewayTest is Test {
         assertEq(vcUSD.balanceOf(bob), 0, "Incorrect PeggedToken balance");
         gateway.mint(amount, bob);
         uint256 newSupply = vcUSD.totalSupply();
-        assertEq(newSupply, initialSupply + amount, "owner should be able to mint PeggedToken");
+        assertEq(newSupply, initialSupply + amount, "UMM role should be able to mint PeggedToken");
         assertEq(vcUSD.balanceOf(bob), amount, "Incorrect PeggedToken balance");
     }
 
-    function test_mint_onlyOwner_revertIfReceiverIsZeroAddress() public {
+    function test_mint_onlyUMMRole_revertIfReceiverIsZeroAddress() public {
         vm.expectRevert(Gateway.AddressIsZero.selector);
         gateway.mint(100e18, address(0));
     }
 
-    function test_mint_onlyOwner_revertIfNotOwner() public {
+    function test_mint_onlyUMMRole_revertIfNotAuthorized() public {
+        bytes32 _role = treasury.UMM_ROLE();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", alice));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
         gateway.mint(100e18, alice);
     }
 
-    function test_mint_onlyOwner_revertIfNoExcessReserve() public {
+    function test_mint_onlyUMMRole_revertIfNoExcessReserve() public {
         mockOracle.updatePrice(1e8);
         // mint 50 PeggedToken
         vm.prank(address(gateway));
@@ -180,7 +187,7 @@ contract GatewayTest is Test {
         gateway.mint(1e18, bob);
     }
 
-    function test_mint_onlyOwner_revertIfExcessReserveExceeded() public {
+    function test_mint_onlyUMMRole_revertIfExcessReserveExceeded() public {
         mockOracle.updatePrice(1e8);
         // add tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 100e6);
@@ -189,12 +196,13 @@ contract GatewayTest is Test {
         gateway.mint(101e18, bob);
     }
 
-    function test_mint_onlyOwner_revertIfMaxMintExceeded() public {
+    function test_mint_onlyUMMRole_revertIfMaxMintExceeded() public {
         mockOracle.updatePrice(1e8);
         // add tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 200e6);
 
         // update mint limit to 100 PeggedToken
+        vm.prank(admin);
         gateway.updateMintLimit(100e18);
 
         vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", 101e18, 100e18));
@@ -260,6 +268,7 @@ contract GatewayTest is Test {
 
     function test_mint_revertIfMaxMintExceeded() public {
         // Set mint limit to 100 PeggedToken
+        vm.prank(admin);
         gateway.updateMintLimit(100e18);
 
         uint256 vcUSDAmount = 101e18; // Try to mint more than limit
@@ -507,14 +516,15 @@ contract GatewayTest is Test {
     // --- update mint limit ---
     function test_updateMintLimit() public {
         uint256 newMintLimit = 1000 ether; // amount in PeggedToken decimal
+        vm.prank(admin);
         gateway.updateMintLimit(newMintLimit);
         assertEq(gateway.mintLimit(), newMintLimit, "Mint limit should be updated");
     }
 
-    function test_updateMintLimit_revertIfNotOwner() public {
+    function test_updateMintLimit_revertIfNotDefaultAdminRole() public {
         uint256 newMintLimit = 1000 ether; // amount in PeggedToken decimal
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, 0x00));
         gateway.updateMintLimit(newMintLimit);
     }
 
@@ -525,10 +535,11 @@ contract GatewayTest is Test {
         assertEq(gateway.mintFee(), newFee, "Mint fee should be updated");
     }
 
-    function test_updateMintFee_revertIfNotOwner() public {
+    function test_updateMintFee_revertIfNotMaintainerRole() public {
         uint256 newFee = 500;
+        bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, _role));
         gateway.updateMintFee(newFee);
     }
 
@@ -545,10 +556,11 @@ contract GatewayTest is Test {
         assertEq(gateway.redeemFee(), newFee, "Redeem fee should be updated");
     }
 
-    function test_updateRedeemFee_revertIfNotOwner() public {
+    function test_updateRedeemFee_revertIfNotMaintainerRole() public {
         uint256 newFee = 500;
+        bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, _role));
         gateway.updateRedeemFee(newFee);
     }
 
@@ -564,6 +576,7 @@ contract GatewayTest is Test {
 
     function test_maxMint() public {
         // With zero supply
+        vm.prank(admin);
         gateway.updateMintLimit(100e18);
         assertEq(gateway.maxMint(), 100e18);
         // Increase total supply via owner mint
@@ -571,6 +584,7 @@ contract GatewayTest is Test {
         vcUSD.mint(address(this), 60e18);
         assertEq(gateway.maxMint(), 40e18);
         // Set limit below current supply → zero
+        vm.prank(admin);
         gateway.updateMintLimit(10e18);
         assertEq(gateway.maxMint(), 0);
     }
@@ -592,7 +606,7 @@ contract GatewayTest is Test {
     }
 
     function test_owner_and_treasury_views() public view {
-        assertEq(gateway.owner(), owner);
+        assertEq(gateway.owner(), admin);
         assertEq(gateway.treasury(), address(treasury));
     }
 
@@ -667,6 +681,7 @@ contract GatewayTest is Test {
         address token2 = address(new MockERC20());
         MockYieldVault mockVault2 = new MockYieldVault(address(token2));
         MockChainlinkOracle mockOracle2 = new MockChainlinkOracle(0.999e8);
+        vm.prank(admin);
         treasury.addToWhitelist(token2, address(mockVault2), address(mockOracle2), 1 hours);
 
         uint256 firstAmount = 50e18;
@@ -1033,9 +1048,10 @@ contract GatewayTest is Test {
         assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled after second toggle");
     }
 
-    function test_toggleWithdrawalDelay_revertIfNotOwner() public {
+    function test_toggleWithdrawalDelay_revertIfNotMaintainerRole() public {
+        bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", alice));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
         gateway.toggleWithdrawalDelay();
     }
 
@@ -1054,9 +1070,10 @@ contract GatewayTest is Test {
         gateway.updateWithdrawalDelay(0);
     }
 
-    function test_updateWithdrawalDelay_revertIfNotOwner() public {
+    function test_updateWithdrawalDelay_revertIfNotMaintainerRole() public {
+        bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", alice));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
         gateway.updateWithdrawalDelay(14 days);
     }
 
@@ -1086,9 +1103,10 @@ contract GatewayTest is Test {
         gateway.addToInstantRedeemWhitelist(alice);
     }
 
-    function test_addToInstantRedeemWhitelist_revertIfNotOwner() public {
+    function test_addToInstantRedeemWhitelist_revertIfNotMaintainerRole() public {
+        bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", alice));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
         gateway.addToInstantRedeemWhitelist(bob);
     }
 
@@ -1113,11 +1131,12 @@ contract GatewayTest is Test {
         gateway.removeFromInstantRedeemWhitelist(alice);
     }
 
-    function test_removeFromInstantRedeemWhitelist_revertIfNotOwner() public {
+    function test_removeFromInstantRedeemWhitelist_revertIfNotMaintainerRole() public {
         gateway.addToInstantRedeemWhitelist(alice);
 
+        bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSignature("CallerIsNotOwner(address)", bob));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, _role));
         gateway.removeFromInstantRedeemWhitelist(alice);
     }
 
