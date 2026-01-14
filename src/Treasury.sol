@@ -2,7 +2,9 @@
 
 pragma solidity 0.8.30;
 
-import {AccessControlEnumerable} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
+import {
+    AccessControlDefaultAdminRules
+} from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -16,7 +18,7 @@ import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {ITreasury} from "./interfaces/ITreasury.sol";
 
 /// @title PeggedToken Treasury
-contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
+contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -42,6 +44,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     string public constant VERSION = "1.0.0";
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
     bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
+    bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
 
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public priceTolerance = 100; // 1% based on BPS
@@ -76,13 +79,18 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
     event WithdrawnAll(address[] tokens, address indexed receiver);
 
-    constructor(address peggedToken_) {
+    constructor(address peggedToken_, address admin_)
+        AccessControlDefaultAdminRules(
+            3 days, // delay for admin transfers
+            admin_ // initial admin
+        )
+    {
         if (peggedToken_ == address(0)) revert AddressIsZero();
         PEGGED_TOKEN = IPeggedToken(peggedToken_);
         NAME = string.concat(IERC20Metadata(peggedToken_).symbol(), "-Treasury");
 
-        _grantRole(DEFAULT_ADMIN_ROLE, owner());
         _grantRole(KEEPER_ROLE, msg.sender);
+        _grantRole(MAINTAINER_ROLE, msg.sender);
     }
 
     modifier onlyGateway() {
@@ -90,22 +98,20 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         _;
     }
 
-    modifier onlyOwner() {
-        if (msg.sender != owner()) revert CallerIsNotAuthorized(msg.sender);
-        _;
-    }
-
     /*/////////////////////////////////////////////////////////////
-                            onlyOwner
-    /////////////////////////////////////////////////////////////*/
+                            DEFAULT_ADMIN_ROLE
+    /*/////////////////////////////////////////////////////////////
     /**
-     * @notice onlyOwner: Add token as whitelisted token for PeggedToken
+     * @notice DEFAULT_ADMIN_ROLE: Add token as whitelisted token for PeggedToken
      * @param token_ token address to add in whitelist.
      * @param vault_ ERC4626 yield vault address correspond to _token
      * @param oracle_ Chainlink oracle address for token/USD feed
      * @param stalePeriod_ Custom stale period for oracle price
      */
-    function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_) external onlyOwner {
+    function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         if (token_ == address(0) || vault_ == address(0) || oracle_ == address(0)) revert AddressIsZero();
         if (stalePeriod_ == 0) revert InvalidStalePeriod();
         uint8 _decimals = IERC20Metadata(token_).decimals();
@@ -127,11 +133,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     }
 
     /**
-     * @notice onlyOwner: Remove token from whitelist
+     * @notice DEFAULT_ADMIN_ROLE: Remove token from whitelist
      * @dev Removing token even if treasury has some balance of that token is intended behavior.
      * @param token_ token address to remove from whitelist.
      */
-    function removeFromWhitelist(address token_) external onlyOwner {
+    function removeFromWhitelist(address token_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
         IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
         if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
@@ -141,10 +147,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     }
 
     /**
-     * @notice onlyOwner: Migrate assets to new treasury
+     * @notice DEFAULT_ADMIN_ROLE: Migrate assets to new treasury
      * @param newTreasury_ Address of new treasury of PeggedToken
      */
-    function migrate(address newTreasury_) external onlyOwner {
+    function migrate(address newTreasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTreasury_ == address(0)) revert AddressIsZero();
         if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
         uint256 _len = _whitelistedTokens.length();
@@ -159,12 +165,12 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     }
 
     /**
-     * @notice onlyOwner: Sweep any ERC20 token to owner address
-     * @dev OnlyOwner can call this and vault shares are not allowed to sweep
+     * @notice DEFAULT_ADMIN_ROLE: Sweep any ERC20 token to owner address
+     * @dev DEFAULT_ADMIN_ROLE can call this and vault shares are not allowed to sweep
      * @param fromToken_ Token address to sweep
      * @param receiver_ recipient of tokens being swept
      */
-    function sweep(address fromToken_, address receiver_) external onlyOwner {
+    function sweep(address fromToken_, address receiver_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
         if (_whitelistedTokens.contains(fromToken_)) revert ReservedToken();
         uint256 _len = _whitelistedTokens.length();
@@ -177,13 +183,17 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         emit Swept(fromToken_, _amount, receiver_);
     }
 
+    /*/////////////////////////////////////////////////////////////
+                            MAINTAINER_ROLE
+    /////////////////////////////////////////////////////////////*/
+
     /**
-     * @notice onlyOwner: Update oracle and stale period
+     * @notice MAINTAINER_ROLE: Update oracle and stale period
      * @param token_ Token to update oracle configuration for
      * @param oracle_ New Chainlink oracle address
      * @param newStalePeriod_ New stale period threshold in seconds
      */
-    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyOwner {
+    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyRole(MAINTAINER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (oracle_ == address(0)) revert AddressIsZero();
         if (newStalePeriod_ == 0) revert InvalidStalePeriod();
@@ -194,18 +204,18 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
         emit UpdatedOracle(token_, oracle_, newStalePeriod_);
     }
 
-    /// @notice onlyOwner: Update oracle price tolerance
-    function updatePriceTolerance(uint256 newPriceTolerance_) external onlyOwner {
+    /// @notice MAINTAINER_ROLE: Update oracle price tolerance
+    function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
         if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
         emit UpdatedPriceTolerance(priceTolerance, newPriceTolerance_);
         priceTolerance = newPriceTolerance_;
     }
 
     /**
-     * @notice onlyOwner: Update swapper address
+     * @notice MAINTAINER_ROLE: Update swapper address
      * @param swapper_ new swapper address
      */
-    function updateSwapper(address swapper_) external onlyOwner {
+    function updateSwapper(address swapper_) external onlyRole(MAINTAINER_ROLE) {
         if (swapper_ == address(0)) revert AddressIsZero();
         emit UpdatedSwapper(address(swapper), swapper_);
         swapper = swapper_;
@@ -390,11 +400,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlEnumerable {
     /// @notice Returns whether given token is whitelisted
     function isWhitelistedToken(address token_) external view returns (bool) {
         return _whitelistedTokens.contains(token_);
-    }
-
-    /// @dev Owner is defined in PeggedToken token contract only
-    function owner() public view returns (address) {
-        return PEGGED_TOKEN.owner();
     }
 
     /// @notice Return total reserve value in USD
