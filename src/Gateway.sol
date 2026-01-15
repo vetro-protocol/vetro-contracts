@@ -80,7 +80,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AccountAlreadyWhitelisted(address account);
     error AccountNotWhitelisted(address account);
     error AddressIsZero();
-    error CallerIsNotOwner(address caller);
+    error AccessControlUnauthorizedAccount(address account, bytes32 role);
     error CallerNotWhitelisted(address caller);
     error ExceededExcessReserve(uint256 requested, uint256 available);
     error ExceededMaxMint(uint256 requested, uint256 available);
@@ -103,8 +103,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
                             MODIFIERS
     /////////////////////////////////////////////////////////////*/
 
-    modifier onlyOwner() {
-        if (msg.sender != owner()) revert CallerIsNotOwner(msg.sender);
+    modifier onlyRole(bytes32 role_) {
+        _requireRole(role_);
         _;
     }
 
@@ -143,7 +143,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function mint(uint256 amount_, address receiver_) external onlyOwner {
+    function mint(uint256 amount_, address receiver_) external onlyRole(_ummRole()) {
         if (receiver_ == address(0)) revert AddressIsZero();
         IPeggedToken _token = _peggedToken();
         uint256 _supply = _token.totalSupply();
@@ -157,7 +157,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateMintFee(uint256 newMintFee_) external onlyOwner {
+    function updateMintFee(uint256 newMintFee_) external onlyRole(_maintainerRole()) {
         if (newMintFee_ >= MAX_BPS) revert InvalidMintFee(newMintFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedMintFee($.mintFee, newMintFee_);
@@ -165,14 +165,14 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateMintLimit(uint256 newMintLimit_) external onlyOwner {
+    function updateMintLimit(uint256 newMintLimit_) external onlyRole(_defaultAdminRole()) {
         GatewayStorage storage $ = _getGatewayStorage();
         emit MintLimitUpdated($.mintLimit, newMintLimit_);
         $.mintLimit = newMintLimit_;
     }
 
     /// @inheritdoc IGateway
-    function updateRedeemFee(uint256 newRedeemFee_) external onlyOwner {
+    function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(_maintainerRole()) {
         if (newRedeemFee_ >= MAX_BPS) revert InvalidRedeemFee(newRedeemFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedRedeemFee($.redeemFee, newRedeemFee_);
@@ -181,7 +181,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Toggle withdrawal delay feature on/off
     /// @dev When disabled, all users can instant redeem/withdraw
-    function toggleWithdrawalDelay() external onlyOwner {
+    function toggleWithdrawalDelay() external onlyRole(_maintainerRole()) {
         GatewayStorage storage $ = _getGatewayStorage();
         bool _withdrawalDelayEnabled = $.withdrawalDelayEnabled;
         $.withdrawalDelayEnabled = !_withdrawalDelayEnabled;
@@ -190,7 +190,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Update the withdrawal delay period
     /// @param newDelay_ New delay period in seconds
-    function updateWithdrawalDelay(uint256 newDelay_) external onlyOwner {
+    function updateWithdrawalDelay(uint256 newDelay_) external onlyRole(_maintainerRole()) {
         if (newDelay_ == 0) revert InvalidWithdrawalDelay();
         GatewayStorage storage $ = _getGatewayStorage();
         emit WithdrawalDelayUpdated($.withdrawalDelay, newDelay_);
@@ -199,7 +199,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Add address to instant redeem whitelist
     /// @param account_ Address to whitelist
-    function addToInstantRedeemWhitelist(address account_) external onlyOwner {
+    function addToInstantRedeemWhitelist(address account_) external onlyRole(_maintainerRole()) {
         if (account_ == address(0)) revert AddressIsZero();
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.instantRedeemWhitelist.add(account_)) revert AccountAlreadyWhitelisted(account_);
@@ -208,7 +208,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Remove address from instant redeem whitelist
     /// @param account_ Address to remove from whitelist
-    function removeFromInstantRedeemWhitelist(address account_) external onlyOwner {
+    function removeFromInstantRedeemWhitelist(address account_) external onlyRole(_maintainerRole()) {
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.instantRedeemWhitelist.remove(account_)) revert AccountNotWhitelisted(account_);
         emit RemovedFromInstantRedeemWhitelist(account_);
@@ -387,7 +387,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function owner() public view returns (address) {
-        return _peggedToken().owner();
+        return ITreasury(treasury()).owner();
     }
 
     /// @inheritdoc IGateway
@@ -462,6 +462,24 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /*/////////////////////////////////////////////////////////////
                         PRIVATE FUNCTIONS
     /////////////////////////////////////////////////////////////*/
+
+    function _requireRole(bytes32 role_) private view {
+        if (!ITreasury(treasury()).hasRole(role_, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, role_);
+        }
+    }
+
+    function _defaultAdminRole() private view returns (bytes32) {
+        return ITreasury(treasury()).DEFAULT_ADMIN_ROLE();
+    }
+
+    function _maintainerRole() private view returns (bytes32) {
+        return ITreasury(treasury()).MAINTAINER_ROLE();
+    }
+
+    function _ummRole() private view returns (bytes32) {
+        return ITreasury(treasury()).UMM_ROLE();
+    }
 
     /**
      * @dev Calculate PeggedToken output for a given token amount considering price and fees

@@ -48,6 +48,7 @@ contract VcUSD_E2E_Test is Test {
         gateway = Gateway(address(proxy));
 
         vcUSD.updateGateway(address(gateway));
+        treasury.grantRole(treasury.UMM_ROLE(), owner);
 
         // Disable withdrawal delay for E2E tests (allows instant redemptions)
         gateway.toggleWithdrawalDelay();
