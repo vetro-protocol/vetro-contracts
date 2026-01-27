@@ -13,3 +13,5 @@ out/
 # coverage
 coverage
 lcov*
+
+.claude/settings.local.json
