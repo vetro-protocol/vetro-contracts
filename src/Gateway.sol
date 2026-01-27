@@ -16,6 +16,7 @@ import {IGateway} from "./interfaces/IGateway.sol";
 /// @title Gateway - Handles both minting and redeeming of PeggedToken
 /// @custom:storage-location erc7201:victor.storage.Gateway
 contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
+    using SafeERC20 for IPeggedToken;
     using SafeERC20 for IERC20;
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -149,7 +150,10 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 _supply = _token.totalSupply();
         uint256 _reserve = ITreasury(treasury()).reserve();
         if (_reserve <= _supply) revert NoExcessReserve(_reserve, _supply);
-        uint256 _excess = _reserve - _supply;
+        uint256 _excess;
+        unchecked {
+            _excess = _reserve - _supply;
+        }
         if (amount_ > _excess) revert ExceededExcessReserve(amount_, _excess);
         uint256 _maxMintable = maxMint();
         if (_maxMintable < amount_) revert ExceededMaxMint(amount_, _maxMintable);
@@ -183,9 +187,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @dev When disabled, all users can instant redeem/withdraw
     function toggleWithdrawalDelay() external onlyRole(_maintainerRole()) {
         GatewayStorage storage $ = _getGatewayStorage();
-        bool _withdrawalDelayEnabled = $.withdrawalDelayEnabled;
-        $.withdrawalDelayEnabled = !_withdrawalDelayEnabled;
-        emit WithdrawalDelayToggled(!_withdrawalDelayEnabled);
+        bool _newState = !$.withdrawalDelayEnabled;
+        $.withdrawalDelayEnabled = _newState;
+        emit WithdrawalDelayToggled(_newState);
     }
 
     /// @notice Update the withdrawal delay period
@@ -272,28 +276,19 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @param tokenOut_ Token to redeem for
     /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
     function requestRedeem(address tokenOut_, uint256 peggedTokenAmount_) external nonReentrant {
-        // Validation
         if (peggedTokenAmount_ == 0) revert WithdrawalAmountCannotBeZero();
-        if (!ITreasury(treasury()).isWhitelistedToken(tokenOut_)) {
-            revert TokenNotSupported(tokenOut_);
-        }
+        if (!ITreasury(treasury()).isWhitelistedToken(tokenOut_)) revert TokenNotSupported(tokenOut_);
 
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.withdrawalDelayEnabled) revert WithdrawalDelayFeatureNotEnabled();
 
+        $.peggedToken.safeTransferFrom(msg.sender, address(this), peggedTokenAmount_);
+
         RedeemRequest storage _request = $.redeemRequests[msg.sender][tokenOut_];
-
-        // Transfer peggedToken from user to this contract (locks it)
-        $.peggedToken.transferFrom(msg.sender, address(this), peggedTokenAmount_);
-
-        // If existing request for this token, merge: add to amount and reset timer
         uint256 _newAmount = _request.amountLocked + peggedTokenAmount_;
         uint256 _newClaimableAt = block.timestamp + $.withdrawalDelay;
 
-        // Update queue accounting for new/updated request
         $.redeemQueueByToken[tokenOut_] += peggedTokenAmount_;
-
-        // Update request
         _request.amountLocked = _newAmount;
         _request.claimableAt = _newClaimableAt;
 
@@ -305,22 +300,14 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     function cancelRedeemRequest(address tokenOut_) external nonReentrant {
         GatewayStorage storage $ = _getGatewayStorage();
         RedeemRequest memory _request = $.redeemRequests[msg.sender][tokenOut_];
-
-        // Validate redeem request exists
         if (_request.claimableAt == 0) revert NoActiveWithdrawalRequest();
 
-        uint256 _peggedTokenAmount = _request.amountLocked;
-
-        // Update queue accounting
-        $.redeemQueueByToken[tokenOut_] -= _peggedTokenAmount;
-
-        // Delete redeem request
+        uint256 _amountLocked = _request.amountLocked;
+        $.redeemQueueByToken[tokenOut_] -= _amountLocked;
         delete $.redeemRequests[msg.sender][tokenOut_];
+        $.peggedToken.safeTransfer(msg.sender, _amountLocked);
 
-        // Transfer locked peggedToken back to user
-        $.peggedToken.transfer(msg.sender, _peggedTokenAmount);
-
-        emit RedeemRequestCancelled(msg.sender, _peggedTokenAmount);
+        emit RedeemRequestCancelled(msg.sender, _amountLocked);
     }
 
     /// @notice Returns the name of the Gateway
@@ -330,7 +317,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function PEGGED_TOKEN() external view returns (IPeggedToken) {
-        return _peggedToken();
+        return _getGatewayStorage().peggedToken;
     }
 
     /// @inheritdoc IGateway
@@ -368,11 +355,13 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      * @dev Returns difference between mint limit and current supply
      */
     function maxMint() public view returns (uint256) {
-        IPeggedToken _token = _peggedToken();
         GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = _token.totalSupply();
-        uint256 _mintableLimit = $.mintLimit;
-        return _mintableLimit > _totalSupply ? _mintableLimit - _totalSupply : 0;
+        uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _mintLimit = $.mintLimit;
+        if (_mintLimit <= _totalSupply) return 0;
+        unchecked {
+            return _mintLimit - _totalSupply;
+        }
     }
 
     /// @inheritdoc IGateway
@@ -431,8 +420,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         view
         returns (uint256 amountLocked, uint256 claimableAt)
     {
-        GatewayStorage storage $ = _getGatewayStorage();
-        RedeemRequest memory _request = $.redeemRequests[user_][tokenOut_];
+        RedeemRequest memory _request = _getGatewayStorage().redeemRequests[user_][tokenOut_];
         return (_request.amountLocked, _request.claimableAt);
     }
 
@@ -440,23 +428,20 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @param account_ Address to check
     /// @return True if whitelisted
     function isInstantRedeemWhitelisted(address account_) external view returns (bool) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        return $.instantRedeemWhitelist.contains(account_);
+        return _getGatewayStorage().instantRedeemWhitelist.contains(account_);
     }
 
     /// @notice Get all whitelisted addresses
     /// @return Array of whitelisted addresses
     function getInstantRedeemWhitelist() external view returns (address[] memory) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        return $.instantRedeemWhitelist.values();
+        return _getGatewayStorage().instantRedeemWhitelist.values();
     }
 
     /// @notice Get total peggedToken requested for redemption for a specific token
     /// @param tokenOut_ Token address to check queue for
     /// @return Total peggedToken amount in redemption queue for the token
     function getRedeemQueueForToken(address tokenOut_) external view returns (uint256) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        return $.redeemQueueByToken[tokenOut_];
+        return _getGatewayStorage().redeemQueueByToken[tokenOut_];
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -491,12 +476,12 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      */
     function _calculatePeggedTokenOutput(address tokenIn_, uint256 amountIn_) private view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
-        (uint256 _latestPrice, uint256 _unitPrice) = ITreasury(treasury()).getPrice(tokenIn_);
+        (uint256 _latestPrice, uint256 _unitPrice) = ITreasury($.peggedToken.treasury()).getPrice(tokenIn_);
         uint256 _amountInAfterFee = $.mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - $.mintFee), MAX_BPS) : amountIn_;
         uint256 _rawPeggedTokenAmount =
             _latestPrice >= _unitPrice ? _amountInAfterFee : _amountInAfterFee.mulDiv(_latestPrice, _unitPrice);
         // convert _rawPeggedTokenAmount into peggedToken decimal
-        uint8 _decimals = _peggedTokenDecimals();
+        uint8 _decimals = $.peggedTokenDecimals;
         return _rawPeggedTokenAmount * 10 ** (_decimals - IERC20Metadata(tokenIn_).decimals());
     }
 
@@ -517,7 +502,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
             ? _peggedTokenInAfterFee
             : _peggedTokenInAfterFee.mulDiv(_unitPrice, _latestPrice);
         // convert _rawTokenAmount to token_ decimal
-        uint8 _decimals = _peggedTokenDecimals();
+        uint8 _decimals = $.peggedTokenDecimals;
         return _rawTokenAmount / 10 ** (_decimals - IERC20Metadata(tokenOut_).decimals());
     }
 
@@ -638,9 +623,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
         if (peggedTokenToBurn_ <= _lockedAmount) {
             // Case 1: Use only locked balance
-            _lockedAmount = _lockedAmount - peggedTokenToBurn_;
-
-            // Update queue accounting
+            unchecked {
+                _lockedAmount = _lockedAmount - peggedTokenToBurn_;
+            }
             $.redeemQueueByToken[tokenOut_] -= peggedTokenToBurn_;
 
             if (_lockedAmount == 0) {
@@ -654,9 +639,10 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
             // Case 2: Use locked + wallet (excess requires instant redeem permission)
             _checkInstantRedeemAllowed();
 
-            uint256 _excessAmount = peggedTokenToBurn_ - _lockedAmount;
-
-            // Update queue accounting (only for locked portion)
+            uint256 _excessAmount;
+            unchecked {
+                _excessAmount = peggedTokenToBurn_ - _lockedAmount;
+            }
             $.redeemQueueByToken[tokenOut_] -= _lockedAmount;
 
             delete $.redeemRequests[msg.sender][tokenOut_];
