@@ -1,15 +1,15 @@
-# Victor Protocol
+# Vetro Protocol
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-default.svg)](https://opensource.org/licenses/MIT)
 
-**Victor is a fully collateralized, yield-generating protocol for creating pegged tokens built for DeFi.**
+**Vetro is a fully collateralized, yield-generating protocol for creating pegged tokens built for DeFi.**
 
-Version 2.0 introduces a modular and robust architecture that separates user interactions, treasury management, and token logic into distinct, auditable contracts. The protocol can issue tokens pegged 1:1 to various assets including USD (vcUSD), ETH (vcETH), BTC (vcBTC), and more. By integrating with premier yield protocols like **Aave, Compound, and Morpho**, the collateral is put to work, generating passive yield for the protocol.
+Version 2.0 introduces a modular and robust architecture that separates user interactions, treasury management, and token logic into distinct, auditable contracts. The protocol can issue tokens pegged 1:1 to various assets including USD (VUSD), ETH (VETH), BTC (VBTC), and more. By integrating with premier yield protocols like **Aave, Compound, and Morpho**, the collateral is put to work, generating passive yield for the protocol.
 
 ## Key Features
 
 -   **Fully Collateralized**: Always backed 1:1 by high-quality collateral.
--   **Multi-Asset Support**: Issue pegged tokens for various assets - USD (vcUSD), ETH (vcETH), BTC (vcBTC), and more.
+-   **Multi-Asset Support**: Issue pegged tokens for various assets - USD (VUSD), ETH (VETH), BTC (VBTC), and more.
 -   **Yield-Generating**: Collateral is deposited into leading DeFi protocols (e.g., Aave, Compound,) to generate yield.
 -   **Automated Liquidity Provisioning**: A portion of the generated yield can be used to deepen liquidity on decentralized exchanges.
 -   **Modular & Secure Architecture**: Core logic is split into `Gateway`, `Treasury`, and `PeggedToken` contracts for clarity and security.
@@ -20,7 +20,7 @@ Version 2.0 introduces a modular and robust architecture that separates user int
 
 ## Architecture Overview
 
-The Victor Protocol system is composed of three core contracts that work in concert to provide a seamless and secure user experience.
+The Vetro Protocol system is composed of three core contracts that work in concert to provide a seamless and secure user experience.
 
 ```mermaid
 graph TD
@@ -48,7 +48,7 @@ graph TD
 
 1.  **`Gateway.sol`**: The single entry and exit point for all users. It handles the logic for the four primary user actions (`deposit`, `mint`, `redeem`, `withdraw`) as well as the withdrawal delay system for enhanced security. To execute all calculations securely, the Gateway queries the `Treasury` for real-time asset prices and uses this data along with fees, price tolerance, and mint limits.
 2.  **`Treasury.sol`**: The custodian of all collateral. It manages the whitelist of supported assets, interfaces with yield-generating protocols, and integrates with Chainlink oracles. It serves as the single source of truth for asset prices and risk parameters.
-3.  **`PeggedToken.sol`**: The ERC20 pegged token contract (e.g., vcUSD, vcETH, vcBTC). It includes `ERC20Permit` for gasless approvals and ensures that only the `Gateway` contract can mint new tokens.
+3.  **`PeggedToken.sol`**: The ERC20 pegged token contract (e.g., VUSD, VETH, VBTC). It includes `ERC20Permit` for gasless approvals and ensures that only the `Gateway` contract can mint new tokens.
 
 ## Withdrawal Delay & Redeem Request System
 
@@ -103,7 +103,7 @@ The withdrawal delay system can be configured by the protocol owner:
 
 ## Governance: The Owner-Keeper Model
 
-Victor Protocol employs a two-tiered access control model to enhance security:
+Vetro Protocol employs a two-tiered access control model to enhance security:
 
 -   **Owner**: A highly-secured address (e.g., a multi-sig) responsible for strategic decisions like whitelisting new assets, setting fees, and appointing Keepers.
 -   **Keepers**: Authorized addresses with a limited set of permissions for routine operational tasks, such as managing funds between the Treasury and yield vaults or pausing deposits/withdrawals for an asset.
@@ -121,8 +121,8 @@ This project uses [Foundry](https://github.com/foundry-rs/foundry).
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/hemilabs/victor-contracts.git
-    cd victor-contracts
+    git clone https://github.com/hemilabs/vetro-contracts.git
+    cd vetro-contracts
     ```
 
 2.  **Install submodules and dependencies:**
@@ -155,7 +155,7 @@ forge coverage
 
 ## Security and Audits
 
-Security is the highest priority for the Victor protocol. The contracts have been designed with best practices in mind and include:
+Security is the highest priority for the Vetro protocol. The contracts have been designed with best practices in mind and include:
 
 -   Comprehensive test suite with high branch coverage.
 -   Protection against reentrancy attacks.

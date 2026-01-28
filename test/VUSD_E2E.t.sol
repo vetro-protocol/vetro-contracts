@@ -20,8 +20,8 @@ interface IStrategy {
     function tvl() external view returns (uint256);
 }
 
-contract VcUSD_E2E_Test is Test {
-    PeggedToken vcUSD;
+contract VUSD_E2E_Test is Test {
+    PeggedToken VUSD;
     Gateway gateway;
     Treasury treasury;
     address owner;
@@ -34,20 +34,20 @@ contract VcUSD_E2E_Test is Test {
         owner = address(this);
         usdcVault = tvUSDC;
         // Deploy core contracts
-        vcUSD = new PeggedToken("viaUSD", "viaUSD", owner);
-        treasury = new Treasury(address(vcUSD), owner);
-        vcUSD.updateTreasury(address(treasury));
+        VUSD = new PeggedToken("viaUSD", "viaUSD", owner);
+        treasury = new Treasury(address(VUSD), owner);
+        VUSD.updateTreasury(address(treasury));
 
         // Deploy Gateway implementation
         Gateway implementation = new Gateway();
 
         // Deploy proxy and initialize with a large mint limit for E2E
         bytes memory initData =
-            abi.encodeWithSelector(Gateway.initialize.selector, address(vcUSD), type(uint256).max, 7 days);
+            abi.encodeWithSelector(Gateway.initialize.selector, address(VUSD), type(uint256).max, 7 days);
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         gateway = Gateway(address(proxy));
 
-        vcUSD.updateGateway(address(gateway));
+        VUSD.updateGateway(address(gateway));
         treasury.grantRole(treasury.UMM_ROLE(), owner);
 
         // Disable withdrawal delay for E2E tests (allows instant redemptions)
@@ -73,7 +73,7 @@ contract VcUSD_E2E_Test is Test {
         vm.stopPrank();
 
         // Verify correct amount of viaUSD was minted to depositor
-        assertEq(vcUSD.balanceOf(alice), _expectedViaUsdOut);
+        assertEq(VUSD.balanceOf(alice), _expectedViaUsdOut);
 
         // Verify treasury received the expected vault shares
         uint256 _sharesAfter = IERC20(usdcVault).balanceOf(address(treasury));
@@ -100,13 +100,13 @@ contract VcUSD_E2E_Test is Test {
         assertGt(_strategy.tvl(), 0);
 
         // Step 3: Redeem viaUSD for USDC
-        uint256 _viaUsdIn = vcUSD.balanceOf(alice);
+        uint256 _viaUsdIn = VUSD.balanceOf(alice);
         uint256 _expectedUsdcOut = gateway.previewRedeem(USDC, _viaUsdIn);
         vm.prank(alice);
         gateway.redeem(USDC, _viaUsdIn, _expectedUsdcOut, alice);
 
         // Step 4: Verify redemption worked correctly
-        assertEq(vcUSD.balanceOf(alice), 0);
+        assertEq(VUSD.balanceOf(alice), 0);
         assertEq(IERC20(USDC).balanceOf(alice), _expectedUsdcOut);
     }
 
@@ -122,7 +122,7 @@ contract VcUSD_E2E_Test is Test {
         vm.stopPrank();
 
         // Verify initial state: reserve equals supply
-        assertEq(vcUSD.totalSupply(), _expectedViaUsdOut);
+        assertEq(VUSD.totalSupply(), _expectedViaUsdOut);
 
         // Step 2: Simulate yield by dealing additional USDC into vault
         uint256 _yieldAmount = 10e6; // 10 USDC yield
@@ -130,7 +130,7 @@ contract VcUSD_E2E_Test is Test {
 
         // Step 3: Verify reserve increased due to yield
         uint256 _reserveAfterYield = treasury.reserve();
-        uint256 _supplyBeforeMint = vcUSD.totalSupply();
+        uint256 _supplyBeforeMint = VUSD.totalSupply();
         uint256 _excess = _reserveAfterYield - _supplyBeforeMint;
         assertGt(_excess, 0);
 
@@ -140,8 +140,8 @@ contract VcUSD_E2E_Test is Test {
         gateway.mint(_mintAmount, owner);
 
         // Step 5: Verify mint captured excess correctly
-        assertEq(vcUSD.balanceOf(owner), _mintAmount);
-        assertEq(vcUSD.totalSupply(), _supplyBeforeMint + _mintAmount);
-        assertEq(treasury.reserve(), vcUSD.totalSupply());
+        assertEq(VUSD.balanceOf(owner), _mintAmount);
+        assertEq(VUSD.totalSupply(), _supplyBeforeMint + _mintAmount);
+        assertEq(treasury.reserve(), VUSD.totalSupply());
     }
 }
