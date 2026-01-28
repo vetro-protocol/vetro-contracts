@@ -40,6 +40,9 @@ contract TreasuryTest is Test {
         treasury = new Treasury(address(VUSD), owner);
         VUSD.updateTreasury(address(treasury));
         VUSD.updateGateway(gateway);
+        // Mock the amoSupply() call to return 0
+        vm.mockCall(gateway, abi.encodeWithSignature("amoSupply()"), abi.encode(0));
+
         token = new MockERC20();
         mockVault = new MockYieldVault(address(token));
         mockOracle = new MockChainlinkOracle(1e8); // $1
@@ -576,7 +579,7 @@ contract TreasuryTest is Test {
         deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
 
         vm.prank(umm);
-        treasury.harvest(address(token));
+        treasury.harvest(address(token), umm);
 
         assertEq(token.balanceOf(umm), 200 * TOKEN_UNIT);
         assertEq(token.balanceOf(address(treasury)), 800 * TOKEN_UNIT);
@@ -596,7 +599,7 @@ contract TreasuryTest is Test {
         treasury.push(address(token), tokenAmount - (100 * TOKEN_UNIT));
 
         vm.prank(umm);
-        treasury.harvest(address(token));
+        treasury.harvest(address(token), umm);
 
         assertEq(token.balanceOf(umm), 400 * TOKEN_UNIT);
         assertEq(token.balanceOf(address(treasury)), 0);
@@ -616,7 +619,7 @@ contract TreasuryTest is Test {
         uint256 balanceBefore = token.balanceOf(address(treasury));
 
         vm.prank(umm);
-        treasury.harvest(address(token));
+        treasury.harvest(address(token), umm);
 
         // No tokens should be withdrawn
         assertEq(token.balanceOf(umm), 0);
@@ -637,7 +640,7 @@ contract TreasuryTest is Test {
 
         // Alice has UMM_ROLE
         vm.prank(alice);
-        treasury.harvest(address(token));
+        treasury.harvest(address(token), alice);
 
         assertEq(token.balanceOf(alice), 0);
     }
@@ -647,7 +650,7 @@ contract TreasuryTest is Test {
             abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, treasury.UMM_ROLE())
         );
         vm.prank(alice);
-        treasury.harvest(address(token));
+        treasury.harvest(address(token), alice);
     }
 
     function test_harvest_revertIfNotWhitelisted() public {
@@ -656,6 +659,14 @@ contract TreasuryTest is Test {
         MockERC20 invalidToken = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", address(invalidToken)));
         vm.prank(alice);
-        treasury.harvest(address(invalidToken));
+        treasury.harvest(address(invalidToken), alice);
+    }
+
+    function test_harvest_revertIfReceiverIsZero() public {
+        treasury.grantRole(ummRole, alice);
+
+        vm.expectRevert(Treasury.AddressIsZero.selector);
+        vm.prank(alice);
+        treasury.harvest(address(token), address(0));
     }
 }

@@ -16,6 +16,7 @@ import {IAggregatorV3} from "./interfaces/chainlink/IAggregatorV3.sol";
 import {ISwapper} from "./interfaces/bloq/ISwapper.sol";
 import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {ITreasury} from "./interfaces/ITreasury.sol";
+import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title PeggedToken Treasury
 contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
@@ -100,7 +101,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
 
     /*/////////////////////////////////////////////////////////////
                             DEFAULT_ADMIN_ROLE
-    /*/////////////////////////////////////////////////////////////
+    /////////////////////////////////////////////////////////////*/
     /**
      * @notice DEFAULT_ADMIN_ROLE: Add token as whitelisted token for PeggedToken
      * @param token_ token address to add in whitelist.
@@ -340,47 +341,39 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @notice UMM_ROLE: Withdraw excess tokens from reserve.
      * Note: As treasury reserve is in multiple tokens, there is no guarantee
      * that this function will withdraw all of the excess in given token.
+     * @param token_ Token address to withdraw excess
+     * @param receiver_ Address to receive the withdrawn tokens
+     * @return Amount of tokens withdrawn
      */
-    function harvest(address token_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
+    function harvest(address token_, address receiver_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-
-        // Compute excess reserve in 18-decimal USD
-        uint256 _supply = PEGGED_TOKEN.totalSupply();
-        uint256 _reserve = reserve();
-        if (_reserve <= _supply) return 0; // no excess
-        uint256 _excessUSD = _reserve - _supply;
-
-        // Get oracle price of token_
-        (uint256 price, uint256 unitPrice) =
-            _getPrice(IAggregatorV3(tokenConfig[token_].oracle), tokenConfig[token_].stalePeriod, priceTolerance);
-
-        uint256 _excessInTokenDecimals = _excessUSD / (10 ** (18 - tokenConfig[token_].decimals));
-        uint256 _excess = _excessInTokenDecimals.mulDiv(unitPrice, price);
+        if (receiver_ == address(0)) revert AddressIsZero();
+        uint256 _excess = _excessTokens(token_);
         if (_excess == 0) return 0;
 
+        uint256 _paid;
         uint256 _balance = IERC20(token_).balanceOf(address(this));
-        // If we have enough balance to cover excess then send tokens and return
-        if (_balance >= _excess) {
-            IERC20(token_).safeTransfer(msg.sender, _excess);
-            emit ExcessWithdrawn(token_, _excess);
-            return _excess;
-        }
-
-        // Send what we have, then withdraw remainder from vault
         if (_balance > 0) {
-            IERC20(token_).safeTransfer(msg.sender, _balance);
-            _excess -= _balance;
+            uint256 _toPay = Math.min(_balance, _excess);
+            IERC20(token_).safeTransfer(receiver_, _toPay);
+            _paid = _toPay;
+            if (_paid == _excess) {
+                emit ExcessWithdrawn(token_, _paid);
+                return _paid;
+            }
+            _excess -= _paid;
         }
 
         IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
-        uint256 _assetsInVault = _vault.convertToAssets(_vault.balanceOf(address(this)));
-        uint256 _toWithdraw = Math.min(_excess, _assetsInVault);
-        if (_toWithdraw > 0) {
-            _vault.withdraw(_toWithdraw, msg.sender, address(this));
+        uint256 _assets = _vault.convertToAssets(_vault.balanceOf(address(this)));
+        if (_assets > 0) {
+            uint256 _toWithdraw = Math.min(_excess, _assets);
+            _vault.withdraw(_toWithdraw, receiver_, address(this));
+            _paid += _toWithdraw;
         }
-        uint256 _withdrawn = _toWithdraw + _balance;
-        emit ExcessWithdrawn(token_, _withdrawn);
-        return _withdrawn;
+
+        emit ExcessWithdrawn(token_, _paid);
+        return _paid;
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -402,7 +395,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         return _whitelistedTokens.contains(token_);
     }
 
-    /// @notice Return total reserve value in USD
+    /// @notice Returns total reserve value denominated in PeggedToken units
     function reserve() public view returns (uint256 _reserve) {
         uint256 _len = _whitelistedTokens.length();
         uint256 _priceToleranceBps = priceTolerance;
@@ -420,10 +413,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
                 (uint256 _price, uint256 _unitPrice) = _getPrice(
                     IAggregatorV3(tokenConfig[_token].oracle), tokenConfig[_token].stalePeriod, _priceToleranceBps
                 );
-                // Calculate USD value in token decimals
-                uint256 _valueInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
-                // Normalize value to 18 decimals before adding to total reserve
-                _reserve += (_valueInTokenDecimals * (10 ** (18 - tokenConfig[_token].decimals)));
+                // Calculate reserve in token decimals relative to PeggedToken peg
+                uint256 _reserveInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
+                // Normalize reserve to PeggedToken decimals (18) before adding to total reserve
+                _reserve += (_reserveInTokenDecimals * (10 ** (18 - tokenConfig[_token].decimals)));
             }
 
             unchecked {
@@ -451,6 +444,31 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
     }
 
+    function _excessTokens(address token_) private view returns (uint256 excess) {
+        // Excess = reserve - (supply - amoSupply)
+        uint256 _totalSupply = PEGGED_TOKEN.totalSupply();
+        // Get AMO supply from Gateway
+        uint256 _amoSupply = IGateway(PEGGED_TOKEN.gateway()).amoSupply();
+
+        // Invariant: amoSupply <= totalSupply always holds
+        uint256 _backedSupply = _totalSupply - _amoSupply;
+        uint256 _reserve = reserve();
+        if (_reserve <= _backedSupply) return 0;
+
+        uint256 _excess;
+        unchecked {
+            _excess = _reserve - _backedSupply;
+        }
+
+        // Convert excess (in PeggedToken decimals) to token amount
+        TokenConfig storage _config = tokenConfig[token_];
+        (uint256 _price, uint256 _unitPrice) =
+            _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, priceTolerance);
+        uint256 _tokens = _excess.mulDiv(_unitPrice, _price) / (10 ** (18 - _config.decimals));
+
+        return _tokens;
+    }
+
     function _getPrice(IAggregatorV3 oracle_, uint256 stalePeriod_, uint256 priceToleranceBps_)
         private
         view
@@ -460,7 +478,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice();
         _latestPrice = uint256(_price);
 
-        // Unit oracle price for given token_. i.e. 1 USD if token_ is USDC/USDT
+        // Unit oracle price for given token relative to PeggedToken peg.
         _unitPrice = 10 ** oracle_.decimals();
         uint256 _priceToleranceValue = (_unitPrice * priceToleranceBps_) / MAX_BPS;
         uint256 _priceUpperBound = _unitPrice + _priceToleranceValue;
