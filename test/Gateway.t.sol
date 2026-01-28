@@ -18,7 +18,7 @@ contract GatewayTest is Test {
     using SafeERC20 for IERC20;
     using Math for uint256;
 
-    PeggedToken vcUSD;
+    PeggedToken VUSD;
     Gateway gateway;
     Treasury treasury;
     address owner;
@@ -31,20 +31,20 @@ contract GatewayTest is Test {
 
     function setUp() public {
         owner = address(this);
-        vcUSD = new PeggedToken("vcUSD", "vcUSD", owner);
-        treasury = new Treasury(address(vcUSD), admin);
-        vcUSD.updateTreasury(address(treasury));
+        VUSD = new PeggedToken("VUSD", "VUSD", owner);
+        treasury = new Treasury(address(VUSD), admin);
+        VUSD.updateTreasury(address(treasury));
 
         // Deploy Gateway implementation
         Gateway implementation = new Gateway();
 
         // Deploy proxy and initialize
         bytes memory initData =
-            abi.encodeWithSelector(Gateway.initialize.selector, address(vcUSD), type(uint256).max, 7 days);
+            abi.encodeWithSelector(Gateway.initialize.selector, address(VUSD), type(uint256).max, 7 days);
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         gateway = Gateway(address(proxy));
 
-        vcUSD.updateGateway(address(gateway));
+        VUSD.updateGateway(address(gateway));
 
         token = address(new MockERC20());
         mockVault = new MockYieldVault(address(token));
@@ -56,15 +56,15 @@ contract GatewayTest is Test {
         vm.stopPrank();
     }
 
-    function mintPeggedToken(address user, uint256 vcUSDAmount) internal returns (uint256) {
-        uint256 tokenAmount = gateway.previewMint(token, vcUSDAmount);
+    function mintPeggedToken(address user, uint256 VUSDAmount) internal returns (uint256) {
+        uint256 tokenAmount = gateway.previewMint(token, VUSDAmount);
         deal(token, user, tokenAmount);
 
         vm.startPrank(user);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
-        gateway.mint(token, vcUSDAmount, tokenAmount, user);
+        gateway.mint(token, VUSDAmount, tokenAmount, user);
         vm.stopPrank();
-        return vcUSD.balanceOf(user);
+        return VUSD.balanceOf(user);
     }
 
     function parseAmount(uint256 fromAmount, address fromToken, address toToken) internal view returns (uint256) {
@@ -93,7 +93,7 @@ contract GatewayTest is Test {
         gateway.deposit(token, tokenAmount, expectedPeggedToken, bob);
         vm.stopPrank();
 
-        assertEq(vcUSD.balanceOf(bob), expectedPeggedToken, "Incorrect PeggedToken minted");
+        assertEq(VUSD.balanceOf(bob), expectedPeggedToken, "Incorrect PeggedToken minted");
 
         uint256 sharesAfter = mockVault.balanceOf(address(treasury));
         assertEq(sharesAfter, sharesBefore + mockVault.convertToShares(tokenAmount), "Incorrect shares in treasury");
@@ -155,12 +155,12 @@ contract GatewayTest is Test {
         deal(address(token), address(treasury), 10000e6);
 
         uint256 amount = 1000e18; // 1000 PeggedToken
-        uint256 initialSupply = vcUSD.totalSupply();
-        assertEq(vcUSD.balanceOf(bob), 0, "Incorrect PeggedToken balance");
+        uint256 initialSupply = VUSD.totalSupply();
+        assertEq(VUSD.balanceOf(bob), 0, "Incorrect PeggedToken balance");
         gateway.mint(amount, bob);
-        uint256 newSupply = vcUSD.totalSupply();
+        uint256 newSupply = VUSD.totalSupply();
         assertEq(newSupply, initialSupply + amount, "UMM role should be able to mint PeggedToken");
-        assertEq(vcUSD.balanceOf(bob), amount, "Incorrect PeggedToken balance");
+        assertEq(VUSD.balanceOf(bob), amount, "Incorrect PeggedToken balance");
     }
 
     function test_mint_onlyUMMRole_revertIfReceiverIsZeroAddress() public {
@@ -179,7 +179,7 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(1e8);
         // mint 50 PeggedToken
         vm.prank(address(gateway));
-        vcUSD.mint(alice, 50e18);
+        VUSD.mint(alice, 50e18);
         // add 40 tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 40e6);
 
@@ -210,29 +210,29 @@ contract GatewayTest is Test {
     }
 
     // --- mint ---
-    function testFuzz_mint(int256 price, uint256 mintFee, uint256 vcUSDAmount) public {
+    function testFuzz_mint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
-        vcUSDAmount = bound(vcUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateMintFee(mintFee);
 
-        uint256 tokenAmount = gateway.previewMint(token, vcUSDAmount);
+        uint256 tokenAmount = gateway.previewMint(token, VUSDAmount);
         deal(token, bob, tokenAmount);
 
-        uint256 vcUSDBalanceBefore = vcUSD.balanceOf(bob);
+        uint256 VUSDBalanceBefore = VUSD.balanceOf(bob);
         uint256 sharesBefore = mockVault.balanceOf(address(treasury));
 
         vm.startPrank(bob);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
-        gateway.mint(token, vcUSDAmount, tokenAmount, bob);
+        gateway.mint(token, VUSDAmount, tokenAmount, bob);
         vm.stopPrank();
 
         // Verify PeggedToken minted
-        assertEq(vcUSD.balanceOf(bob), vcUSDBalanceBefore + vcUSDAmount, "Incorrect PeggedToken minted");
+        assertEq(VUSD.balanceOf(bob), VUSDBalanceBefore + VUSDAmount, "Incorrect PeggedToken minted");
 
         // Verify tokens deposited in vault
         uint256 sharesAfter = mockVault.balanceOf(address(treasury));
@@ -240,21 +240,21 @@ contract GatewayTest is Test {
     }
 
     function test_mint_revertIfTokenIsUnsupported() public {
-        uint256 vcUSDAmount = 1000e18;
+        uint256 VUSDAmount = 1000e18;
         address token2 = address(new MockERC20());
-        uint256 tokenAmount = gateway.previewMint(token, vcUSDAmount);
+        uint256 tokenAmount = gateway.previewMint(token, VUSDAmount);
         deal(token2, alice, tokenAmount);
 
         vm.startPrank(alice);
         IERC20(token2).forceApprove(address(gateway), tokenAmount);
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", token2));
-        gateway.mint(token2, vcUSDAmount, tokenAmount, alice);
+        gateway.mint(token2, VUSDAmount, tokenAmount, alice);
         vm.stopPrank();
     }
 
     function test_mint_revertIfExcessiveInput() public {
-        uint256 vcUSDAmount = 1000e18;
-        uint256 tokenAmount = gateway.previewMint(token, vcUSDAmount);
+        uint256 VUSDAmount = 1000e18;
+        uint256 tokenAmount = gateway.previewMint(token, VUSDAmount);
         deal(token, alice, tokenAmount);
 
         vm.startPrank(alice);
@@ -262,7 +262,7 @@ contract GatewayTest is Test {
         vm.expectRevert(
             abi.encodeWithSignature("TokenAmountIsHigherThanMax(uint256,uint256)", tokenAmount, tokenAmount - 1)
         );
-        gateway.mint(token, vcUSDAmount, tokenAmount - 1, alice);
+        gateway.mint(token, VUSDAmount, tokenAmount - 1, alice);
         vm.stopPrank();
     }
 
@@ -271,23 +271,23 @@ contract GatewayTest is Test {
         vm.prank(admin);
         gateway.updateMintLimit(100e18);
 
-        uint256 vcUSDAmount = 101e18; // Try to mint more than limit
-        uint256 tokenAmount = gateway.previewMint(token, vcUSDAmount);
+        uint256 VUSDAmount = 101e18; // Try to mint more than limit
+        uint256 tokenAmount = gateway.previewMint(token, VUSDAmount);
         deal(token, alice, tokenAmount);
 
         vm.startPrank(alice);
         IERC20(token).forceApprove(address(gateway), tokenAmount);
-        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", vcUSDAmount, 100e18));
-        gateway.mint(token, vcUSDAmount, tokenAmount, alice);
+        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", VUSDAmount, 100e18));
+        gateway.mint(token, VUSDAmount, tokenAmount, alice);
         vm.stopPrank();
     }
 
     // --- redeem ---
-    function testFuzz_redeem(int256 price, uint256 redeemFee, uint256 vcUSDAmount) public {
+    function testFuzz_redeem(int256 price, uint256 redeemFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
-        vcUSDAmount = bound(vcUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
         gateway.toggleWithdrawalDelay(); // Disable withdrawal delay for instant redeem
@@ -295,16 +295,16 @@ contract GatewayTest is Test {
         gateway.updateRedeemFee(redeemFee);
 
         // Mint PeggedToken for testing
-        mintPeggedToken(alice, vcUSDAmount);
+        mintPeggedToken(alice, VUSDAmount);
 
-        uint256 expectedToken = gateway.previewRedeem(token, vcUSDAmount);
+        uint256 expectedToken = gateway.previewRedeem(token, VUSDAmount);
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
-        uint256 vcUSDBalanceBefore = vcUSD.balanceOf(alice);
+        uint256 VUSDBalanceBefore = VUSD.balanceOf(alice);
 
         vm.prank(alice);
-        gateway.redeem(token, vcUSDAmount, expectedToken, alice);
+        gateway.redeem(token, VUSDAmount, expectedToken, alice);
 
-        assertEq(vcUSD.balanceOf(alice), vcUSDBalanceBefore - vcUSDAmount, "PeggedToken balance should decrease");
+        assertEq(VUSD.balanceOf(alice), VUSDBalanceBefore - VUSDAmount, "PeggedToken balance should decrease");
         assertEq(IERC20(token).balanceOf(alice) - tokenBalanceBefore, expectedToken, "Incorrect tokens received");
     }
 
@@ -318,31 +318,31 @@ contract GatewayTest is Test {
     }
 
     function test_redeem_revertIfRedeemableIsNotEnough() public {
-        uint256 vcUSDAmount = mintPeggedToken(bob, 100e18);
-        uint256 redeemable = gateway.previewRedeem(token, vcUSDAmount);
+        uint256 VUSDAmount = mintPeggedToken(bob, 100e18);
+        uint256 redeemable = gateway.previewRedeem(token, VUSDAmount);
 
         vm.prank(bob);
         vm.expectRevert(
             abi.encodeWithSignature("RedeemableIsLessThanMinimum(uint256,uint256)", redeemable, redeemable + 1)
         );
-        gateway.redeem(token, vcUSDAmount, redeemable + 1, bob);
+        gateway.redeem(token, VUSDAmount, redeemable + 1, bob);
     }
 
     function test_redeem_revertIfMaxWithdrawExceeded() public {
-        uint256 vcUSDAmount = 100e18;
-        // mint vcUSD directly, it is not backed by collateral
+        uint256 VUSDAmount = 100e18;
+        // mint VUSD directly, it is not backed by collateral
         vm.prank(address(gateway));
-        vcUSD.mint(bob, vcUSDAmount);
+        VUSD.mint(bob, VUSDAmount);
 
         // Whitelist bob to bypass withdrawal delay
         gateway.addToInstantRedeemWhitelist(bob);
 
-        uint256 tokenAmount = gateway.previewRedeem(token, vcUSDAmount);
+        uint256 tokenAmount = gateway.previewRedeem(token, VUSDAmount);
         uint256 maxWithdraw = gateway.maxWithdraw(token);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("ExceededMaxWithdraw(uint256,uint256)", tokenAmount, maxWithdraw));
-        gateway.redeem(token, vcUSDAmount, tokenAmount, bob);
+        gateway.redeem(token, VUSDAmount, tokenAmount, bob);
     }
 
     // --- withdraw ---
@@ -358,16 +358,16 @@ contract GatewayTest is Test {
         gateway.updateRedeemFee(redeemFee);
 
         // Mint PeggedToken for testing
-        uint256 vcUSDAmount = gateway.previewWithdraw(token, tokenAmount);
-        mintPeggedToken(alice, vcUSDAmount);
+        uint256 VUSDAmount = gateway.previewWithdraw(token, tokenAmount);
+        mintPeggedToken(alice, VUSDAmount);
 
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
-        uint256 vcUSDBalanceBefore = vcUSD.balanceOf(alice);
+        uint256 VUSDBalanceBefore = VUSD.balanceOf(alice);
 
         vm.prank(alice);
-        gateway.withdraw(token, tokenAmount, vcUSDAmount, alice);
+        gateway.withdraw(token, tokenAmount, VUSDAmount, alice);
 
-        assertEq(vcUSD.balanceOf(alice), vcUSDBalanceBefore - vcUSDAmount, "PeggedToken balance should decrease");
+        assertEq(VUSD.balanceOf(alice), VUSDBalanceBefore - VUSDAmount, "PeggedToken balance should decrease");
         assertEq(IERC20(token).balanceOf(alice) - tokenBalanceBefore, tokenAmount, "Incorrect tokens received");
     }
 
@@ -382,18 +382,18 @@ contract GatewayTest is Test {
 
     function test_withdraw_revertIfPeggedExcessiveInput() public {
         uint256 tokenAmount = 1000e6;
-        uint256 vcUSDAmount = gateway.previewWithdraw(token, tokenAmount);
+        uint256 VUSDAmount = gateway.previewWithdraw(token, tokenAmount);
 
         vm.prank(bob);
         vm.expectRevert(
-            abi.encodeWithSignature("PeggedTokenToBurnIsHigherThanMax(uint256,uint256)", vcUSDAmount, vcUSDAmount - 1)
+            abi.encodeWithSignature("PeggedTokenToBurnIsHigherThanMax(uint256,uint256)", VUSDAmount, VUSDAmount - 1)
         );
-        gateway.withdraw(token, tokenAmount, vcUSDAmount - 1, bob);
+        gateway.withdraw(token, tokenAmount, VUSDAmount - 1, bob);
     }
 
     function test_withdraw_revertIfMaxWithdrawExceeded() public {
         uint256 tokenAmount = 1000e6;
-        uint256 vcUSDAmount = gateway.previewWithdraw(token, tokenAmount);
+        uint256 VUSDAmount = gateway.previewWithdraw(token, tokenAmount);
         uint256 maxWithdraw = gateway.maxWithdraw(token);
 
         // Whitelist bob to bypass withdrawal delay
@@ -401,7 +401,7 @@ contract GatewayTest is Test {
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("ExceededMaxWithdraw(uint256,uint256)", tokenAmount, maxWithdraw));
-        gateway.withdraw(token, tokenAmount, vcUSDAmount, bob);
+        gateway.withdraw(token, tokenAmount, VUSDAmount, bob);
     }
 
     // --- previewDeposit ---
@@ -420,8 +420,8 @@ contract GatewayTest is Test {
         uint256 maxBps = gateway.MAX_BPS();
         uint256 amountAfterFee = amount.mulDiv((maxBps - gateway.mintFee()), maxBps);
         uint256 expectedPeggedToken = latestPrice >= unitPrice
-            ? parseAmount(amountAfterFee, token, address(vcUSD))
-            : parseAmount(amountAfterFee.mulDiv(latestPrice, unitPrice), token, address(vcUSD));
+            ? parseAmount(amountAfterFee, token, address(VUSD))
+            : parseAmount(amountAfterFee.mulDiv(latestPrice, unitPrice), token, address(VUSD));
 
         uint256 actualPeggedToken = gateway.previewDeposit(token, amount);
         assertEq(actualPeggedToken, expectedPeggedToken, "Incorrect PeggedToken amount");
@@ -434,11 +434,11 @@ contract GatewayTest is Test {
     }
 
     // --- previewMint ---
-    function testFuzz_previewMint(int256 price, uint256 mintFee, uint256 vcUSDAmount) public {
+    function testFuzz_previewMint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
-        vcUSDAmount = bound(vcUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -446,10 +446,10 @@ contract GatewayTest is Test {
 
         // Calculate expected token amount
         uint256 oneToken = parseAmount(1, address(0), token);
-        uint256 vcUSDForOneToken = gateway.previewDeposit(token, oneToken);
-        uint256 expectedToken = vcUSDAmount.mulDiv(oneToken, vcUSDForOneToken, Math.Rounding.Ceil);
+        uint256 VUSDForOneToken = gateway.previewDeposit(token, oneToken);
+        uint256 expectedToken = VUSDAmount.mulDiv(oneToken, VUSDForOneToken, Math.Rounding.Ceil);
 
-        uint256 actualToken = gateway.previewMint(token, vcUSDAmount);
+        uint256 actualToken = gateway.previewMint(token, VUSDAmount);
         assertEq(actualToken, expectedToken, "Incorrect token amount");
     }
 
@@ -460,11 +460,11 @@ contract GatewayTest is Test {
     }
 
     // --- previewRedeem ---
-    function testFuzz_previewRedeem(int256 price, uint256 redeemFee, uint256 vcUSDAmount) public {
+    function testFuzz_previewRedeem(int256 price, uint256 redeemFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8); // Price within 0.2% of $1
         redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
-        vcUSDAmount = bound(vcUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
@@ -472,12 +472,12 @@ contract GatewayTest is Test {
         // Calculate expected token amount
         (uint256 latestPrice, uint256 unitPrice) = treasury.getPrice(token);
         uint256 maxBps = gateway.MAX_BPS();
-        uint256 vcUSDAfterFee = vcUSDAmount.mulDiv((maxBps - gateway.redeemFee()), maxBps);
+        uint256 VUSDAfterFee = VUSDAmount.mulDiv((maxBps - gateway.redeemFee()), maxBps);
         uint256 expectedToken = latestPrice <= unitPrice
-            ? parseAmount(vcUSDAfterFee, address(vcUSD), token)
-            : parseAmount(vcUSDAfterFee.mulDiv(unitPrice, latestPrice), address(vcUSD), token);
+            ? parseAmount(VUSDAfterFee, address(VUSD), token)
+            : parseAmount(VUSDAfterFee.mulDiv(unitPrice, latestPrice), address(VUSD), token);
 
-        uint256 actualToken = gateway.previewRedeem(token, vcUSDAmount);
+        uint256 actualToken = gateway.previewRedeem(token, VUSDAmount);
         assertEq(actualToken, expectedToken, "Incorrect token amount");
     }
 
@@ -499,7 +499,7 @@ contract GatewayTest is Test {
         gateway.updateRedeemFee(redeemFee);
 
         // Calculate expected PeggedToken amount
-        uint256 onePeggedToken = parseAmount(1, address(0), address(vcUSD));
+        uint256 onePeggedToken = parseAmount(1, address(0), address(VUSD));
         uint256 tokenForOnePeggedToken = gateway.previewRedeem(token, onePeggedToken);
         uint256 expectedPeggedToken = tokenAmount.mulDiv(onePeggedToken, tokenForOnePeggedToken, Math.Rounding.Ceil);
 
@@ -581,7 +581,7 @@ contract GatewayTest is Test {
         assertEq(gateway.maxMint(), 100e18);
         // Increase total supply via owner mint
         vm.prank(address(gateway));
-        vcUSD.mint(address(this), 60e18);
+        VUSD.mint(address(this), 60e18);
         assertEq(gateway.maxMint(), 40e18);
         // Set limit below current supply → zero
         vm.prank(admin);
@@ -594,7 +594,7 @@ contract GatewayTest is Test {
         assertEq(gateway.maxRedeem(alice), 0);
         // mint 50 PeggedToken to alice
         vm.prank(address(gateway));
-        vcUSD.mint(alice, 50e18);
+        VUSD.mint(alice, 50e18);
         assertEq(gateway.maxRedeem(alice), 50e18);
     }
 
@@ -613,44 +613,44 @@ contract GatewayTest is Test {
     // --- Withdrawal Delay & Request Redeem Tests ---
 
     function test_requestRedeem() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
-        // Mint vcUSD to alice
-        mintPeggedToken(alice, vcUSDAmount);
+        // Mint VUSD to alice
+        mintPeggedToken(alice, VUSDAmount);
 
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
 
         uint256 claimableAt = block.timestamp + 7 days;
 
         vm.expectEmit(true, true, false, true);
-        emit Gateway.RedeemRequested(alice, token, vcUSDAmount, claimableAt);
+        emit Gateway.RedeemRequested(alice, token, VUSDAmount, claimableAt);
 
-        gateway.requestRedeem(token, vcUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
         vm.stopPrank();
 
         // Verify request was created
         (uint256 locked, uint256 claimable) = gateway.getRedeemRequest(alice, token);
-        assertEq(locked, vcUSDAmount, "Incorrect locked amount");
+        assertEq(locked, VUSDAmount, "Incorrect locked amount");
         assertEq(claimable, claimableAt, "Incorrect claimable time");
 
-        // Verify vcUSD was transferred to gateway
-        assertEq(vcUSD.balanceOf(alice), 0, "Alice should have 0 vcUSD");
-        assertEq(vcUSD.balanceOf(address(gateway)), vcUSDAmount, "Gateway should have locked vcUSD");
+        // Verify VUSD was transferred to gateway
+        assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD");
+        assertEq(VUSD.balanceOf(address(gateway)), VUSDAmount, "Gateway should have locked VUSD");
 
         // Verify queue accounting
-        assertEq(gateway.getRedeemQueueForToken(token), vcUSDAmount, "Queue should track vcUSD amount");
+        assertEq(gateway.getRedeemQueueForToken(token), VUSDAmount, "Queue should track VUSD amount");
     }
 
     function test_requestRedeem_mergingRequests() public {
         uint256 firstAmount = 50e18;
         uint256 secondAmount = 30e18;
 
-        // Mint vcUSD to alice
+        // Mint VUSD to alice
         mintPeggedToken(alice, firstAmount + secondAmount);
 
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), firstAmount + secondAmount);
+        VUSD.approve(address(gateway), firstAmount + secondAmount);
 
         // First request
         gateway.requestRedeem(token, firstAmount);
@@ -687,11 +687,11 @@ contract GatewayTest is Test {
         uint256 firstAmount = 50e18;
         uint256 secondAmount = 30e18;
 
-        // Mint vcUSD to alice
+        // Mint VUSD to alice
         mintPeggedToken(alice, firstAmount + secondAmount);
 
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), firstAmount + secondAmount);
+        VUSD.approve(address(gateway), firstAmount + secondAmount);
 
         // First request for token
         gateway.requestRedeem(token, firstAmount);
@@ -733,32 +733,32 @@ contract GatewayTest is Test {
         // Disable withdrawal delay
         gateway.toggleWithdrawalDelay();
 
-        uint256 vcUSDAmount = 100e18;
-        mintPeggedToken(alice, vcUSDAmount);
+        uint256 VUSDAmount = 100e18;
+        mintPeggedToken(alice, VUSDAmount);
 
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
 
         vm.expectRevert(Gateway.WithdrawalDelayFeatureNotEnabled.selector);
-        gateway.requestRedeem(token, vcUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
         vm.stopPrank();
     }
 
     function test_cancelRedeemRequest() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
         // Setup: Create a redeem request
-        mintPeggedToken(alice, vcUSDAmount);
+        mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
-        gateway.requestRedeem(token, vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
 
-        assertEq(vcUSD.balanceOf(alice), 0, "Alice should have 0 vcUSD after request");
-        assertEq(gateway.getRedeemQueueForToken(token), vcUSDAmount, "Queue should track amount");
+        assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD after request");
+        assertEq(gateway.getRedeemQueueForToken(token), VUSDAmount, "Queue should track amount");
 
         // Cancel the request
         vm.expectEmit(true, false, false, true);
-        emit Gateway.RedeemRequestCancelled(alice, vcUSDAmount);
+        emit Gateway.RedeemRequestCancelled(alice, VUSDAmount);
 
         gateway.cancelRedeemRequest(token);
         vm.stopPrank();
@@ -768,9 +768,9 @@ contract GatewayTest is Test {
         assertEq(locked, 0, "Locked amount should be 0");
         assertEq(claimable, 0, "Claimable time should be 0");
 
-        // Verify vcUSD was returned to alice
-        assertEq(vcUSD.balanceOf(alice), vcUSDAmount, "Alice should have vcUSD back");
-        assertEq(vcUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 vcUSD");
+        // Verify VUSD was returned to alice
+        assertEq(VUSD.balanceOf(alice), VUSDAmount, "Alice should have VUSD back");
+        assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
 
         // Verify queue was cleared
         assertEq(gateway.getRedeemQueueForToken(token), 0, "Queue should be cleared");
@@ -783,13 +783,13 @@ contract GatewayTest is Test {
     }
 
     function test_redeem_afterRequest_fullAmount() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
         // Setup: Create and wait for redeem request
-        mintPeggedToken(alice, vcUSDAmount);
+        mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
-        gateway.requestRedeem(token, vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -798,10 +798,10 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(0.999e8);
 
         // Redeem the full locked amount
-        uint256 expectedTokenOut = gateway.previewRedeem(token, vcUSDAmount);
+        uint256 expectedTokenOut = gateway.previewRedeem(token, VUSDAmount);
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
 
-        gateway.redeem(token, vcUSDAmount, expectedTokenOut, alice);
+        gateway.redeem(token, VUSDAmount, expectedTokenOut, alice);
         vm.stopPrank();
 
         // Verify tokens received
@@ -813,22 +813,22 @@ contract GatewayTest is Test {
         (uint256 locked,) = gateway.getRedeemRequest(alice, token);
         assertEq(locked, 0, "Request should be deleted");
 
-        // Verify vcUSD was burned from gateway
-        assertEq(vcUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 vcUSD");
+        // Verify VUSD was burned from gateway
+        assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
 
         // Verify queue was cleared
         assertEq(gateway.getRedeemQueueForToken(token), 0, "Queue should be cleared after full redemption");
     }
 
     function test_redeem_afterRequest_partialAmount() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
         uint256 redeemAmount = 60e18;
 
         // Setup: Create and wait for redeem request
-        mintPeggedToken(alice, vcUSDAmount);
+        mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
-        gateway.requestRedeem(token, vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -843,28 +843,28 @@ contract GatewayTest is Test {
 
         // Verify partial request remains
         (uint256 locked,) = gateway.getRedeemRequest(alice, token);
-        assertEq(locked, vcUSDAmount - redeemAmount, "Should have remaining locked amount");
+        assertEq(locked, VUSDAmount - redeemAmount, "Should have remaining locked amount");
 
-        // Verify vcUSD balance in gateway
-        assertEq(vcUSD.balanceOf(address(gateway)), vcUSDAmount - redeemAmount, "Gateway should have remaining vcUSD");
+        // Verify VUSD balance in gateway
+        assertEq(VUSD.balanceOf(address(gateway)), VUSDAmount - redeemAmount, "Gateway should have remaining VUSD");
     }
 
     function test_redeem_afterRequest_excessAmount_whitelisted() public {
         uint256 amountLocked = 100e18;
-        uint256 vcUSDExtra = 50e18;
-        uint256 totalRedeem = amountLocked + vcUSDExtra;
+        uint256 VUSDExtra = 50e18;
+        uint256 totalRedeem = amountLocked + VUSDExtra;
 
         // Whitelist alice for instant redeem
         gateway.addToInstantRedeemWhitelist(alice);
 
-        // Setup: Create request and also keep some vcUSD in wallet
+        // Setup: Create request and also keep some VUSD in wallet
         mintPeggedToken(alice, totalRedeem);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), amountLocked);
+        VUSD.approve(address(gateway), amountLocked);
         gateway.requestRedeem(token, amountLocked);
 
-        // alice still has vcUSDExtra in wallet
-        assertEq(vcUSD.balanceOf(alice), vcUSDExtra, "Alice should have extra vcUSD");
+        // alice still has VUSDExtra in wallet
+        assertEq(VUSD.balanceOf(alice), VUSDExtra, "Alice should have extra VUSD");
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -881,20 +881,20 @@ contract GatewayTest is Test {
         (uint256 locked,) = gateway.getRedeemRequest(alice, token);
         assertEq(locked, 0, "Request should be deleted");
 
-        // Verify all vcUSD was burned
-        assertEq(vcUSD.balanceOf(alice), 0, "Alice should have 0 vcUSD");
-        assertEq(vcUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 vcUSD");
+        // Verify all VUSD was burned
+        assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD");
+        assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
     }
 
     function test_redeem_afterRequest_excessAmount_notWhitelisted_reverts() public {
         uint256 amountLocked = 100e18;
-        uint256 vcUSDExtra = 50e18;
-        uint256 totalRedeem = amountLocked + vcUSDExtra;
+        uint256 VUSDExtra = 50e18;
+        uint256 totalRedeem = amountLocked + VUSDExtra;
 
-        // Setup: Create request and also keep some vcUSD in wallet
+        // Setup: Create request and also keep some VUSD in wallet
         mintPeggedToken(alice, totalRedeem);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), amountLocked);
+        VUSD.approve(address(gateway), amountLocked);
         gateway.requestRedeem(token, amountLocked);
 
         // Fast forward past the delay
@@ -911,13 +911,13 @@ contract GatewayTest is Test {
     }
 
     function test_withdraw_afterRequest_fullAmount() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
         // Setup: Create and wait for redeem request
-        mintPeggedToken(alice, vcUSDAmount);
+        mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
-        gateway.requestRedeem(token, vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -926,10 +926,10 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(0.999e8);
 
         // Withdraw using exact token amount
-        uint256 tokenAmount = gateway.previewRedeem(token, vcUSDAmount);
+        uint256 tokenAmount = gateway.previewRedeem(token, VUSDAmount);
         uint256 tokenBalanceBefore = IERC20(token).balanceOf(alice);
 
-        gateway.withdraw(token, tokenAmount, vcUSDAmount, alice);
+        gateway.withdraw(token, tokenAmount, VUSDAmount, alice);
         vm.stopPrank();
 
         // Verify tokens received
@@ -943,14 +943,14 @@ contract GatewayTest is Test {
     }
 
     function test_withdraw_afterRequest_partialAmount() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
         uint256 withdrawTokenAmount = gateway.previewRedeem(token, 40e18);
 
         // Setup: Create and wait for redeem request
-        mintPeggedToken(alice, vcUSDAmount);
+        mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
-        gateway.requestRedeem(token, vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -959,76 +959,76 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(0.999e8);
 
         // Withdraw partial amount
-        uint256 vcUSDToBurn = gateway.previewWithdraw(token, withdrawTokenAmount);
-        gateway.withdraw(token, withdrawTokenAmount, vcUSDToBurn, alice);
+        uint256 VUSDToBurn = gateway.previewWithdraw(token, withdrawTokenAmount);
+        gateway.withdraw(token, withdrawTokenAmount, VUSDToBurn, alice);
         vm.stopPrank();
 
         // Verify partial request remains
         (uint256 locked,) = gateway.getRedeemRequest(alice, token);
-        assertEq(locked, vcUSDAmount - vcUSDToBurn, "Should have remaining locked amount");
+        assertEq(locked, VUSDAmount - VUSDToBurn, "Should have remaining locked amount");
     }
 
     function test_redeem_instantWithWhitelist() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
         // Whitelist alice
         gateway.addToInstantRedeemWhitelist(alice);
 
-        // Mint vcUSD to alice
-        mintPeggedToken(alice, vcUSDAmount);
+        // Mint VUSD to alice
+        mintPeggedToken(alice, VUSDAmount);
 
         vm.startPrank(alice);
         // Should be able to redeem instantly without requesting
-        uint256 expectedTokenOut = gateway.previewRedeem(token, vcUSDAmount);
-        gateway.redeem(token, vcUSDAmount, expectedTokenOut, alice);
+        uint256 expectedTokenOut = gateway.previewRedeem(token, VUSDAmount);
+        gateway.redeem(token, VUSDAmount, expectedTokenOut, alice);
         vm.stopPrank();
 
         // Verify redeem was successful
-        assertEq(vcUSD.balanceOf(alice), 0, "Alice should have 0 vcUSD");
+        assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD");
     }
 
     function test_redeem_revertIfNotWhitelisted_delayEnabled() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
-        // Mint vcUSD to alice (not whitelisted)
-        mintPeggedToken(alice, vcUSDAmount);
+        // Mint VUSD to alice (not whitelisted)
+        mintPeggedToken(alice, VUSDAmount);
 
         vm.prank(alice);
         // Should revert because alice is not whitelisted and has no claimable request
         vm.expectRevert(abi.encodeWithSignature("CallerNotWhitelisted(address)", alice));
-        gateway.redeem(token, vcUSDAmount, 0, alice);
+        gateway.redeem(token, VUSDAmount, 0, alice);
     }
 
     function test_withdraw_revertIfNotWhitelisted_delayEnabled() public {
         uint256 tokenAmount = 100e6;
-        uint256 vcUSDAmount = gateway.previewWithdraw(token, tokenAmount);
+        uint256 VUSDAmount = gateway.previewWithdraw(token, tokenAmount);
 
-        // Mint vcUSD to alice (not whitelisted)
-        mintPeggedToken(alice, vcUSDAmount);
+        // Mint VUSD to alice (not whitelisted)
+        mintPeggedToken(alice, VUSDAmount);
 
         vm.prank(alice);
         // Should revert because alice is not whitelisted and has no claimable request
         vm.expectRevert(abi.encodeWithSignature("CallerNotWhitelisted(address)", alice));
-        gateway.withdraw(token, tokenAmount, vcUSDAmount, alice);
+        gateway.withdraw(token, tokenAmount, VUSDAmount, alice);
     }
 
     function test_redeem_instantWhenDelayDisabled() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
         // Disable withdrawal delay
         gateway.toggleWithdrawalDelay();
 
-        // Mint vcUSD to alice
-        mintPeggedToken(alice, vcUSDAmount);
+        // Mint VUSD to alice
+        mintPeggedToken(alice, VUSDAmount);
 
         vm.startPrank(alice);
         // Should be able to redeem instantly when delay is disabled
-        uint256 expectedTokenOut = gateway.previewRedeem(token, vcUSDAmount);
-        gateway.redeem(token, vcUSDAmount, expectedTokenOut, alice);
+        uint256 expectedTokenOut = gateway.previewRedeem(token, VUSDAmount);
+        gateway.redeem(token, VUSDAmount, expectedTokenOut, alice);
         vm.stopPrank();
 
         // Verify redeem was successful
-        assertEq(vcUSD.balanceOf(alice), 0, "Alice should have 0 vcUSD");
+        assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD");
     }
 
     function test_toggleWithdrawalDelay() public {
@@ -1141,7 +1141,7 @@ contract GatewayTest is Test {
     }
 
     function test_getRedeemRequest() public {
-        uint256 vcUSDAmount = 100e18;
+        uint256 VUSDAmount = 100e18;
 
         // Initially no request
         (uint256 locked0, uint256 claimable0) = gateway.getRedeemRequest(alice, token);
@@ -1149,15 +1149,15 @@ contract GatewayTest is Test {
         assertEq(claimable0, 0, "Should have no claimable time");
 
         // Create request
-        mintPeggedToken(alice, vcUSDAmount);
+        mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
-        vcUSD.approve(address(gateway), vcUSDAmount);
-        gateway.requestRedeem(token, vcUSDAmount);
+        VUSD.approve(address(gateway), VUSDAmount);
+        gateway.requestRedeem(token, VUSDAmount);
         vm.stopPrank();
 
         // Verify request
         (uint256 locked1, uint256 claimable1) = gateway.getRedeemRequest(alice, token);
-        assertEq(locked1, vcUSDAmount, "Should have locked amount");
+        assertEq(locked1, VUSDAmount, "Should have locked amount");
         assertEq(claimable1, block.timestamp + 7 days, "Should have claimable time");
     }
 }

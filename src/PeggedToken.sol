@@ -38,7 +38,7 @@ contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
     {}
 
     /**
-     * @notice Burn PeggedToken e.g. vcUSD from account.
+     * @notice Burn PeggedToken e.g. VUSD from account.
      * The caller must have allowance for accounts's tokens.
      * If Gateway is the caller then approval is not required.
      * @param account_ PeggedToken will be burnt from this address
@@ -54,7 +54,7 @@ contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
     }
 
     /**
-     * @notice onlyGateway:: Mint PeggedToken e.g. vcUSD
+     * @notice onlyGateway:: Mint PeggedToken e.g. VUSD
      * @param account_ Address where PeggedToken will be minted
      * @param amount_ PeggedToken amount to mint
      */
