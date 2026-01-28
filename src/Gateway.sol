@@ -40,6 +40,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 mintFee;
         uint256 redeemFee;
         uint256 mintLimit;
+        uint256 amoMintLimit;
+        uint256 amoSupply;
         bool withdrawalDelayEnabled;
         uint256 withdrawalDelay;
         EnumerableSet.AddressSet instantRedeemWhitelist;
@@ -68,6 +70,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     event RedeemRequestCancelled(address indexed user, uint256 amount);
     event RedeemRequested(address indexed user, address indexed tokenOut, uint256 amount, uint256 claimableAt);
     event RemovedFromInstantRedeemWhitelist(address indexed account);
+    event MintedToAMO(address indexed receiver, uint256 amountMinted, uint256 newAmoSupply);
+    event BurnedFromAMO(uint256 amountBurned, uint256 newAmoSupply);
+    event UpdatedAmoMintLimit(uint256 previousLimit, uint256 newLimit);
     event UpdatedMintFee(uint256 previousMintFee, uint256 newMintFee);
     event UpdatedRedeemFee(uint256 previousRedeemFee, uint256 newRedeemFee);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
@@ -90,6 +95,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error InvalidMintFee(uint256 fee);
     error InvalidRedeemFee(uint256 fee);
     error InvalidWithdrawalDelay();
+    error InvalidAmoMintLimit(uint256 limit, uint256 constraint);
+    error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error MintableIsLessThanMinimum(uint256 peggedTokenOut, uint256 minPeggedTokenOut);
     error NoActiveWithdrawalRequest();
     error NoExcessReserve(uint256 reserve, uint256 supply);
@@ -97,7 +104,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
     error TokenNotSupported(address token);
-    error WithdrawalAmountCannotBeZero();
+    error AmountIsZero();
     error WithdrawalDelayFeatureNotEnabled();
 
     /*/////////////////////////////////////////////////////////////
@@ -144,20 +151,48 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function mint(uint256 amount_, address receiver_) external onlyRole(_ummRole()) {
+    function mintToAMO(uint256 amount_, address receiver_) external onlyRole(_ummRole()) {
         if (receiver_ == address(0)) revert AddressIsZero();
-        IPeggedToken _token = _peggedToken();
-        uint256 _supply = _token.totalSupply();
-        uint256 _reserve = ITreasury(treasury()).reserve();
-        if (_reserve <= _supply) revert NoExcessReserve(_reserve, _supply);
-        uint256 _excess;
-        unchecked {
-            _excess = _reserve - _supply;
+
+        GatewayStorage storage $ = _getGatewayStorage();
+        // Check AMO mint limit
+        uint256 _supply = $.amoSupply;
+        uint256 _limit = $.amoMintLimit;
+        uint256 _amoMintable = _limit > _supply ? _limit - _supply : 0;
+        if (amount_ > _amoMintable) revert ExceededMaxMint(amount_, _amoMintable);
+
+        // increment supply and mint tokens
+        _supply += amount_;
+        $.amoSupply = _supply;
+        $.peggedToken.mint(receiver_, amount_);
+        emit MintedToAMO(receiver_, amount_, _supply);
+    }
+
+    /// @inheritdoc IGateway
+    function burnFromAMO(uint256 amount_) external onlyRole(_ummRole()) {
+        if (amount_ == 0) revert AmountIsZero();
+
+        GatewayStorage storage $ = _getGatewayStorage();
+        $.peggedToken.burnFrom(msg.sender, amount_);
+
+        uint256 _currentAmoSupply = $.amoSupply;
+        if (amount_ > _currentAmoSupply) revert AmoBurnExceedsSupply(amount_, _currentAmoSupply);
+        uint256 _newSupply = _currentAmoSupply - amount_;
+        $.amoSupply = _newSupply;
+        emit BurnedFromAMO(amount_, _newSupply);
+    }
+
+    /// @inheritdoc IGateway
+    function updateAmoMintLimit(uint256 newAmoMintLimit_) external onlyRole(_defaultAdminRole()) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        // AMO mint limit cannot be less than current AMO supply
+        uint256 _currentAmoSupply = $.amoSupply;
+        if (newAmoMintLimit_ < _currentAmoSupply) {
+            revert InvalidAmoMintLimit(newAmoMintLimit_, _currentAmoSupply);
         }
-        if (amount_ > _excess) revert ExceededExcessReserve(amount_, _excess);
-        uint256 _maxMintable = maxMint();
-        if (_maxMintable < amount_) revert ExceededMaxMint(amount_, _maxMintable);
-        _token.mint(receiver_, amount_);
+
+        emit UpdatedAmoMintLimit($.amoMintLimit, newAmoMintLimit_);
+        $.amoMintLimit = newAmoMintLimit_;
     }
 
     /// @inheritdoc IGateway
@@ -276,7 +311,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @param tokenOut_ Token to redeem for
     /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
     function requestRedeem(address tokenOut_, uint256 peggedTokenAmount_) external nonReentrant {
-        if (peggedTokenAmount_ == 0) revert WithdrawalAmountCannotBeZero();
+        if (peggedTokenAmount_ == 0) revert AmountIsZero();
         if (!ITreasury(treasury()).isWhitelistedToken(tokenOut_)) revert TokenNotSupported(tokenOut_);
 
         GatewayStorage storage $ = _getGatewayStorage();
@@ -321,6 +356,16 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
+    function amoMintLimit() external view returns (uint256) {
+        return _getGatewayStorage().amoMintLimit;
+    }
+
+    /// @inheritdoc IGateway
+    function amoSupply() external view returns (uint256) {
+        return _getGatewayStorage().amoSupply;
+    }
+
+    /// @inheritdoc IGateway
     function mintFee() external view returns (uint256) {
         return _getGatewayStorage().mintFee;
     }
@@ -345,6 +390,20 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().withdrawalDelay;
     }
 
+    /**
+     * @inheritdoc IGateway
+     * @dev Returns remaining AMO mint capacity
+     */
+    function maxAmoMint() public view returns (uint256) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _amoSupply = $.amoSupply;
+        uint256 _amoMintLimit = $.amoMintLimit;
+        if (_amoMintLimit <= _amoSupply) return 0;
+        unchecked {
+            return _amoMintLimit - _amoSupply;
+        }
+    }
+
     /// @inheritdoc IGateway
     function maxDeposit() external pure returns (uint256) {
         return type(uint256).max;
@@ -352,15 +411,18 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /**
      * @inheritdoc IGateway
-     * @dev Returns difference between mint limit and current supply
+     * @dev Returns remaining mint capacity (excludes AMO supply from calculation)
+     * @dev Invariant: amoSupply <= totalSupply always holds, so subtraction is safe
      */
     function maxMint() public view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
         uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _amoSupply = $.amoSupply;
+        uint256 _userSupply = _totalSupply - _amoSupply;
         uint256 _mintLimit = $.mintLimit;
-        if (_mintLimit <= _totalSupply) return 0;
+        if (_mintLimit <= _userSupply) return 0;
         unchecked {
-            return _mintLimit - _totalSupply;
+            return _mintLimit - _userSupply;
         }
     }
 
