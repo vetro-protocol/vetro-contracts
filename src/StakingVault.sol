@@ -65,7 +65,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     error RequestNotActive(uint256 requestId);
     error ZeroAddress();
     error ZeroAmount();
-    error ZeroShares();
 
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
@@ -154,7 +153,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
 
     /// @inheritdoc IStakingVault
     function claimWithdraw(uint256 requestId_, address receiver_) external nonReentrant returns (uint256 assets) {
-        _pullYield();
         assets = _claimWithdraw(requestId_, receiver_);
     }
 
@@ -164,8 +162,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         nonReentrant
         returns (uint256 totalAssets_)
     {
-        _pullYield();
-
         uint256 _length = requestIds_.length;
         for (uint256 _i; _i < _length; ++_i) {
             totalAssets_ += _claimWithdraw(requestIds_[_i], receiver_);
@@ -398,6 +394,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     /// @return assets_ The amount of assets claimed
     function _claimWithdraw(uint256 requestId_, address receiver_) internal returns (uint256 assets_) {
         if (receiver_ == address(0)) revert ZeroAddress();
+        _pullYield();
 
         StakingVaultStorage storage $ = _getStakingVaultStorage();
 
@@ -430,12 +427,14 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     /// @param shares_ The amount of shares to burn
     /// @param owner_ The owner of the shares
     /// @return requestId_ The ID of the created request
-    /// @return assets_ The amount of assets locked
-    function _createRequest(uint256 shares_, address owner_) internal returns (uint256 requestId_, uint256 assets_) {
-        // Convert shares to assets at current rate before burning
-        assets_ = previewRedeem(shares_);
-
+    function _createRequest(uint256 assets_, uint256 shares_, address owner_) internal returns (uint256 requestId_) {
+        if (assets_ == 0 || shares_ == 0) revert ZeroAmount();
         StakingVaultStorage storage $ = _getStakingVaultStorage();
+        if (!$.cooldownEnabled) revert CooldownNotEnabled();
+        if (msg.sender != owner_) {
+            _spendAllowance(owner_, msg.sender, shares_);
+        }
+        _pullYield();
 
         // Update total assets in cooldown
         $.totalAssetsInCooldown += assets_;
@@ -470,10 +469,8 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     /// @return requestId_ The ID of the created request
     /// @return assets_ The amount of assets that will be claimable
     function _requestRedeem(uint256 shares_, address owner_) internal returns (uint256 requestId_, uint256 assets_) {
-        if (!_getStakingVaultStorage().cooldownEnabled) revert CooldownNotEnabled();
-        _validateRequest(shares_, owner_);
-        _pullYield();
-        (requestId_, assets_) = _createRequest(shares_, owner_);
+        assets_ = previewRedeem(shares_);
+        requestId_ = _createRequest(assets_, shares_, owner_);
     }
 
     /// @notice Internal implementation of requestWithdraw
@@ -482,12 +479,8 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     /// @return requestId_ The ID of the created request
     /// @return shares_ The amount of shares that were burned
     function _requestWithdraw(uint256 assets_, address owner_) internal returns (uint256 requestId_, uint256 shares_) {
-        if (!_getStakingVaultStorage().cooldownEnabled) revert CooldownNotEnabled();
-        if (assets_ == 0) revert ZeroAmount();
-        _pullYield();
         shares_ = previewWithdraw(assets_);
-        _validateRequest(shares_, owner_);
-        (requestId_,) = _createRequest(shares_, owner_);
+        requestId_ = _createRequest(assets_, shares_, owner_);
     }
 
     /// @notice Override ERC20 _update to call vault rewards before transfers
@@ -506,19 +499,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
             }
         }
         super._update(from, to, value);
-    }
-
-    /// @notice Validate a cooldown request and spend allowance if needed
-    /// @dev Reverts if shares is 0 or owner has insufficient balance.
-    ///      Spends allowance if caller is not the owner.
-    /// @param shares_ The amount of shares to validate
-    /// @param owner_ The owner of the shares
-    function _validateRequest(uint256 shares_, address owner_) internal {
-        if (shares_ == 0) revert ZeroShares();
-
-        if (msg.sender != owner_) {
-            _spendAllowance(owner_, msg.sender, shares_);
-        }
     }
 
     /*//////////////////////////////////////////////////////////////

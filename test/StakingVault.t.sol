@@ -210,9 +210,9 @@ contract StakingVaultTest is Test {
         assertEq(request.claimableAt, block.timestamp + 7 days);
     }
 
-    function test_requestRedeem_revert_zeroShares() public {
+    function test_requestRedeem_revert_zeroAssets() public {
         vm.prank(alice);
-        vm.expectRevert(StakingVault.ZeroShares.selector);
+        vm.expectRevert(StakingVault.ZeroAmount.selector);
         vault.requestRedeem(0, alice);
     }
 
