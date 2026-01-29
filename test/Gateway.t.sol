@@ -150,63 +150,128 @@ contract GatewayTest is Test {
     }
 
     // --- mint only UMM role ---
-    function test_mint_onlyUMMRole() public {
+    function test_mintToAMO_onlyUMMRole() public {
         // add tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 10000e6);
+
+        // Set AMO mint limit
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(2000e18);
 
         uint256 amount = 1000e18; // 1000 PeggedToken
         uint256 initialSupply = VUSD.totalSupply();
         assertEq(VUSD.balanceOf(bob), 0, "Incorrect PeggedToken balance");
-        gateway.mint(amount, bob);
+        gateway.mintToAMO(amount, bob);
         uint256 newSupply = VUSD.totalSupply();
         assertEq(newSupply, initialSupply + amount, "UMM role should be able to mint PeggedToken");
         assertEq(VUSD.balanceOf(bob), amount, "Incorrect PeggedToken balance");
     }
 
-    function test_mint_onlyUMMRole_revertIfReceiverIsZeroAddress() public {
+    function test_mintToAMO_onlyUMMRole_revertIfReceiverIsZeroAddress() public {
         vm.expectRevert(Gateway.AddressIsZero.selector);
-        gateway.mint(100e18, address(0));
+        gateway.mintToAMO(100e18, address(0));
     }
 
-    function test_mint_onlyUMMRole_revertIfNotAuthorized() public {
+    function test_mintToAMO_onlyUMMRole_revertIfNotAuthorized() public {
         bytes32 _role = treasury.UMM_ROLE();
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
-        gateway.mint(100e18, alice);
+        gateway.mintToAMO(100e18, alice);
     }
 
-    function test_mint_onlyUMMRole_revertIfNoExcessReserve() public {
-        mockOracle.updatePrice(1e8);
-        // mint 50 PeggedToken
-        vm.prank(address(gateway));
-        VUSD.mint(alice, 50e18);
-        // add 40 tokens in Treasury to build reserve. Token has 6 decimals.
-        deal(address(token), address(treasury), 40e6);
+    function test_mintToAMO_onlyUMMRole_revertIfAmoMintLimitExceeded() public {
+        // Set AMO mint limit to 10 PeggedToken
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(10e18);
 
-        vm.expectRevert(abi.encodeWithSignature("NoExcessReserve(uint256,uint256)", 40e18, 50e18));
-        gateway.mint(1e18, bob);
+        // Try to mint more than the limit
+        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", 11e18, 10e18));
+        gateway.mintToAMO(11e18, bob);
     }
 
-    function test_mint_onlyUMMRole_revertIfExcessReserveExceeded() public {
-        mockOracle.updatePrice(1e8);
-        // add tokens in Treasury to build reserve. Token has 6 decimals.
-        deal(address(token), address(treasury), 100e6);
-
-        vm.expectRevert(abi.encodeWithSignature("ExceededExcessReserve(uint256,uint256)", 101e18, 100e18));
-        gateway.mint(101e18, bob);
-    }
-
-    function test_mint_onlyUMMRole_revertIfMaxMintExceeded() public {
+    function test_mintToAMO_onlyUMMRole_amoLimitIndependentOfUserLimit() public {
         mockOracle.updatePrice(1e8);
         // add tokens in Treasury to build reserve. Token has 6 decimals.
         deal(address(token), address(treasury), 200e6);
 
-        // update mint limit to 100 PeggedToken
+        // Set AMO mint limit high enough
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(200e18);
+
+        // update user mint limit to 100 PeggedToken (lower than AMO limit)
         vm.prank(admin);
         gateway.updateMintLimit(100e18);
 
-        vm.expectRevert(abi.encodeWithSignature("ExceededMaxMint(uint256,uint256)", 101e18, 100e18));
-        gateway.mint(101e18, bob);
+        // AMO should still be able to mint up to its own limit (200e18), not constrained by user mintLimit
+        gateway.mintToAMO(101e18, bob);
+        assertEq(VUSD.balanceOf(bob), 101e18, "AMO mint should succeed regardless of user userMintLimit");
+    }
+
+    // --- burnFromAMO ---
+    function test_burnFromAMO_onlyUMMRole_success() public {
+        // Setup: mint AMO tokens
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(500e18);
+        gateway.mintToAMO(300e18, address(this));
+
+        uint256 initialTotalSupply = VUSD.totalSupply();
+        uint256 initialAmoSupply = gateway.amoSupply();
+        assertEq(initialAmoSupply, 300e18, "Initial AMO supply should be 300");
+
+        // Burn 100 tokens from owner
+        uint256 burnAmount = 100e18;
+        gateway.burnFromAMO(burnAmount);
+
+        assertEq(VUSD.totalSupply(), initialTotalSupply - burnAmount, "Total supply should decrease");
+        assertEq(gateway.amoSupply(), initialAmoSupply - burnAmount, "AMO supply should decrease");
+    }
+
+    function test_burnFromAMO_onlyUMMRole_burnAll() public {
+        // Setup: mint AMO tokens
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(500e18);
+        gateway.mintToAMO(300e18, address(this));
+
+        // Burn all AMO supply
+        gateway.burnFromAMO(300e18);
+
+        assertEq(gateway.amoSupply(), 0, "AMO supply should be zero after burning all");
+    }
+
+    function test_burnFromAMO_onlyUMMRole_revertIfNotAuthorized() public {
+        bytes32 _role = treasury.UMM_ROLE();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
+        gateway.burnFromAMO(100e18);
+    }
+
+    function test_burnFromAMO_onlyUMMRole_revertIfExceedsAmoSupply() public {
+        // Setup: mint some AMO tokens
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(500e18);
+        gateway.mintToAMO(100e18, address(this));
+
+        // Approve more than we have minted
+        uint256 burnAmount = 150e18;
+        // Mint additional regular tokens so we have enough balance, but AMO supply is only 100
+        vm.prank(address(gateway));
+        VUSD.mint(address(this), 50e18);
+
+        VUSD.approve(address(gateway), burnAmount);
+        // Should revert because burn amount exceeds AMO supply, even though we have token balance
+        vm.expectRevert(abi.encodeWithSignature("AmoBurnExceedsSupply(uint256,uint256)", burnAmount, 100e18));
+        gateway.burnFromAMO(burnAmount);
+    }
+
+    function test_burnFromAMO_onlyUMMRole_revertIfZeroAmoSupply() public {
+        // Mint some regular tokens (not AMO) to test contract
+        vm.prank(address(gateway));
+        VUSD.mint(address(this), 100e18);
+
+        // Try to burn when AMO supply is zero
+        uint256 burnAmount = 100e18;
+        vm.expectRevert(abi.encodeWithSignature("AmoBurnExceedsSupply(uint256,uint256)", burnAmount, 0));
+        gateway.burnFromAMO(burnAmount);
     }
 
     // --- mint ---
@@ -528,6 +593,42 @@ contract GatewayTest is Test {
         gateway.updateMintLimit(newMintLimit);
     }
 
+    // --- update AMO mint limit ---
+    function test_updateAmoMintLimit_success() public {
+        uint256 newAmoMintLimit = 5000e18;
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(newAmoMintLimit);
+        assertEq(gateway.amoMintLimit(), newAmoMintLimit, "AMO mint limit should be updated");
+    }
+
+    function test_updateAmoMintLimit_revertIfNotDefaultAdminRole() public {
+        uint256 newAmoMintLimit = 5000e18;
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, 0x00));
+        gateway.updateAmoMintLimit(newAmoMintLimit);
+    }
+
+    function test_updateAmoMintLimit_revertIfBelowCurrentAmoSupply() public {
+        // Setup: mint some AMO tokens first
+        deal(address(token), address(treasury), 1000e6);
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(500e18);
+        gateway.mintToAMO(300e18, bob);
+
+        // Try to set limit below current AMO supply
+        uint256 newAmoMintLimit = 200e18;
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSignature("InvalidAmoMintLimit(uint256,uint256)", newAmoMintLimit, 300e18));
+        gateway.updateAmoMintLimit(newAmoMintLimit);
+    }
+
+    function test_updateAmoMintLimit_allowZeroWhenAmoSupplyIsZero() public {
+        // Set limit to zero when AMO supply is zero should succeed
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(0);
+        assertEq(gateway.amoMintLimit(), 0, "AMO mint limit should be set to zero");
+    }
+
     // --- update mint fee ---
     function test_updateMintFee() public {
         uint256 newFee = 500;
@@ -717,7 +818,7 @@ contract GatewayTest is Test {
 
     function test_requestRedeem_revertIfZeroAmount() public {
         vm.prank(alice);
-        vm.expectRevert(Gateway.WithdrawalAmountCannotBeZero.selector);
+        vm.expectRevert(Gateway.AmountIsZero.selector);
         gateway.requestRedeem(token, 0);
     }
 

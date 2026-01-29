@@ -134,10 +134,12 @@ contract VUSD_E2E_Test is Test {
         uint256 _excess = _reserveAfterYield - _supplyBeforeMint;
         assertGt(_excess, 0);
 
-        // Step 4: Owner mints the excess reserve
+        // Step 4: Set AMO mint limit and owner mints the excess reserve
         uint256 _mintAmount = _excess;
         vm.prank(owner);
-        gateway.mint(_mintAmount, owner);
+        gateway.updateAmoMintLimit(_mintAmount);
+        vm.prank(owner);
+        gateway.mintToAMO(_mintAmount, owner);
 
         // Step 5: Verify mint captured excess correctly
         assertEq(VUSD.balanceOf(owner), _mintAmount);

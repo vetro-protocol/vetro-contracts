@@ -9,6 +9,16 @@ interface IGateway {
     /// @param account_ Address to whitelist
     function addToInstantRedeemWhitelist(address account_) external;
 
+    /// @notice Returns current AMO mint limit above reserve
+    function amoMintLimit() external view returns (uint256);
+
+    /// @notice Returns current AMO-minted supply tracked by treasury
+    function amoSupply() external view returns (uint256);
+
+    /// @notice Burns AMO-minted PeggedToken to reduce AMO supply
+    /// @param amount_ Amount of PeggedToken to burn
+    function burnFromAMO(uint256 amount_) external;
+
     /// @notice Cancels redeem request and returns locked peggedToken to user
     /// @param tokenOut_ Token address for the request to cancel
     function cancelRedeemRequest(address tokenOut_) external;
@@ -47,11 +57,14 @@ interface IGateway {
     /// @return True if whitelisted
     function isInstantRedeemWhitelisted(address account_) external view returns (bool);
 
+    /// @notice Returns remaining AMO mint capacity
+    function maxAmoMint() external view returns (uint256);
+
+    /// @notice Returns remaining mint capacity
+    function maxMint() external view returns (uint256);
+
     /// @notice Returns maximum deposit amount possible
     function maxDeposit() external pure returns (uint256);
-
-    /// @notice Returns maximum mint amount possible
-    function maxMint() external view returns (uint256);
 
     /// @notice Returns maximum PeggedToken amount owner can redeem
     /// @param owner_ Address to check redeem limit for
@@ -60,11 +73,6 @@ interface IGateway {
     /// @notice Returns maximum token amount that can be withdrawn
     /// @param tokenOut_ Token to withdraw
     function maxWithdraw(address tokenOut_) external view returns (uint256);
-
-    /// @notice Mints PeggedToken tokens directly (admin function)
-    /// @param amount_ Amount of PeggedToken to mint
-    /// @param receiver_ Address to receive the minted PeggedToken
-    function mint(uint256 amount_, address receiver_) external;
 
     /// @notice Mints exact PeggedToken amount by depositing tokens
     /// @param tokenIn_ Token to deposit
@@ -79,10 +87,14 @@ interface IGateway {
     /// @notice Returns current mint fee in basis points
     function mintFee() external view returns (uint256);
 
+    /// @notice Mints PeggedToken to AMO operations (UMM role)
+    /// @param amount_ Amount of PeggedToken to mint
+    /// @param receiver_ Address to receive the minted PeggedToken
+    function mintToAMO(uint256 amount_, address receiver_) external;
+
     /// @notice Returns current mint limit in PeggedToken
     function mintLimit() external view returns (uint256);
 
-    /// @notice Returns the name of the Gateway
     // solhint-disable-next-line func-name-mixedcase
     function NAME() external view returns (string memory);
 
@@ -152,6 +164,10 @@ interface IGateway {
     /// @notice Updates the maximum mint limit
     /// @param newMintLimit_ New maximum mint limit in PeggedToken
     function updateMintLimit(uint256 newMintLimit_) external;
+
+    /// @notice Updates the AMO mint limit
+    /// @param newAmoMintLimit_ New limit value
+    function updateAmoMintLimit(uint256 newAmoMintLimit_) external;
 
     /// @notice Updates the redeem fee percentage
     /// @param newRedeemFee_ New fee in basis points (1 = 0.01%)
