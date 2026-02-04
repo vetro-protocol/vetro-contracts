@@ -1,17 +1,39 @@
-# compiler files
-cache/
-out/
+.DS_STORE
 
+.claude/settings.local.json
 # ignores development broadcast logs
 !/broadcast
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# env file
+# Node
+node_modules
+
+# Truffle
+build
+
+# Env
 .env
 
-# coverage
-coverage
-lcov*
+# Eslint
+.eslintcache
 
-.claude/settings.local.json
+# Hard hat
+artifacts
+cache
+typechain
+gas-report.txt
+
+# Solidity coverage
+coverage
+coverage.json
+.coverage*
+
+*.iml
+.idea
+
+deployments/localhost
+
+# Foundry
+forge-cache
+out
