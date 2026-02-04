@@ -9,24 +9,11 @@ import {parseEther} from 'ethers/lib/utils'
 // NETWORK ADDRESSES
 // =============================================================================
 
-interface NetworkAddresses {
-  // Governance
-  GOVERNOR: string
-  GNOSIS_SAFE_ADDRESS: string
-
-  // Core tokens
-  USDC_ADDRESS: string
-  USDT_ADDRESS: string
-  DAI_ADDRESS: string
-
-  // Chainlink Oracle feeds (USD pairs)
-  USDC_USD_CHAINLINK_AGGREGATOR: string
-  USDT_USD_CHAINLINK_AGGREGATOR: string
-  DAI_USD_CHAINLINK_AGGREGATOR: string
-
-  // ERC4626 Vaults for collateral
-  VAUSDC_ADDRESS: string
-}
+/**
+ * Generic network addresses type - allows any string key for flexibility
+ * Add new addresses as needed without modifying the interface
+ */
+type NetworkAddresses = Record<string, string>
 
 export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
   // Ethereum Mainnet
@@ -34,35 +21,12 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     // Governance - UPDATE BEFORE MAINNET DEPLOYMENT
     GOVERNOR: '0x0000000000000000000000000000000000000000',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
-
-    // Core tokens
-    USDC_ADDRESS: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    USDT_ADDRESS: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    DAI_ADDRESS: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-
-    // Chainlink Oracle feeds (USD pairs)
-    USDC_USD_CHAINLINK_AGGREGATOR: '0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6',
-    USDT_USD_CHAINLINK_AGGREGATOR: '0x3E7d1eAB13ad0104d2750B8863b489D65364e32D',
-    DAI_USD_CHAINLINK_AGGREGATOR: '0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9',
-
-    // ERC4626 Vaults: UPDATE BEFORE MAINNET DEPLOYMENT
-    VAUSDC_ADDRESS: '0x0000000000000000000000000000000000000000',
   },
 
   // Hardhat local network - mirrors mainnet for fork testing
   31337: {
     GOVERNOR: '0x0000000000000000000000000000000000000000',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
-
-    USDC_ADDRESS: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    USDT_ADDRESS: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    DAI_ADDRESS: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-
-    USDC_USD_CHAINLINK_AGGREGATOR: '0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6',
-    USDT_USD_CHAINLINK_AGGREGATOR: '0x3E7d1eAB13ad0104d2750B8863b489D65364e32D',
-    DAI_USD_CHAINLINK_AGGREGATOR: '0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9',
-
-    VAUSDC_ADDRESS: '0xa8b607Aa09B6A2E306F93e74c282Fb13f6A80452',
   },
 }
 
