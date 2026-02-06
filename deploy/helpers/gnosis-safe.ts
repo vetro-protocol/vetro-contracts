@@ -1,84 +1,189 @@
-import {OperationType, MetaTransactionData} from '@safe-global/safe-core-sdk-types'
+import fs from 'fs'
+import {HardhatRuntimeEnvironment, HttpNetworkConfig} from 'hardhat/types'
+import chalk from 'chalk'
+import SafeApiKit from '@safe-global/api-kit'
+import Safe from '@safe-global/protocol-kit'
+import {MetaTransactionData, OperationType} from '@safe-global/types-kit'
 import Address from './address'
-import {ethers} from 'hardhat'
-import Safe from '@safe-global/safe-core-sdk'
-import SafeServiceClient from '@safe-global/safe-service-client'
-import EthersAdapter from '@safe-global/safe-ethers-lib'
-import {Signer} from 'ethers'
-import {HardhatRuntimeEnvironment} from 'hardhat/types'
+import {impersonateAccount, setBalance} from '@nomicfoundation/hardhat-network-helpers'
+import {parseEther} from 'ethers/lib/utils'
 
-const {GNOSIS_SAFE_ADDRESS: safeAddress} = Address
+export const MULTI_SIG_TXS_FILE = 'multisig.batch.tmp.json'
+
+// Type returned by `hardhat-deploy`'s `catchUnknownSigner` function
+type MultiSigTx = {
+  from: string
+  to?: string | undefined
+  value?: string | undefined
+  data?: string | undefined
+}
+
+const {log} = console
 
 /**
- * Gnosis Safe wrapper for proposing batched transactions
- *
- * Uses the Safe SDK and Transaction Service to create proposals
- * that can be signed and executed by Safe owners.
+ * Impersonate an account for local testing
+ * Sets a high ETH balance and returns the signer
  */
-export class GnosisSafe {
-  constructor(protected safeClient: SafeServiceClient, protected safeSDK: Safe) {}
+const impersonateAccountWithBalance = async (hre: HardhatRuntimeEnvironment, address: string) => {
+  await impersonateAccount(address)
+  await setBalance(address, parseEther('1000000'))
+  return await hre.ethers.getSigner(address)
+}
 
-  /**
-   * Propose a batch of transactions to the Safe
-   *
-   * Creates a batched transaction proposal with proper nonce handling.
-   * The deployer signs the proposal, which can then be confirmed
-   * by other Safe owners in the Safe UI.
-   *
-   * @param txs - Array of transactions to batch
-   * @returns The Safe transaction hash for tracking
-   */
-  public async proposeTransaction(txs: MetaTransactionData[]): Promise<string> {
-    const {safeClient, safeSDK} = this
-    const delegateAddress = await this.safeSDK.getEthAdapter().getSignerAddress()
-    if (!delegateAddress) {
-      throw Error('delegate signer did not set')
+/**
+ * Parse `hardhat-deploy` transaction format to Safe transaction format
+ */
+const prepareTx = ({from, to, data, value}: MultiSigTx): MetaTransactionData => {
+  if (!to || !data) {
+    throw Error('The `to` and `data` args can not be null')
+  }
+
+  if (from !== Address.GNOSIS_SAFE_ADDRESS) {
+    throw Error(`Trying to propose a multi-sig transaction but sender ('${from}') isn't the safe address.`)
+  }
+
+  return {to, data, value: value || '0'}
+}
+
+/**
+ * Save a transaction for later batch execution
+ *
+ * Accumulates transactions in a temporary file for batching.
+ * Prevents duplicate transactions from being stored.
+ */
+export const saveForMultiSigBatchExecution = async (rawTx: MultiSigTx): Promise<void> => {
+  if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
+    fs.closeSync(fs.openSync(MULTI_SIG_TXS_FILE, 'w'))
+  }
+
+  const file = fs.readFileSync(MULTI_SIG_TXS_FILE)
+
+  const tx = prepareTx(rawTx)
+
+  if (file.length == 0) {
+    fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify([tx]))
+  } else {
+    const current = JSON.parse(file.toString()) as MetaTransactionData[]
+
+    const alreadyStored = current.find(
+      (i: MetaTransactionData) => i.to == tx.to && i.data == tx.data && i.value == tx.value
+    )
+
+    if (alreadyStored) {
+      log(chalk.blue(`This multi-sig transaction is already saved in '${MULTI_SIG_TXS_FILE}'.`))
+      return
     }
 
-    // Mark all transactions as Call operations
+    const json = [...current, tx]
+    fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify(json))
+  }
+
+  log(chalk.blue(`Multi-sig transaction saved in '${MULTI_SIG_TXS_FILE}'.`))
+}
+
+/**
+ * Propose transactions to Safe
+ *
+ * On local networks (hardhat, localhost):
+ * - Impersonates the Safe and executes transactions directly
+ *
+ * On production networks:
+ * - Creates a proposal via Safe Transaction Service
+ * - Requires manual confirmation in Safe UI
+ * - Requires DEPLOYER_PRIVATE_KEY env variable
+ */
+const proposeSafeTransaction = async (hre: HardhatRuntimeEnvironment, txs: MetaTransactionData[]) => {
+  const chainId = BigInt(await hre.getChainId())
+  const safeAddress = Address.GNOSIS_SAFE_ADDRESS
+
+  if (['hardhat', 'localhost'].includes(hre.network.name)) {
+    for (const tx of txs) {
+      const {to, data} = tx
+      const w = await impersonateAccountWithBalance(hre, safeAddress)
+      await w.sendTransaction({to, data})
+    }
+    log(chalk.blue('Because it is a test deployment, the transactions were executed by impersonated multi-sig.'))
+  } else {
+    const {deployer: delegateAddress} = await hre.getNamedAccounts()
+    const chainName = (await hre.ethers.provider.getNetwork()).name
+
+    const config = hre.config.networks[chainName] as HttpNetworkConfig
+    const provider = config.url
+
+    if (!process.env.DEPLOYER_PRIVATE_KEY) {
+      throw Error('DEPLOYER_PRIVATE_KEY environment variable is required for Safe transaction proposals')
+    }
+
+    const apiKit = new SafeApiKit({chainId, apiKey: process.env.SAFE_API_KEY})
+
+    const protocolKit = await Safe.init({
+      provider: provider,
+      signer: process.env.DEPLOYER_PRIVATE_KEY, // Assumes that the deployer is also a delegate
+      safeAddress,
+    })
+
     const safeTransactionData: MetaTransactionData[] = txs.map((tx) => ({...tx, operation: OperationType.Call}))
 
-    // Get next nonce from Safe Transaction Service
-    const nonce = await safeClient.getNextNonce(safeAddress)
-    const safeTransaction = await safeSDK.createTransaction({safeTransactionData, options: {nonce}})
-    const safeTxHash = await safeSDK.getTransactionHash(safeTransaction)
-    const {data: senderSignature} = await safeSDK.signTransactionHash(safeTxHash)
+    const safeTransaction = await protocolKit.createTransaction({
+      transactions: safeTransactionData,
+      onlyCalls: true,
+      options: {nonce: Number(await apiKit.getNextNonce(safeAddress))},
+    })
 
-    await safeClient.proposeTransaction({
+    const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
+    const signature = await protocolKit.signHash(safeTxHash)
+
+    await apiKit.proposeTransaction({
       safeAddress,
       safeTransactionData: safeTransaction.data,
       safeTxHash,
       senderAddress: delegateAddress,
-      senderSignature,
+      senderSignature: signature.data,
     })
 
-    return safeTxHash
+    log(chalk.blue(`MultiSig tx '${safeTxHash}' was proposed.`))
+    log(chalk.blue('Wait for tx to confirm (at least 2 confirmations is recommended).'))
+    log(chalk.blue('After confirmation, you must run the deployment again.'))
+    log(chalk.blue("That way the `hardhat-deploy` will be able to catch the changes and update `deployments/` files."))
   }
 }
 
 /**
- * Factory for creating GnosisSafe instances
+ * Execute all batched multisig transactions
  *
- * Handles SDK initialization and network-specific configuration.
+ * Reads accumulated transactions from the batch file,
+ * proposes them to the Safe, then cleans up the file.
  */
-export class GnosisSafeInitializer {
-  /**
-   * Initialize a GnosisSafe instance for the current network
-   *
-   * @param hre - Hardhat runtime environment
-   * @param delegate - Signer that will propose transactions
-   * @returns Configured GnosisSafe instance
-   */
-  public static async init(hre: HardhatRuntimeEnvironment, delegate: Signer): Promise<GnosisSafe> {
-    const ethAdapter = new EthersAdapter({ethers, signerOrProvider: delegate})
-    const safeSDK = await Safe.create({ethAdapter, safeAddress})
-    const {name: chain} = hre.network
-
-    // Safe Transaction Service URL for the network
-    // Supports: mainnet, goerli, optimism, arbitrum, polygon, etc.
-    const txServiceUrl = `https://safe-transaction-${chain}.safe.global`
-    const safeClient = new SafeServiceClient({txServiceUrl, ethAdapter})
-
-    return new GnosisSafe(safeClient, safeSDK)
+export const executeBatchUsingMultisig = async (hre: HardhatRuntimeEnvironment): Promise<void> => {
+  if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
+    return
   }
+
+  const file = fs.readFileSync(MULTI_SIG_TXS_FILE)
+
+  const transactions: MetaTransactionData[] = JSON.parse(file.toString())
+
+  log(chalk.blue('Proposing multi-sig batch transaction...'))
+  await proposeSafeTransaction(hre, transactions)
+
+  fs.unlinkSync(MULTI_SIG_TXS_FILE)
+}
+
+/**
+ * Execute a transaction immediately via multisig
+ *
+ * Used when a later deployment script depends on this transaction.
+ * Saves the transaction to batch, executes all batched transactions,
+ * then exits the process.
+ *
+ * @param hre - Hardhat runtime environment
+ * @param rawTx - Transaction to execute
+ */
+export const executeForcedTxUsingMultiSig = async (
+  hre: HardhatRuntimeEnvironment,
+  rawTx: MultiSigTx
+): Promise<void> => {
+  await saveForMultiSigBatchExecution(rawTx)
+  await executeBatchUsingMultisig(hre)
+  process.exit()
 }

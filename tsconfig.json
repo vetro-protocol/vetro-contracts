@@ -9,7 +9,9 @@
     "strict": true,
     "rootDirs": ["./src", "./scripts", "./test"],
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["node", "mocha", "chai"]
   },
   "include": ["./hardhat.config.ts", "./scripts", "./deploy", "./test", "./typechain"],
   "files": ["./hardhat.config.ts"]

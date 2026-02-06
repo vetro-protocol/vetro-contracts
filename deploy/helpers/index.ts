@@ -2,7 +2,7 @@ import chalk from 'chalk'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {Deployment} from 'hardhat-deploy/types'
 import Address from './address'
-import {executeForcedTxUsingMultiSig, saveForMultiSigBatchExecution} from './multisig-helpers'
+import {executeForcedTxUsingMultiSig, saveForMultiSigBatchExecution} from './gnosis-safe'
 import {UpgradableContracts, ContractAliases} from '../config'
 
 const {GOVERNOR} = Address

@@ -1,6 +1,6 @@
 import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
-import {executeBatchUsingMultisig} from '../../helpers/multisig-helpers'
+import {executeBatchUsingMultisig} from '../../helpers/gnosis-safe'
 
 /**
  * Execute batched multisig transactions

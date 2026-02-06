@@ -72,27 +72,6 @@ const config: HardhatUserConfig = {
       deploy: ['deploy/scripts/base'],
       accounts,
     },
-    hemi: {
-      url: process.env.HEMI_NODE_URL || '',
-      chainId: 43111,
-      gas: 8000000,
-      deploy: ['deploy/scripts/hemi'],
-      accounts,
-    },
-    swell: {
-      url: process.env.SWELL_NODE_URL || '',
-      chainId: 1923,
-      gas: 8000000,
-      deploy: ['deploy/scripts/swell'],
-      accounts,
-    },
-    plasma: {
-      url: process.env.PLASMA_NODE_URL || '',
-      chainId: 9745,
-      gas: 8000000,
-      deploy: ['deploy/scripts/plasma'],
-      accounts,
-    },
   },
   namedAccounts: {
     deployer: {
