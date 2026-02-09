@@ -62,13 +62,11 @@ When the withdrawal delay is **enabled**, users have two options for redeeming t
 
 Users can submit a redemption request that locks their pegged tokens in the Gateway contract for a configurable delay period (e.g., 7 days):
 
-1. **`requestRedeem(tokenOut, peggedTokenAmount)`**: Locks the specified amount of pegged tokens in the Gateway and initiates a redemption request. After the delay period passes, the user can execute `redeem()` or `withdraw()` using their locked balance.
+1. **`requestRedeem(peggedTokenAmount)`**: Locks the specified amount of pegged tokens in the Gateway and initiates a redemption request. After the delay period passes, the user can execute `redeem()` or `withdraw()` with any supported output token.
 
-2. **`cancelRedeemRequest(tokenOut)`**: Users can cancel their pending request at any time before claiming, which immediately returns their locked tokens.
+2. **`cancelRedeemRequest()`**: Users can cancel their pending request at any time before claiming, which immediately returns their locked tokens.
 
-3. **Multiple Requests**: If a user submits a new request while having an active one for the same token, the amounts are merged and the delay timer resets.
-
-4. **Per-Token Requests**: Each user can have separate active requests for different output tokens (e.g., one request for USDC, another for DAI).
+3. **Multiple Requests**: If a user submits a new request while having an active one, the amounts are merged and the delay timer resets.
 
 #### Option 2: Instant Redeem (Whitelisted Addresses)
 
@@ -96,10 +94,8 @@ The withdrawal delay system can be configured by the protocol owner:
 
 **For Treasury Management:**
 
-- **Liquidity Planning**: The protocol can query pending redemption amounts per token via `getRedeemQueueForToken(tokenOut)` to understand upcoming withdrawal demand
-- **Proactive Buffer Management**: Treasury keepers can maintain appropriate liquidity buffers based on the withdrawal queue, ensuring sufficient funds are available when requests become claimable
-- **Optimized Yield Strategy**: By knowing which tokens and amounts are queued for withdrawal, the protocol can proactively withdraw from yield vaults only when needed, maximizing yield generation while ensuring liquidity for redemptions
-- **Risk Management**: The queue provides visibility into potential large withdrawals, allowing the protocol to prepare and manage liquidity risk effectively
+- **Enhanced Security**: The withdrawal delay provides a buffer period to detect and respond to potential security issues
+- **Risk Management**: The delay provides visibility into potential large withdrawals, allowing the protocol to prepare and manage liquidity risk effectively
 
 ## Governance: The Owner-Keeper Model
 

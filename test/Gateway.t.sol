@@ -724,23 +724,20 @@ contract GatewayTest is Test {
 
         uint256 claimableAt = block.timestamp + 7 days;
 
-        vm.expectEmit(true, true, false, true);
-        emit Gateway.RedeemRequested(alice, token, VUSDAmount, claimableAt);
+        vm.expectEmit(true, false, false, true);
+        emit Gateway.RedeemRequested(alice, VUSDAmount, claimableAt);
 
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
         vm.stopPrank();
 
         // Verify request was created
-        (uint256 locked, uint256 claimable) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked, uint256 claimable) = gateway.getRedeemRequest(alice);
         assertEq(locked, VUSDAmount, "Incorrect locked amount");
         assertEq(claimable, claimableAt, "Incorrect claimable time");
 
         // Verify VUSD was transferred to gateway
         assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD");
         assertEq(VUSD.balanceOf(address(gateway)), VUSDAmount, "Gateway should have locked VUSD");
-
-        // Verify queue accounting
-        assertEq(gateway.getRedeemQueueForToken(token), VUSDAmount, "Queue should track VUSD amount");
     }
 
     function test_requestRedeem_mergingRequests() public {
@@ -754,64 +751,23 @@ contract GatewayTest is Test {
         VUSD.approve(address(gateway), firstAmount + secondAmount);
 
         // First request
-        gateway.requestRedeem(token, firstAmount);
+        gateway.requestRedeem(firstAmount);
         uint256 firstClaimableAt = block.timestamp + 7 days;
 
-        (uint256 locked1, uint256 claimable1) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked1, uint256 claimable1) = gateway.getRedeemRequest(alice);
         assertEq(locked1, firstAmount, "First request amount incorrect");
         assertEq(claimable1, firstClaimableAt, "First claimable time incorrect");
-        assertEq(gateway.getRedeemQueueForToken(token), firstAmount, "Queue should track first amount");
 
         // Advance time by 3 days
         vm.warp(block.timestamp + 3 days);
 
         // Second request - should merge and reset timer
-        gateway.requestRedeem(token, secondAmount);
+        gateway.requestRedeem(secondAmount);
         uint256 secondClaimableAt = block.timestamp + 7 days;
 
-        (uint256 locked2, uint256 claimable2) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked2, uint256 claimable2) = gateway.getRedeemRequest(alice);
         assertEq(locked2, firstAmount + secondAmount, "Merged amount incorrect");
         assertEq(claimable2, secondClaimableAt, "Timer should be reset");
-        assertEq(gateway.getRedeemQueueForToken(token), firstAmount + secondAmount, "Queue should track total amount");
-
-        vm.stopPrank();
-    }
-
-    function test_requestRedeem_multipleTokens() public {
-        // Add a second token to whitelist
-        address token2 = address(new MockERC20());
-        MockYieldVault mockVault2 = new MockYieldVault(address(token2));
-        MockChainlinkOracle mockOracle2 = new MockChainlinkOracle(0.999e8);
-        vm.prank(admin);
-        treasury.addToWhitelist(token2, address(mockVault2), address(mockOracle2), 1 hours);
-
-        uint256 firstAmount = 50e18;
-        uint256 secondAmount = 30e18;
-
-        // Mint VUSD to alice
-        mintPeggedToken(alice, firstAmount + secondAmount);
-
-        vm.startPrank(alice);
-        VUSD.approve(address(gateway), firstAmount + secondAmount);
-
-        // First request for token
-        gateway.requestRedeem(token, firstAmount);
-        assertEq(gateway.getRedeemQueueForToken(token), firstAmount, "Token queue should have first amount");
-        assertEq(gateway.getRedeemQueueForToken(token2), 0, "Token2 queue should be empty");
-
-        // Second request for token2 (different token)
-        gateway.requestRedeem(token2, secondAmount);
-
-        // Verify queues updated correctly - both should have their amounts
-        assertEq(gateway.getRedeemQueueForToken(token), firstAmount, "Token queue should still have amount");
-        assertEq(gateway.getRedeemQueueForToken(token2), secondAmount, "Token2 queue should have amount");
-
-        // Verify separate requests exist
-        (uint256 locked1,) = gateway.getRedeemRequest(alice, token);
-        assertEq(locked1, firstAmount, "Should have first amount for token");
-
-        (uint256 locked2,) = gateway.getRedeemRequest(alice, token2);
-        assertEq(locked2, secondAmount, "Should have second amount for token2");
 
         vm.stopPrank();
     }
@@ -819,15 +775,7 @@ contract GatewayTest is Test {
     function test_requestRedeem_revertIfZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(Gateway.AmountIsZero.selector);
-        gateway.requestRedeem(token, 0);
-    }
-
-    function test_requestRedeem_revertIfUnsupportedToken() public {
-        address unsupportedToken = makeAddr("unsupported");
-
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSignature("TokenNotSupported(address)", unsupportedToken));
-        gateway.requestRedeem(unsupportedToken, 100e18);
+        gateway.requestRedeem(0);
     }
 
     function test_requestRedeem_revertIfWithdrawalDelayDisabled() public {
@@ -841,7 +789,7 @@ contract GatewayTest is Test {
         VUSD.approve(address(gateway), VUSDAmount);
 
         vm.expectRevert(Gateway.WithdrawalDelayFeatureNotEnabled.selector);
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
         vm.stopPrank();
     }
 
@@ -852,35 +800,31 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), VUSDAmount);
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
 
         assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD after request");
-        assertEq(gateway.getRedeemQueueForToken(token), VUSDAmount, "Queue should track amount");
 
         // Cancel the request
         vm.expectEmit(true, false, false, true);
         emit Gateway.RedeemRequestCancelled(alice, VUSDAmount);
 
-        gateway.cancelRedeemRequest(token);
+        gateway.cancelRedeemRequest();
         vm.stopPrank();
 
         // Verify request was deleted
-        (uint256 locked, uint256 claimable) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked, uint256 claimable) = gateway.getRedeemRequest(alice);
         assertEq(locked, 0, "Locked amount should be 0");
         assertEq(claimable, 0, "Claimable time should be 0");
 
         // Verify VUSD was returned to alice
         assertEq(VUSD.balanceOf(alice), VUSDAmount, "Alice should have VUSD back");
         assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
-
-        // Verify queue was cleared
-        assertEq(gateway.getRedeemQueueForToken(token), 0, "Queue should be cleared");
     }
 
     function test_cancelRedeemRequest_revertIfNoRequest() public {
         vm.prank(alice);
         vm.expectRevert(Gateway.NoActiveWithdrawalRequest.selector);
-        gateway.cancelRedeemRequest(token);
+        gateway.cancelRedeemRequest();
     }
 
     function test_redeem_afterRequest_fullAmount() public {
@@ -890,7 +834,7 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), VUSDAmount);
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -911,14 +855,12 @@ contract GatewayTest is Test {
         );
 
         // Verify request was deleted
-        (uint256 locked,) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked,) = gateway.getRedeemRequest(alice);
         assertEq(locked, 0, "Request should be deleted");
 
         // Verify VUSD was burned from gateway
         assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
 
-        // Verify queue was cleared
-        assertEq(gateway.getRedeemQueueForToken(token), 0, "Queue should be cleared after full redemption");
     }
 
     function test_redeem_afterRequest_partialAmount() public {
@@ -929,7 +871,7 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), VUSDAmount);
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -943,7 +885,7 @@ contract GatewayTest is Test {
         vm.stopPrank();
 
         // Verify partial request remains
-        (uint256 locked,) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked,) = gateway.getRedeemRequest(alice);
         assertEq(locked, VUSDAmount - redeemAmount, "Should have remaining locked amount");
 
         // Verify VUSD balance in gateway
@@ -962,7 +904,7 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, totalRedeem);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), amountLocked);
-        gateway.requestRedeem(token, amountLocked);
+        gateway.requestRedeem(amountLocked);
 
         // alice still has VUSDExtra in wallet
         assertEq(VUSD.balanceOf(alice), VUSDExtra, "Alice should have extra VUSD");
@@ -979,7 +921,7 @@ contract GatewayTest is Test {
         vm.stopPrank();
 
         // Verify request was deleted
-        (uint256 locked,) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked,) = gateway.getRedeemRequest(alice);
         assertEq(locked, 0, "Request should be deleted");
 
         // Verify all VUSD was burned
@@ -996,7 +938,7 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, totalRedeem);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), amountLocked);
-        gateway.requestRedeem(token, amountLocked);
+        gateway.requestRedeem(amountLocked);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -1018,7 +960,7 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), VUSDAmount);
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -1039,7 +981,7 @@ contract GatewayTest is Test {
         );
 
         // Verify request was deleted
-        (uint256 locked,) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked,) = gateway.getRedeemRequest(alice);
         assertEq(locked, 0, "Request should be deleted");
     }
 
@@ -1051,7 +993,7 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), VUSDAmount);
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
 
         // Fast forward past the delay
         vm.warp(block.timestamp + 7 days + 1);
@@ -1065,7 +1007,7 @@ contract GatewayTest is Test {
         vm.stopPrank();
 
         // Verify partial request remains
-        (uint256 locked,) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked,) = gateway.getRedeemRequest(alice);
         assertEq(locked, VUSDAmount - VUSDToBurn, "Should have remaining locked amount");
     }
 
@@ -1245,7 +1187,7 @@ contract GatewayTest is Test {
         uint256 VUSDAmount = 100e18;
 
         // Initially no request
-        (uint256 locked0, uint256 claimable0) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked0, uint256 claimable0) = gateway.getRedeemRequest(alice);
         assertEq(locked0, 0, "Should have no locked amount");
         assertEq(claimable0, 0, "Should have no claimable time");
 
@@ -1253,11 +1195,11 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, VUSDAmount);
         vm.startPrank(alice);
         VUSD.approve(address(gateway), VUSDAmount);
-        gateway.requestRedeem(token, VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
         vm.stopPrank();
 
         // Verify request
-        (uint256 locked1, uint256 claimable1) = gateway.getRedeemRequest(alice, token);
+        (uint256 locked1, uint256 claimable1) = gateway.getRedeemRequest(alice);
         assertEq(locked1, VUSDAmount, "Should have locked amount");
         assertEq(claimable1, block.timestamp + 7 days, "Should have claimable time");
     }
