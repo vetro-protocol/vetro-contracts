@@ -17,10 +17,10 @@ const deployer = process.env.DEPLOYER || 0
 // More info https://github.com/NomicFoundation/hardhat/issues/2167
 function resolveChainId() {
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  const FORK_CHAIN = process.env.FORK_CHAIN || 'mainnet'
-  const deploy = ['deploy/scripts/mainnet']
+  const FORK_CHAIN = process.env.FORK_CHAIN || 'ethereum'
+  const deploy = ['deploy/scripts/ethereum']
 
-  if (FORK_CHAIN == 'mainnet') {
+  if (FORK_CHAIN == 'ethereum') {
     return {chainId: 1, deploy}
   }
 
@@ -51,12 +51,12 @@ const config: HardhatUserConfig = {
         8453: {hardforkHistory: {cancun: 1}},
       },
     },
-    mainnet: {
-      url: process.env.MAINNET_NODE_URL || '',
+    ethereum: {
+      url: process.env.ETHEREUM_NODE_URL || '',
       chainId: 1,
       gas: 6700000,
       accounts,
-      deploy: ['deploy/scripts/mainnet'],
+      deploy: ['deploy/scripts/ethereum'],
     },
     optimism: {
       url: process.env.OPTIMISM_NODE_URL || '',

@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0-beta.1",
+  "network": "ethereum",
+  "chainId": 1,
+  "contracts": {
+    "PeggedToken": {
+      "address": "0xB94724aa74A0296447D13a63A35B050b7F137C6d",
+      "name": "Test USD",
+      "symbol": "TESTUSD"
+    },
+    "Treasury": {
+      "address": "0x2bC90279d0f776c915A235791F8B1180B1ecBF86"
+    },
+    "Gateway": {
+      "address": "0x3B677f95A3B340A655Cd39a13FC056F625bB9492",
+      "implementation": "0x9b2759857c70b3E5992D27ae095Bb231077c88B2",
+      "proxyAdmin": "0xeDdaa73a1D52302B957d56C3d33ADf331C0A7AE3"
+    },
+    "StakingVault": {
+      "address": "0x4a16B99f23c5511f0A23EF9770Bf4ab28f37D830",
+      "implementation": "0x0FeE81EAE494E8CD9C1288541e11b1f649f6FfB6",
+      "proxyAdmin": "0x921653baD22f55D6484FCC7B76aee649F744996e"
+    },
+    "YieldDistributor": {
+      "address": "0x2AD3e2853910De6B9c12300951e233A764121Dc2",
+      "implementation": "0xFA89a16bc021f02A4463F707e2138be4688cE696",
+      "proxyAdmin": "0x2343191C8467d0441450cb8d5237BDcF0c35C160"
+    }
+  },
+  "whitelistedTokens": {
+    "USDC": {
+      "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "vault": "0x8C78D34176C971114151a9d5Dd2DBad1e6F30811",
+      "oracle": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
+      "stalePeriod": 86400
+    },
+    "USDT": {
+      "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "vault": "0x3D58BcCFDb150ad4689b04b9Dfdfb149038C1377",
+      "oracle": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
+      "stalePeriod": 86400
+    }
+  },
+  "governance": {
+    "owner": "0xdf826ff6518e609E4cEE86299d40611C148099d5"
+  }
+}

@@ -19,7 +19,7 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
   // Ethereum Mainnet
   1: {
     // Governance - UPDATE BEFORE MAINNET DEPLOYMENT
-    GOVERNOR: '0x0000000000000000000000000000000000000000',
+    GOVERNOR: '0xdf826ff6518e609E4cEE86299d40611C148099d5',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
   },
 
@@ -35,8 +35,8 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
 // =============================================================================
 
 export const PeggedTokenConfig = {
-  name: 'Vetro USD',
-  symbol: 'VUSD',
+  name: 'Test USD',
+  symbol: 'TESTUSD',
 }
 
 // =============================================================================
