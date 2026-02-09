@@ -20,8 +20,7 @@ interface IGateway {
     function burnFromAMO(uint256 amount_) external;
 
     /// @notice Cancels redeem request and returns locked peggedToken to user
-    /// @param tokenOut_ Token address for the request to cancel
-    function cancelRedeemRequest(address tokenOut_) external;
+    function cancelRedeemRequest() external;
 
     /// @notice Deposits tokens to receive PeggedToken
     /// @param tokenIn_ Token to deposit
@@ -37,17 +36,11 @@ interface IGateway {
     /// @return Array of whitelisted addresses
     function getInstantRedeemWhitelist() external view returns (address[] memory);
 
-    /// @notice Gets total peggedToken requested for redemption for a specific token
-    /// @param tokenOut_ Token address to check queue for
-    /// @return Total peggedToken amount in redemption queue for the token
-    function getRedeemQueueForToken(address tokenOut_) external view returns (uint256);
-
-    /// @notice Gets redeem request details for a user and specific token
+    /// @notice Gets redeem request details for a user
     /// @param user_ User address
-    /// @param tokenOut_ Token address
     /// @return amountLocked Amount of peggedToken locked in Gateway contract
     /// @return claimableAt Timestamp when request can be claimed
-    function getRedeemRequest(address user_, address tokenOut_)
+    function getRedeemRequest(address user_)
         external
         view
         returns (uint256 amountLocked, uint256 claimableAt);
@@ -147,9 +140,8 @@ interface IGateway {
     function removeFromInstantRedeemWhitelist(address account_) external;
 
     /// @notice Requests a redeem with delay period (locks peggedToken in contract)
-    /// @param tokenOut_ Token to redeem for
     /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
-    function requestRedeem(address tokenOut_, uint256 peggedTokenAmount_) external;
+    function requestRedeem(uint256 peggedTokenAmount_) external;
 
     /// @notice Toggles the withdrawal delay feature on/off
     function toggleWithdrawalDelay() external;
