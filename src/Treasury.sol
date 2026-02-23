@@ -29,6 +29,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error BalanceShouldBeZero();
     error CallerIsNotAuthorized(address caller);
     error DepositIsPaused(address);
+    error InvalidOraclePrice();
     error InvalidPriceTolerance();
     error InvalidStalePeriod();
     error InvalidTokenDecimals(uint8);
@@ -479,6 +480,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     {
         (, int256 _price,, uint256 _updatedAt,) = oracle_.latestRoundData();
         if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice(address(oracle_));
+        if (_price <= 0) revert InvalidOraclePrice();
         _latestPrice = uint256(_price);
 
         // Unit oracle price for given token relative to PeggedToken peg.

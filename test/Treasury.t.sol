@@ -496,6 +496,18 @@ contract TreasuryTest is Test {
         treasury.getPrice(address(token));
     }
 
+    function test_getPrice_revertIfZeroPrice() public {
+        mockOracle.updatePrice(0);
+        vm.expectRevert(Treasury.InvalidOraclePrice.selector);
+        treasury.getPrice(address(token));
+    }
+
+    function test_getPrice_revertIfNegativePrice() public {
+        mockOracle.updatePrice(-1e8);
+        vm.expectRevert(Treasury.InvalidOraclePrice.selector);
+        treasury.getPrice(address(token));
+    }
+
     function test_getPrice_revertIfOutOfTolerance() public {
         mockOracle.updatePrice(2e8); // $2
         vm.expectRevert(abi.encodeWithSignature("PriceExceedTolerance(uint256,uint256,uint256)", 2e8, 1.01e8, 0.99e8));
