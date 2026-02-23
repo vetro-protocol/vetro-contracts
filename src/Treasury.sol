@@ -2,9 +2,8 @@
 
 pragma solidity 0.8.30;
 
-import {
-    AccessControlDefaultAdminRules
-} from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+import {AccessControlDefaultAdminRules} from
+    "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -36,7 +35,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error PriceExceedTolerance(uint256 latestPrice, uint256 priceUpperBound, uint256 priceLowerBound);
     error RemoveFromListFailed();
     error ReservedToken();
-    error StalePrice();
+    error StalePrice(address oracle);
     error UnsupportedToken(address);
     error PeggedTokenMismatch();
     error WithdrawIsPaused(address);
@@ -195,7 +194,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param oracle_ New Chainlink oracle address
      * @param newStalePeriod_ New stale period threshold in seconds
      */
-    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyRole(MAINTAINER_ROLE) {
+    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_)
+        external
+        onlyRole(MAINTAINER_ROLE)
+    {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (oracle_ == address(0)) revert AddressIsZero();
         if (newStalePeriod_ == 0 || newStalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
@@ -476,7 +478,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         returns (uint256 _latestPrice, uint256 _unitPrice)
     {
         (, int256 _price,, uint256 _updatedAt,) = oracle_.latestRoundData();
-        if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice();
+        if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice(address(oracle_));
         _latestPrice = uint256(_price);
 
         // Unit oracle price for given token relative to PeggedToken peg.

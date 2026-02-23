@@ -492,7 +492,7 @@ contract TreasuryTest is Test {
 
     function test_getPrice_revertIfStale() public {
         vm.warp(2 hours);
-        vm.expectRevert(Treasury.StalePrice.selector);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(mockOracle)));
         treasury.getPrice(address(token));
     }
 
