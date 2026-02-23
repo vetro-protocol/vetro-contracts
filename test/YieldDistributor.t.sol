@@ -7,6 +7,7 @@ import {YieldDistributor} from "src/YieldDistributor.sol";
 import {IYieldDistributor} from "src/interfaces/IYieldDistributor.sol";
 import {StakingVault} from "src/StakingVault.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
+import {console} from "forge-std/console.sol";
 
 contract YieldDistributorTest is Test {
     YieldDistributor yieldDistributor;
@@ -79,8 +80,7 @@ contract YieldDistributorTest is Test {
         YieldDistributor newDistributorImpl = new YieldDistributor();
         vm.expectRevert(YieldDistributor.ZeroAddress.selector);
         new ERC1967Proxy(
-            address(newDistributorImpl),
-            abi.encodeCall(YieldDistributor.initialize, (address(vusd), address(0), owner))
+            address(newDistributorImpl), abi.encodeCall(YieldDistributor.initialize, (address(vusd), address(0), owner))
         );
     }
 
@@ -442,6 +442,60 @@ contract YieldDistributorTest is Test {
         vm.prank(address(vault));
         uint256 secondPull = yieldDistributor.pullYield();
         assertEq(secondPull, 0);
+    }
+
+    /// @notice Unpulled accrued yield must be included in subsequent distribute() calls.
+    function test_accruedYieldOrphanedOnRedistribute() public {
+        uint256 firstAmount = 70 * UNIT;
+        uint256 secondAmount = 70 * UNIT;
+
+        // Step 1: distribute(70) at day 0
+        vm.startPrank(distributor);
+        vusd.approve(address(yieldDistributor), firstAmount + secondAmount);
+        yieldDistributor.distribute(firstAmount);
+        vm.stopPrank();
+
+        // rewardRate = 70 / 7 days = 10 tokens/day
+        // periodFinish = day 7
+        // contract balance = 70
+
+        // Step 2: 3 days pass without any pullYield()
+        vm.warp(block.timestamp + 3 days);
+
+        // Accrued yield = 3 * 10 = 30 tokens
+        // Remaining scheduled = 4 * 10 = 40 tokens
+        uint256 accruedBeforeRedistribute = yieldDistributor.pendingYield();
+        assertApproxEqAbs(accruedBeforeRedistribute, 30 * UNIT, 10, "accrued should be ~30");
+
+        uint256 remainingRewards = (7 days - block.timestamp) * yieldDistributor.rewardRate() / PRECISION;
+
+        // Step 3: distribute(70) at day 3 WITHOUT pulling first
+        vm.prank(distributor);
+        yieldDistributor.distribute(secondAmount);
+
+        uint256 newRewardRate = yieldDistributor.rewardRate();
+
+        uint256 totalRemaining = newRewardRate * 7 days / PRECISION;
+        assertApproxEqAbs(totalRemaining, firstAmount + secondAmount, 10, "total remaining should be correct");
+
+        // Step 4: Let the full new period complete and pull everything
+        vm.warp(block.timestamp + 7 days);
+
+        vm.prank(address(vault));
+        uint256 totalPulled = yieldDistributor.pullYield();
+
+        // After pulling, pendingYield = 0 and no more can ever be pulled
+        assertEq(yieldDistributor.pendingYield(), 0, "no more pending after full period");
+
+        // The contract should have transferred ALL tokens to the vault over the lifetime
+        // Total distributed = 70 + 70 = 140
+        // Total pullable should equal total distributed
+        uint256 contractBalance = vusd.balanceOf(address(yieldDistributor));
+
+        assertApproxEqAbs(contractBalance, 0, 5, "contract should have no remaining balance after full distribution");
+
+        // Equivalently: total pulled should equal total deposited (140)
+        assertApproxEqAbs(totalPulled, firstAmount + secondAmount, 10, "all distributed tokens should be pullable");
     }
 
     /*//////////////////////////////////////////////////////////////

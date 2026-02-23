@@ -210,7 +210,7 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
 
         uint256 _remaining;
         if (block.timestamp < $.periodFinish) {
-            _remaining = (($.periodFinish - block.timestamp) * $.rewardRate) / PRECISION;
+            _remaining = (($.periodFinish - $.lastUpdateTime) * $.rewardRate) / PRECISION;
         }
 
         uint256 _newTotal = _remaining + amount_;
