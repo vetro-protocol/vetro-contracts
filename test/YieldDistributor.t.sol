@@ -621,18 +621,15 @@ contract YieldDistributorTest is Test {
 
         vm.warp(block.timestamp + timeBetween);
 
-        uint256 remainingBefore = yieldDistributor.pendingYield();
-        uint256 undistributed = amount1 - remainingBefore; // What was already pending
-
         yieldDistributor.distribute(amount2);
         vm.stopPrank();
 
         // Period should be extended
         assertEq(yieldDistributor.periodFinish(), block.timestamp + 7 days);
 
-        // Reward rate should reflect combined remaining + new amount
-        uint256 totalRemaining = (amount1 * (7 days - timeBetween)) / 7 days + amount2;
-        uint256 expectedRate = (totalRemaining * PRECISION) / 7 days;
+        // _remaining includes accrued + future (from lastUpdateTime to periodFinish),
+        // which equals the full amount1. So the new schedule total = amount1 + amount2.
+        uint256 expectedRate = ((amount1 + amount2) * PRECISION) / 7 days;
         assertApproxEqRel(yieldDistributor.rewardRate(), expectedRate, 0.01e18);
     }
 

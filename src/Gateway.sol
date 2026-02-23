@@ -470,11 +470,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @param user_ User address
     /// @return amountLocked Amount of peggedToken locked in Gateway contract
     /// @return claimableAt Timestamp when request can be claimed
-    function getRedeemRequest(address user_)
-        external
-        view
-        returns (uint256 amountLocked, uint256 claimableAt)
-    {
+    function getRedeemRequest(address user_) external view returns (uint256 amountLocked, uint256 claimableAt) {
         RedeemRequest memory _request = _getGatewayStorage().redeemRequests[user_];
         return (_request.amountLocked, _request.claimableAt);
     }

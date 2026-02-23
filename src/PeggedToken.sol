@@ -4,13 +4,12 @@ pragma solidity 0.8.30;
 
 import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title PeggedToken, A token pegged to the USD/ETH/BTC, backed by yield-generating collateral.
-contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
+contract PeggedToken is ERC20Permit, Ownable2Step {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 
@@ -39,17 +38,13 @@ contract PeggedToken is ERC20Permit, ERC20Burnable, Ownable2Step {
 
     /**
      * @notice Burn PeggedToken e.g. VUSD from account.
-     * The caller must have allowance for accounts's tokens.
      * If Gateway is the caller then approval is not required.
+     * Only Gateway can burn PeggedToken.
      * @param account_ PeggedToken will be burnt from this address
      * @param amount_ PeggedToken amount to burn
-     *
-     * @inheritdoc ERC20Burnable
      */
-    function burnFrom(address account_, uint256 amount_) public override {
-        if (msg.sender != gateway) {
-            _spendAllowance(account_, msg.sender, amount_);
-        }
+    function burnFrom(address account_, uint256 amount_) public virtual {
+        if (msg.sender != gateway) revert CallerIsNotGateway(msg.sender);
         _burn(account_, amount_);
     }
 
