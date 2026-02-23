@@ -60,6 +60,11 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public constant MAX_FEE_BPS = 500; // 500 = 5%
 
+    // Inlined role IDs matching Treasury's definitions to avoid chained external calls
+    bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
+    bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
+    bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
+
     /*/////////////////////////////////////////////////////////////
                             EVENTS
     /////////////////////////////////////////////////////////////*/
@@ -151,7 +156,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function mintToAMO(uint256 amount_, address receiver_) external onlyRole(_ummRole()) {
+    function mintToAMO(uint256 amount_, address receiver_) external onlyRole(UMM_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
 
         GatewayStorage storage $ = _getGatewayStorage();
@@ -169,7 +174,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function burnFromAMO(uint256 amount_) external onlyRole(_ummRole()) {
+    function burnFromAMO(uint256 amount_) external onlyRole(UMM_ROLE) {
         if (amount_ == 0) revert AmountIsZero();
 
         GatewayStorage storage $ = _getGatewayStorage();
@@ -183,7 +188,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateAmoMintLimit(uint256 newAmoMintLimit_) external onlyRole(_defaultAdminRole()) {
+    function updateAmoMintLimit(uint256 newAmoMintLimit_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         // AMO mint limit cannot be less than current AMO supply
         uint256 _currentAmoSupply = $.amoSupply;
@@ -196,7 +201,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateMintFee(uint256 newMintFee_) external onlyRole(_maintainerRole()) {
+    function updateMintFee(uint256 newMintFee_) external onlyRole(MAINTAINER_ROLE) {
         if (newMintFee_ > MAX_FEE_BPS) revert InvalidMintFee(newMintFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedMintFee($.mintFee, newMintFee_);
@@ -204,14 +209,14 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateMintLimit(uint256 newMintLimit_) external onlyRole(_defaultAdminRole()) {
+    function updateMintLimit(uint256 newMintLimit_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         emit MintLimitUpdated($.mintLimit, newMintLimit_);
         $.mintLimit = newMintLimit_;
     }
 
     /// @inheritdoc IGateway
-    function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(_maintainerRole()) {
+    function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(MAINTAINER_ROLE) {
         if (newRedeemFee_ > MAX_FEE_BPS) revert InvalidRedeemFee(newRedeemFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedRedeemFee($.redeemFee, newRedeemFee_);
@@ -221,7 +226,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @notice Set withdrawal delay feature enabled or disabled
     /// @dev When disabled, all users can instant redeem/withdraw
     /// @param enabled_ The intended state for withdrawal delay
-    function setWithdrawalDelayEnabled(bool enabled_) external onlyRole(_maintainerRole()) {
+    function setWithdrawalDelayEnabled(bool enabled_) external onlyRole(MAINTAINER_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         $.withdrawalDelayEnabled = enabled_;
         emit WithdrawalDelayToggled(enabled_);
@@ -229,7 +234,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Update the withdrawal delay period
     /// @param newDelay_ New delay period in seconds
-    function updateWithdrawalDelay(uint256 newDelay_) external onlyRole(_maintainerRole()) {
+    function updateWithdrawalDelay(uint256 newDelay_) external onlyRole(MAINTAINER_ROLE) {
         if (newDelay_ == 0) revert InvalidWithdrawalDelay();
         GatewayStorage storage $ = _getGatewayStorage();
         emit WithdrawalDelayUpdated($.withdrawalDelay, newDelay_);
@@ -238,7 +243,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Add address to instant redeem whitelist
     /// @param account_ Address to whitelist
-    function addToInstantRedeemWhitelist(address account_) external onlyRole(_maintainerRole()) {
+    function addToInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
         if (account_ == address(0)) revert AddressIsZero();
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.instantRedeemWhitelist.add(account_)) revert AccountAlreadyWhitelisted(account_);
@@ -247,7 +252,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Remove address from instant redeem whitelist
     /// @param account_ Address to remove from whitelist
-    function removeFromInstantRedeemWhitelist(address account_) external onlyRole(_maintainerRole()) {
+    function removeFromInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.instantRedeemWhitelist.remove(account_)) revert AccountNotWhitelisted(account_);
         emit RemovedFromInstantRedeemWhitelist(account_);
@@ -497,18 +502,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         if (!ITreasury(treasury()).hasRole(role_, msg.sender)) {
             revert AccessControlUnauthorizedAccount(msg.sender, role_);
         }
-    }
-
-    function _defaultAdminRole() private view returns (bytes32) {
-        return ITreasury(treasury()).DEFAULT_ADMIN_ROLE();
-    }
-
-    function _maintainerRole() private view returns (bytes32) {
-        return ITreasury(treasury()).MAINTAINER_ROLE();
-    }
-
-    function _ummRole() private view returns (bytes32) {
-        return ITreasury(treasury()).UMM_ROLE();
     }
 
     /**
