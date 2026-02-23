@@ -282,7 +282,7 @@ contract TreasuryTest is Test {
     }
 
     function test_deposit_onlyGateway_revertIfDepositPaused() public {
-        treasury.toggleDepositActive(address(token));
+        treasury.setDepositActive(address(token), false);
         vm.expectRevert(abi.encodeWithSignature("DepositIsPaused(address)", token));
         vm.prank(gateway);
         treasury.deposit(address(token), 10 * TOKEN_UNIT);
@@ -332,7 +332,7 @@ contract TreasuryTest is Test {
     }
 
     function test_withdraw_onlyGateway_revertIfWithdrawPaused() public {
-        treasury.toggleWithdrawActive(address(token));
+        treasury.setWithdrawActive(address(token), false);
         vm.expectRevert(abi.encodeWithSignature("WithdrawIsPaused(address)", token));
         vm.prank(gateway);
         treasury.withdraw(address(token), 10 * TOKEN_UNIT, alice);
@@ -392,41 +392,62 @@ contract TreasuryTest is Test {
         treasury.pull(address(_token2), 10 * TOKEN_UNIT);
     }
 
-    // --- toggleDepositActive ---
-    function test_toggleDepositActive_onlyKeeper_success() public {
+    // --- setDepositActive ---
+    function test_setDepositActive_onlyKeeper_success() public {
         treasury.grantRole(keeperRole, keeper);
         (,,, bool depositActiveBefore,,) = treasury.tokenConfig(address(token));
-        vm.prank(keeper);
-        treasury.toggleDepositActive(address(token));
-        (,,, bool depositActiveAfter,,) = treasury.tokenConfig(address(token));
+        assertTrue(depositActiveBefore, "Deposit should be active initially");
 
-        assertTrue(depositActiveBefore != depositActiveAfter);
+        vm.prank(keeper);
+        treasury.setDepositActive(address(token), false);
+        (,,, bool depositActiveAfter,,) = treasury.tokenConfig(address(token));
+        assertFalse(depositActiveAfter, "Deposit should be inactive after setting false");
     }
 
-    function test_toggleDepositActive_onlyKeeper_revertIfNotWhitelisted() public {
+    function test_setDepositActive_idempotent() public {
+        treasury.grantRole(keeperRole, keeper);
+        // Setting to same value should not change state
+        vm.prank(keeper);
+        treasury.setDepositActive(address(token), true);
+        (,,, bool depositActive,,) = treasury.tokenConfig(address(token));
+        assertTrue(depositActive, "Deposit should still be active");
+    }
+
+    function test_setDepositActive_onlyKeeper_revertIfNotWhitelisted() public {
         treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
-        treasury.toggleDepositActive(address(_token2));
+        treasury.setDepositActive(address(_token2), false);
     }
 
-    // --- toggleWithdrawActive ---
-    function test_toggleWithdrawActive_onlyKeeper_success() public {
+    // --- setWithdrawActive ---
+    function test_setWithdrawActive_onlyKeeper_success() public {
         treasury.grantRole(keeperRole, keeper);
         (,,,, bool withdrawActiveBefore,) = treasury.tokenConfig(address(token));
+        assertTrue(withdrawActiveBefore, "Withdraw should be active initially");
+
         vm.prank(keeper);
-        treasury.toggleWithdrawActive(address(token));
+        treasury.setWithdrawActive(address(token), false);
         (,,,, bool withdrawActiveAfter,) = treasury.tokenConfig(address(token));
-        assertTrue(withdrawActiveBefore != withdrawActiveAfter);
+        assertFalse(withdrawActiveAfter, "Withdraw should be inactive after setting false");
     }
 
-    function test_toggleWithdrawActive_onlyKeeper_revertIfNotWhitelisted() public {
+    function test_setWithdrawActive_idempotent() public {
+        treasury.grantRole(keeperRole, keeper);
+        // Setting to same value should not change state
+        vm.prank(keeper);
+        treasury.setWithdrawActive(address(token), true);
+        (,,,, bool withdrawActive,) = treasury.tokenConfig(address(token));
+        assertTrue(withdrawActive, "Withdraw should still be active");
+    }
+
+    function test_setWithdrawActive_onlyKeeper_revertIfNotWhitelisted() public {
         treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
-        treasury.toggleWithdrawActive(address(_token2));
+        treasury.setWithdrawActive(address(_token2), false);
     }
 
     // --- swap ---

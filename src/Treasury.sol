@@ -301,22 +301,22 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         }
     }
 
-    /// @notice KEEPER_ROLE: Toggle deposit activity for a whitelisted token
-    /// @param token_ Token to toggle deposit activity
-    function toggleDepositActive(address token_) external onlyRole(KEEPER_ROLE) {
+    /// @notice KEEPER_ROLE: Set deposit activity for a whitelisted token
+    /// @param token_ Token to set deposit activity for
+    /// @param active_ The intended deposit active state
+    function setDepositActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        bool _current = tokenConfig[token_].depositActive;
-        emit ToggledDepositActive(token_, !_current);
-        tokenConfig[token_].depositActive = !_current;
+        tokenConfig[token_].depositActive = active_;
+        emit ToggledDepositActive(token_, active_);
     }
 
-    /// @notice KEEPER_ROLE: Toggle withdraw activity for a whitelisted token
-    /// @param token_ Token to toggle withdraw activity
-    function toggleWithdrawActive(address token_) external onlyRole(KEEPER_ROLE) {
+    /// @notice KEEPER_ROLE: Set withdraw activity for a whitelisted token
+    /// @param token_ Token to set withdraw activity for
+    /// @param active_ The intended withdraw active state
+    function setWithdrawActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        bool _current = tokenConfig[token_].withdrawActive;
-        emit ToggledWithdrawActive(token_, !_current);
-        tokenConfig[token_].withdrawActive = !_current;
+        tokenConfig[token_].withdrawActive = active_;
+        emit ToggledWithdrawActive(token_, active_);
     }
 
     function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)

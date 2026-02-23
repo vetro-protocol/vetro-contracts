@@ -218,13 +218,13 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         $.redeemFee = newRedeemFee_;
     }
 
-    /// @notice Toggle withdrawal delay feature on/off
+    /// @notice Set withdrawal delay feature enabled or disabled
     /// @dev When disabled, all users can instant redeem/withdraw
-    function toggleWithdrawalDelay() external onlyRole(_maintainerRole()) {
+    /// @param enabled_ The intended state for withdrawal delay
+    function setWithdrawalDelayEnabled(bool enabled_) external onlyRole(_maintainerRole()) {
         GatewayStorage storage $ = _getGatewayStorage();
-        bool _newState = !$.withdrawalDelayEnabled;
-        $.withdrawalDelayEnabled = _newState;
-        emit WithdrawalDelayToggled(_newState);
+        $.withdrawalDelayEnabled = enabled_;
+        emit WithdrawalDelayToggled(enabled_);
     }
 
     /// @notice Update the withdrawal delay period

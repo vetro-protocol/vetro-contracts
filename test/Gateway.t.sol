@@ -355,7 +355,7 @@ contract GatewayTest is Test {
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
-        gateway.toggleWithdrawalDelay(); // Disable withdrawal delay for instant redeem
+        gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant redeem
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
 
@@ -418,7 +418,7 @@ contract GatewayTest is Test {
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
 
         // Setup test conditions
-        gateway.toggleWithdrawalDelay(); // Disable withdrawal delay for instant withdraw
+        gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant withdraw
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
 
@@ -796,7 +796,7 @@ contract GatewayTest is Test {
 
     function test_requestRedeem_revertIfWithdrawalDelayDisabled() public {
         // Disable withdrawal delay
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
 
         uint256 VUSDAmount = 100e18;
         mintPeggedToken(alice, VUSDAmount);
@@ -1075,7 +1075,7 @@ contract GatewayTest is Test {
         uint256 VUSDAmount = 100e18;
 
         // Disable withdrawal delay
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
 
         // Mint VUSD to alice
         mintPeggedToken(alice, VUSDAmount);
@@ -1090,28 +1090,35 @@ contract GatewayTest is Test {
         assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD");
     }
 
-    function test_toggleWithdrawalDelay() public {
+    function test_setWithdrawalDelayEnabled() public {
         // Initial state is enabled
         assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled initially");
 
         vm.expectEmit(false, false, false, true);
         emit Gateway.WithdrawalDelayToggled(false);
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
 
-        assertFalse(gateway.withdrawalDelayEnabled(), "Should be disabled after toggle");
+        assertFalse(gateway.withdrawalDelayEnabled(), "Should be disabled after setting false");
 
         vm.expectEmit(false, false, false, true);
         emit Gateway.WithdrawalDelayToggled(true);
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(true);
 
-        assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled after second toggle");
+        assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled after setting true");
     }
 
-    function test_toggleWithdrawalDelay_revertIfNotMaintainerRole() public {
+    function test_setWithdrawalDelayEnabled_idempotent() public {
+        // Setting to same value should not change state
+        assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled initially");
+        gateway.setWithdrawalDelayEnabled(true);
+        assertTrue(gateway.withdrawalDelayEnabled(), "Should still be enabled");
+    }
+
+    function test_setWithdrawalDelayEnabled_revertIfNotMaintainerRole() public {
         bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
     }
 
     function test_updateWithdrawalDelay() public {
