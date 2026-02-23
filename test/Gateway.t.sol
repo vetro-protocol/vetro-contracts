@@ -78,7 +78,7 @@ contract GatewayTest is Test {
     function testFuzz_deposit(int256 price, uint256 mintFee, uint256 tokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -278,7 +278,7 @@ contract GatewayTest is Test {
     function testFuzz_mint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
@@ -351,7 +351,7 @@ contract GatewayTest is Test {
     function testFuzz_redeem(int256 price, uint256 redeemFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
@@ -414,7 +414,7 @@ contract GatewayTest is Test {
     function testFuzz_withdraw(int256 price, uint256 redeemFee, uint256 tokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
 
         // Setup test conditions
@@ -473,7 +473,7 @@ contract GatewayTest is Test {
     function testFuzz_previewDeposit(int256 price, uint256 mintFee, uint256 amount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         amount = bound(amount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
@@ -502,7 +502,7 @@ contract GatewayTest is Test {
     function testFuzz_previewMint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
@@ -528,7 +528,7 @@ contract GatewayTest is Test {
     function testFuzz_previewRedeem(int256 price, uint256 redeemFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8); // Price within 0.2% of $1
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -556,7 +556,7 @@ contract GatewayTest is Test {
     function testFuzz_previewWithdraw(int256 price, uint256 redeemFee, uint256 tokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
 
         // Setup test conditions
@@ -650,6 +650,14 @@ contract GatewayTest is Test {
         gateway.updateMintFee(newFee);
     }
 
+    /// @notice Audit: Mint fee must be bounded to MAX_FEE_BPS (5%).
+    function test_updateMintFee_revertIfFeeExceedsMaxFeeBps() public {
+        // 501 BPS = 5.01%, should revert after fix (max allowed = 500 BPS = 5%)
+        uint256 newFee = 501;
+        vm.expectRevert(abi.encodeWithSignature("InvalidMintFee(uint256)", newFee));
+        gateway.updateMintFee(newFee);
+    }
+
     // --- update redeem fee ---
     function test_updateRedeemFee() public {
         uint256 newFee = 500;
@@ -667,6 +675,14 @@ contract GatewayTest is Test {
 
     function test_updateRedeemFee_revertIfFeeIsHigherThanMax() public {
         uint256 newFee = 10001;
+        vm.expectRevert(abi.encodeWithSignature("InvalidRedeemFee(uint256)", newFee));
+        gateway.updateRedeemFee(newFee);
+    }
+
+    /// @notice Audit: Redeem fee must be bounded to MAX_FEE_BPS (5%).
+    function test_updateRedeemFee_revertIfFeeExceedsMaxFeeBps() public {
+        // 501 BPS = 5.01%, should revert after fix (max allowed = 500 BPS = 5%)
+        uint256 newFee = 501;
         vm.expectRevert(abi.encodeWithSignature("InvalidRedeemFee(uint256)", newFee));
         gateway.updateRedeemFee(newFee);
     }

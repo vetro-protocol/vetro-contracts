@@ -223,6 +223,15 @@ contract TreasuryTest is Test {
         treasury.updateOracle(address(token), address(_newOracle), 0);
     }
 
+    /// @notice Audit: Stale period must be bounded to MAX_STALE_PERIOD (72 hours).
+    function test_updateOracle_revertIfStalePeriodExceedsMax() public {
+        MockChainlinkOracle _newOracle = new MockChainlinkOracle(2e8);
+        // 72 hours + 1 second should revert after fix (max allowed = 72 hours)
+        vm.expectRevert(Treasury.InvalidStalePeriod.selector);
+        vm.prank(maintainer);
+        treasury.updateOracle(address(token), address(_newOracle), 72 hours + 1);
+    }
+
     // --- updatePriceTolerance ---
     function test_updatePriceTolerance_success() public {
         vm.prank(maintainer);

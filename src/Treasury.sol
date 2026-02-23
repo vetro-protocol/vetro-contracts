@@ -48,6 +48,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
 
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
+    uint256 public constant MAX_STALE_PERIOD = 72 hours;
     uint256 public priceTolerance = 100; // 1% based on BPS
 
     IPeggedToken public immutable PEGGED_TOKEN;
@@ -197,7 +198,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyRole(MAINTAINER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (oracle_ == address(0)) revert AddressIsZero();
-        if (newStalePeriod_ == 0) revert InvalidStalePeriod();
+        if (newStalePeriod_ == 0 || newStalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
 
         tokenConfig[token_].oracle = oracle_;
         tokenConfig[token_].stalePeriod = newStalePeriod_;

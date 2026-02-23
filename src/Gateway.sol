@@ -58,6 +58,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     string public constant VERSION = "1.0.0";
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
+    uint256 public constant MAX_FEE_BPS = 500; // 500 = 5%
 
     /*/////////////////////////////////////////////////////////////
                             EVENTS
@@ -196,7 +197,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function updateMintFee(uint256 newMintFee_) external onlyRole(_maintainerRole()) {
-        if (newMintFee_ >= MAX_BPS) revert InvalidMintFee(newMintFee_);
+        if (newMintFee_ > MAX_FEE_BPS) revert InvalidMintFee(newMintFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedMintFee($.mintFee, newMintFee_);
         $.mintFee = newMintFee_;
@@ -211,7 +212,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(_maintainerRole()) {
-        if (newRedeemFee_ >= MAX_BPS) revert InvalidRedeemFee(newRedeemFee_);
+        if (newRedeemFee_ > MAX_FEE_BPS) revert InvalidRedeemFee(newRedeemFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedRedeemFee($.redeemFee, newRedeemFee_);
         $.redeemFee = newRedeemFee_;
