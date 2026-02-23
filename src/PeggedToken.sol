@@ -33,8 +33,13 @@ contract PeggedToken is ERC20Permit, Ownable2Step {
     constructor(string memory name_, string memory symbol_, address owner_)
         ERC20Permit(name_)
         ERC20(name_, symbol_)
-        Ownable(owner_)
+        Ownable(_validateOwner(owner_))
     {}
+
+    function _validateOwner(address owner_) private pure returns (address) {
+        if (owner_ == address(0)) revert AddressIsZero();
+        return owner_;
+    }
 
     /**
      * @notice Burn PeggedToken e.g. VUSD from account.

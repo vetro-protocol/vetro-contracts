@@ -40,6 +40,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error StalePrice(address oracle);
     error UnsupportedToken(address);
     error PeggedTokenMismatch();
+    error SwapperNotSet();
+    error TreasuryNotMigrated();
     error WithdrawIsPaused(address);
 
     string public NAME;
@@ -158,6 +160,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     function migrate(address newTreasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTreasury_ == address(0)) revert AddressIsZero();
         if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
+        // Treasury in PEGGED_TOKEN should be updated before migrating assets. Preferably it should be done atomically
+        if (PEGGED_TOKEN.treasury() != newTreasury_) revert TreasuryNotMigrated();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
             address _token = _whitelistedTokens.at(i);
@@ -330,6 +334,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         onlyRole(KEEPER_ROLE)
         returns (uint256)
     {
+        if (swapper == address(0)) revert SwapperNotSet();
         if (_whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {

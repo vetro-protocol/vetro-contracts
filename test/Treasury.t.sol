@@ -153,6 +153,8 @@ contract TreasuryTest is Test {
         uint256 _vaultShares = 50 * VAULT_UNIT; // 50 shares
         deal(address(token), address(treasury), _tokenAmount);
         deal(address(mockVault), address(treasury), _vaultShares);
+        // Update PeggedToken treasury pointer to new treasury before migrating
+        VUSD.updateTreasury(address(_newTreasury));
         // Migrate
         treasury.migrate(address(_newTreasury));
         assertEq(token.balanceOf(address(_newTreasury)), _tokenAmount);
@@ -168,6 +170,13 @@ contract TreasuryTest is Test {
         PeggedToken _fakePeggedToken = new PeggedToken("fakeVUSD", "fakeVUSD", owner);
         Treasury _newTreasury = new Treasury(address(_fakePeggedToken), owner);
         vm.expectRevert(Treasury.PeggedTokenMismatch.selector);
+        treasury.migrate(address(_newTreasury));
+    }
+
+    function test_migrate_revertIfTreasuryNotMigrated() public {
+        Treasury _newTreasury = new Treasury(address(VUSD), owner);
+        // PeggedToken.treasury() still points to old treasury, not newTreasury
+        vm.expectRevert(Treasury.TreasuryNotMigrated.selector);
         treasury.migrate(address(_newTreasury));
     }
 
@@ -488,6 +497,8 @@ contract TreasuryTest is Test {
     }
 
     function test_swap_onlyKeeper_revertIfReservedToken() public {
+        vm.prank(maintainer);
+        treasury.updateSwapper(makeAddr("swapper"));
         treasury.grantRole(keeperRole, keeper);
         vm.expectRevert(Treasury.ReservedToken.selector);
         vm.prank(keeper);
@@ -495,6 +506,8 @@ contract TreasuryTest is Test {
     }
 
     function test_swap_onlyKeeper_revertOnVaultShareToken() public {
+        vm.prank(maintainer);
+        treasury.updateSwapper(makeAddr("swapper"));
         treasury.grantRole(keeperRole, keeper);
         vm.expectRevert(Treasury.ReservedToken.selector);
         vm.prank(keeper);
