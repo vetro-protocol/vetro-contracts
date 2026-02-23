@@ -100,6 +100,24 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
     }
 
+    /// @notice Audit S4: Whitelist should be bounded to MAX_WHITELISTED_TOKENS.
+    function test_addToWhitelist_revertIfMaxWhitelistedTokensReached() public {
+        uint256 _max = treasury.MAX_WHITELISTED_TOKENS();
+        // setUp already whitelisted 1 token, so add (_max - 1) more to reach the cap
+        for (uint256 i = 1; i < _max; i++) {
+            MockERC20 _t = new MockERC20();
+            MockYieldVault _v = new MockYieldVault(address(_t));
+            MockChainlinkOracle _o = new MockChainlinkOracle(1e8);
+            treasury.addToWhitelist(address(_t), address(_v), address(_o), 1 hours);
+        }
+        // Now at the cap — the next add should revert
+        MockERC20 _extra = new MockERC20();
+        MockYieldVault _extraVault = new MockYieldVault(address(_extra));
+        MockChainlinkOracle _extraOracle = new MockChainlinkOracle(1e8);
+        vm.expectRevert(Treasury.MaxWhitelistedTokensReached.selector);
+        treasury.addToWhitelist(address(_extra), address(_extraVault), address(_extraOracle), 1 hours);
+    }
+
     // --- removeFromWhitelist ---
     function test_removeFromWhitelist_success() public {
         treasury.removeFromWhitelist(address(token));

@@ -31,6 +31,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error DepositIsPaused(address);
     error InvalidOraclePrice();
     error InvalidPriceTolerance();
+    error MaxWhitelistedTokensReached();
     error InvalidStalePeriod();
     error InvalidTokenDecimals(uint8);
     error PriceExceedTolerance(uint256 latestPrice, uint256 priceUpperBound, uint256 priceLowerBound);
@@ -49,6 +50,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
 
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public constant MAX_STALE_PERIOD = 72 hours;
+    uint256 public constant MAX_WHITELISTED_TOKENS = 10;
     uint256 public priceTolerance = 100; // 1% based on BPS
 
     IPeggedToken public immutable PEGGED_TOKEN;
@@ -116,6 +118,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     {
         if (token_ == address(0) || vault_ == address(0) || oracle_ == address(0)) revert AddressIsZero();
         if (stalePeriod_ == 0) revert InvalidStalePeriod();
+        if (_whitelistedTokens.length() >= MAX_WHITELISTED_TOKENS) revert MaxWhitelistedTokensReached();
         uint8 _decimals = IERC20Metadata(token_).decimals();
         if (_decimals > 18) revert InvalidTokenDecimals(_decimals);
         if (token_ != IERC4626(vault_).asset()) revert AssetMismatch();
