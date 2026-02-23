@@ -7,9 +7,10 @@ import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 
 /// @title PeggedToken, A token pegged to the USD/ETH/BTC, backed by yield-generating collateral.
-contract PeggedToken is ERC20Permit, Ownable2Step {
+contract PeggedToken is IPeggedToken, ERC20Permit, Ownable2Step {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 

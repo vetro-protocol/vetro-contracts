@@ -48,9 +48,8 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         mapping(address account => EnumerableSet.UintSet activeIds) activeRequestIds;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("stakingvault.storage.main")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant STAKING_VAULT_STORAGE_LOCATION =
-        0xe89bc2f435ba7b383b8efac5edfc2f023d18edcd77b8a1b95b1375c9045b1400;
+        keccak256(abi.encode(uint256(keccak256("stakingvault.storage.main")) - 1)) & ~bytes32(uint256(0xff));
 
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
@@ -62,7 +61,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     error InvalidCooldownDuration(uint256 duration, uint256 minDuration, uint256 maxDuration);
     error InvalidRequestId(uint256 requestId);
     error NotRequestOwner();
-    error RequestNotActive(uint256 requestId);
     error ZeroAddress();
     error ZeroAmount();
 
@@ -424,6 +422,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
 
     /// @notice Create a cooldown request
     /// @dev Burns shares and locks assets in cooldown
+    /// @param assets_ The amount of assets to lock in cooldown
     /// @param shares_ The amount of shares to burn
     /// @param owner_ The owner of the shares
     /// @return requestId_ The ID of the created request
@@ -523,8 +522,9 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     /// @notice Get the storage pointer for ERC-7201 namespaced storage
     /// @return $ The storage pointer
     function _getStakingVaultStorage() private pure returns (StakingVaultStorage storage $) {
+        bytes32 _location = STAKING_VAULT_STORAGE_LOCATION;
         assembly {
-            $.slot := STAKING_VAULT_STORAGE_LOCATION
+            $.slot := _location
         }
     }
 

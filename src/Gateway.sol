@@ -52,13 +52,13 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
                         STATE VARIABLES
     /////////////////////////////////////////////////////////////*/
 
-    // keccak256(abi.encode(uint256(keccak256("victor.storage.Gateway")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _GATEWAY_STORAGE_LOCATION =
-        0x776acce308c7c164a04fb34f4f55c1dfc0a572b40aacd748a96ecbbeebf67800;
+        keccak256(abi.encode(uint256(keccak256("victor.storage.Gateway")) - 1)) & ~bytes32(uint256(0xff));
 
     string public constant VERSION = "1.0.0";
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public constant MAX_FEE_BPS = 500; // 500 = 5%
+    uint256 public constant MAX_WITHDRAWAL_DELAY = 30 days;
 
     // Inlined role IDs matching Treasury's definitions to avoid chained external calls
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
@@ -93,7 +93,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AddressIsZero();
     error AccessControlUnauthorizedAccount(address account, bytes32 role);
     error CallerNotWhitelisted(address caller);
-    error ExceededExcessReserve(uint256 requested, uint256 available);
     error ExceededMaxMint(uint256 requested, uint256 available);
     error ExceededMaxWithdraw(uint256 requested, uint256 available);
     error FeeOnTransferToken(address token);
@@ -104,11 +103,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error MintableIsLessThanMinimum(uint256 peggedTokenOut, uint256 minPeggedTokenOut);
     error NoActiveWithdrawalRequest();
-    error NoExcessReserve(uint256 reserve, uint256 supply);
     error PeggedTokenToBurnIsHigherThanMax(uint256 peggedTokenIn, uint256 maxPeggedTokenIn);
     error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
-    error TokenNotSupported(address token);
     error AmountIsZero();
     error WithdrawalDelayFeatureNotEnabled();
 
@@ -148,7 +145,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
         // Initialize withdrawal delay settings
         $.withdrawalDelayEnabled = true; // Enabled by default
-        if (initialWithdrawalDelay_ == 0) revert InvalidWithdrawalDelay();
+        if (initialWithdrawalDelay_ == 0 || initialWithdrawalDelay_ > MAX_WITHDRAWAL_DELAY) {
+            revert InvalidWithdrawalDelay();
+        }
         $.withdrawalDelay = initialWithdrawalDelay_; // e.g., 7 days (604800 seconds)
 
         // Initialize default redeem fee to 0.3%
@@ -235,7 +234,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @notice Update the withdrawal delay period
     /// @param newDelay_ New delay period in seconds
     function updateWithdrawalDelay(uint256 newDelay_) external onlyRole(MAINTAINER_ROLE) {
-        if (newDelay_ == 0) revert InvalidWithdrawalDelay();
+        if (newDelay_ == 0 || newDelay_ > MAX_WITHDRAWAL_DELAY) revert InvalidWithdrawalDelay();
         GatewayStorage storage $ = _getGatewayStorage();
         emit WithdrawalDelayUpdated($.withdrawalDelay, newDelay_);
         $.withdrawalDelay = newDelay_;
@@ -594,8 +593,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     function _getGatewayStorage() private pure returns (GatewayStorage storage $) {
+        bytes32 _location = _GATEWAY_STORAGE_LOCATION;
         assembly {
-            $.slot := _GATEWAY_STORAGE_LOCATION
+            $.slot := _location
         }
     }
 

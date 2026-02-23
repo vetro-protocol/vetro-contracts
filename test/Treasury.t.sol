@@ -478,6 +478,18 @@ contract TreasuryTest is Test {
     }
 
     // --- swap ---
+
+    /// @notice Audit S6: Treasury.swap() should validate swapper is set
+    function test_swap_revertIfSwapperNotSet() public {
+        MockERC20 _other = new MockERC20();
+        uint256 _amountIn = 100 * TOKEN_UNIT;
+        deal(address(_other), address(treasury), _amountIn);
+        treasury.grantRole(keeperRole, keeper);
+        vm.expectRevert(Treasury.SwapperNotSet.selector);
+        vm.prank(keeper);
+        treasury.swap(address(_other), address(token), _amountIn, 1);
+    }
+
     function test_swap_onlyKeeper_success() public {
         address _swapper = address(new MockSwapper());
         treasury.updateSwapper(_swapper);

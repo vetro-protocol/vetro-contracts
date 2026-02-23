@@ -83,7 +83,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
-    event WithdrawnAll(address[] tokens, address indexed receiver);
 
     constructor(address peggedToken_, address admin_)
         AccessControlDefaultAdminRules(
@@ -412,7 +411,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         uint256 _len = _whitelistedTokens.length();
         uint256 _priceToleranceBps = priceTolerance;
 
-        for (uint256 i; i < _len;) {
+        for (uint256 i; i < _len; ++i) {
             address _token = _whitelistedTokens.at(i);
             IERC4626 _vault = IERC4626(tokenConfig[_token].vault);
             uint256 _shares = _vault.balanceOf(address(this));
@@ -429,10 +428,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
                 uint256 _reserveInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
                 // Normalize reserve to PeggedToken decimals (18) before adding to total reserve
                 _reserve += (_reserveInTokenDecimals * (10 ** (18 - tokenConfig[_token].decimals)));
-            }
-
-            unchecked {
-                ++i;
             }
         }
     }

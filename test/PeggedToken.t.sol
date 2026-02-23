@@ -28,6 +28,14 @@ contract PeggedTokenTest is Test {
         VUSD.updateGateway(gateway);
     }
 
+    // --- constructor ---
+
+    /// @notice Audit S6: PeggedToken constructor should validate owner_ != address(0)
+    function test_constructor_revertIfOwnerIsZero() public {
+        vm.expectRevert(PeggedToken.AddressIsZero.selector);
+        new PeggedToken("VUSD", "VUSD", address(0));
+    }
+
     // --- Update gateway address ---
 
     function test_updateGateway_revertIfTreasuryIsNotSet() public {

@@ -41,9 +41,8 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
         uint256 lastUpdateTime;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("yielddistributor.storage.main")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant YIELD_DISTRIBUTOR_STORAGE_LOCATION =
-        0xa4bf24aa89006e158355fd46322f9e11d692b1c14ce675eaa1e0885d19961500;
+        keccak256(abi.encode(uint256(keccak256("yielddistributor.storage.main")) - 1)) & ~bytes32(uint256(0xff));
 
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
@@ -188,8 +187,9 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     /// @notice Get the storage pointer for ERC-7201 namespaced storage
     /// @return $ The storage pointer
     function _getYieldDistributorStorage() private pure returns (YieldDistributorStorage storage $) {
+        bytes32 _location = YIELD_DISTRIBUTOR_STORAGE_LOCATION;
         assembly {
-            $.slot := YIELD_DISTRIBUTOR_STORAGE_LOCATION
+            $.slot := _location
         }
     }
 
