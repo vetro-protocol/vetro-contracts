@@ -498,6 +498,33 @@ contract YieldDistributorTest is Test {
         assertApproxEqAbs(totalPulled, firstAmount + secondAmount, 10, "all distributed tokens should be pullable");
     }
 
+    /// @notice Pending yield should be included when computing asset value on requestRedeem.
+    function test_requestRedeem_shouldIncludePendingYield() public {
+        // alice deposits 100 VUSD, gets 100 shares
+        deal(address(vusd), alice, 100 * UNIT);
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vault.deposit(100 * UNIT, alice);
+        vm.stopPrank();
+
+        // distribute 10 VUSD yield
+        deal(address(vusd), distributor, 10 * UNIT);
+        vm.startPrank(distributor);
+        vusd.approve(address(yieldDistributor), 10 * UNIT);
+        yieldDistributor.distribute(10 * UNIT);
+        vm.stopPrank();
+
+        // time skip — full yield period elapses
+        vm.warp(block.timestamp + 7 days);
+
+        // alice requests redeem of ALL her shares
+        vm.prank(alice);
+        (, uint256 lockedAssets) = vault.requestRedeem(100 * UNIT, alice);
+
+        // expected: 110 VUSD (100 original + 10 yield)
+        assertApproxEqAbs(lockedAssets, 110 * UNIT, 10, "locked assets should be 110 VUSD");
+    }
+
     /*//////////////////////////////////////////////////////////////
                               FUZZ TESTS
     //////////////////////////////////////////////////////////////*/

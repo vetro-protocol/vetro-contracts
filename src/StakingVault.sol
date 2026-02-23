@@ -469,6 +469,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     /// @return requestId_ The ID of the created request
     /// @return assets_ The amount of assets that will be claimable
     function _requestRedeem(uint256 shares_, address owner_) internal returns (uint256 requestId_, uint256 assets_) {
+        _pullYield();
         assets_ = previewRedeem(shares_);
         requestId_ = _createRequest(assets_, shares_, owner_);
     }
@@ -479,6 +480,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     /// @return requestId_ The ID of the created request
     /// @return shares_ The amount of shares that were burned
     function _requestWithdraw(uint256 assets_, address owner_) internal returns (uint256 requestId_, uint256 shares_) {
+        _pullYield();
         shares_ = previewWithdraw(assets_);
         requestId_ = _createRequest(assets_, shares_, owner_);
     }
