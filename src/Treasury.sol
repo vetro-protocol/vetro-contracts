@@ -78,8 +78,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     event Migrated(address indexed newTreasury);
     event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
-    event ToggledDepositActive(address indexed token, bool newValue);
-    event ToggledWithdrawActive(address indexed token, bool newValue);
+    event SetDepositActive(address indexed token, bool newValue);
+    event SetWithdrawActive(address indexed token, bool newValue);
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
@@ -316,7 +316,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     function setDepositActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         tokenConfig[token_].depositActive = active_;
-        emit ToggledDepositActive(token_, active_);
+        emit SetDepositActive(token_, active_);
     }
 
     /// @notice KEEPER_ROLE: Set withdraw activity for a whitelisted token
@@ -325,7 +325,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     function setWithdrawActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         tokenConfig[token_].withdrawActive = active_;
-        emit ToggledWithdrawActive(token_, active_);
+        emit SetWithdrawActive(token_, active_);
     }
 
     function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)

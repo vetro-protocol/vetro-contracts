@@ -14,7 +14,7 @@ import {ITreasury} from "./interfaces/ITreasury.sol";
 import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title Gateway - Handles both minting and redeeming of PeggedToken
-/// @custom:storage-location erc7201:victor.storage.Gateway
+/// @custom:storage-location erc7201:vetro.storage.gateway
 contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     using SafeERC20 for IPeggedToken;
     using SafeERC20 for IERC20;
@@ -32,7 +32,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     // ERC-7201 namespace storage
-    /// @custom:storage-location erc7201:victor.storage.Gateway
+    /// @custom:storage-location erc7201:vetro.storage.gateway
     struct GatewayStorage {
         string name;
         IPeggedToken peggedToken;
@@ -53,7 +53,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /////////////////////////////////////////////////////////////*/
 
     bytes32 private constant _GATEWAY_STORAGE_LOCATION =
-        keccak256(abi.encode(uint256(keccak256("victor.storage.Gateway")) - 1)) & ~bytes32(uint256(0xff));
+        keccak256(abi.encode(uint256(keccak256("vetro.storage.gateway")) - 1)) & ~bytes32(uint256(0xff));
 
     string public constant VERSION = "1.0.0";
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
@@ -81,7 +81,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     event UpdatedMintFee(uint256 previousMintFee, uint256 newMintFee);
     event UpdatedRedeemFee(uint256 previousRedeemFee, uint256 newRedeemFee);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
-    event WithdrawalDelayToggled(bool enabled);
+    event WithdrawalDelayEnabled(bool enabled);
     event WithdrawalDelayUpdated(uint256 previousDelay, uint256 newDelay);
 
     /*/////////////////////////////////////////////////////////////
@@ -228,7 +228,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     function setWithdrawalDelayEnabled(bool enabled_) external onlyRole(MAINTAINER_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         $.withdrawalDelayEnabled = enabled_;
-        emit WithdrawalDelayToggled(enabled_);
+        emit WithdrawalDelayEnabled(enabled_);
     }
 
     /// @notice Update the withdrawal delay period
@@ -473,9 +473,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Get redeem request details for a user
     /// @param user_ User address
-    /// @return amountLocked Amount of peggedToken locked in Gateway contract
-    /// @return claimableAt Timestamp when request can be claimed
-    function getRedeemRequest(address user_) external view returns (uint256 amountLocked, uint256 claimableAt) {
+    /// @return _amountLocked Amount of peggedToken locked in Gateway contract
+    /// @return _claimableAt Timestamp when request can be claimed
+    function getRedeemRequest(address user_) external view returns (uint256 _amountLocked, uint256 _claimableAt) {
         RedeemRequest memory _request = _getGatewayStorage().redeemRequests[user_];
         return (_request.amountLocked, _request.claimableAt);
     }

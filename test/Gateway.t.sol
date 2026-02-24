@@ -876,7 +876,6 @@ contract GatewayTest is Test {
 
         // Verify VUSD was burned from gateway
         assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
-
     }
 
     function test_redeem_afterRequest_partialAmount() public {
@@ -1095,13 +1094,13 @@ contract GatewayTest is Test {
         assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled initially");
 
         vm.expectEmit(false, false, false, true);
-        emit Gateway.WithdrawalDelayToggled(false);
+        emit Gateway.WithdrawalDelayEnabled(false);
         gateway.setWithdrawalDelayEnabled(false);
 
         assertFalse(gateway.withdrawalDelayEnabled(), "Should be disabled after setting false");
 
         vm.expectEmit(false, false, false, true);
-        emit Gateway.WithdrawalDelayToggled(true);
+        emit Gateway.WithdrawalDelayEnabled(true);
         gateway.setWithdrawalDelayEnabled(true);
 
         assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled after setting true");

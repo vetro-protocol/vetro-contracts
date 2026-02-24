@@ -7,7 +7,6 @@ import {YieldDistributor} from "src/YieldDistributor.sol";
 import {IYieldDistributor} from "src/interfaces/IYieldDistributor.sol";
 import {StakingVault} from "src/StakingVault.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
-import {console} from "forge-std/console.sol";
 
 contract YieldDistributorTest is Test {
     YieldDistributor yieldDistributor;

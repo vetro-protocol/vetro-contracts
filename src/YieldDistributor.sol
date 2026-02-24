@@ -31,7 +31,7 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
                            ERC-7201 STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    /// @custom:storage-location erc7201:yielddistributor.storage.main
+    /// @custom:storage-location erc7201:vetro.storage.yieldDistributor
     struct YieldDistributorStorage {
         IERC20 asset;
         address vault;
@@ -42,7 +42,7 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     }
 
     bytes32 private constant YIELD_DISTRIBUTOR_STORAGE_LOCATION =
-        keccak256(abi.encode(uint256(keccak256("yielddistributor.storage.main")) - 1)) & ~bytes32(uint256(0xff));
+        keccak256(abi.encode(uint256(keccak256("vetro.storage.yieldDistributor")) - 1)) & ~bytes32(uint256(0xff));
 
     /*//////////////////////////////////////////////////////////////
                                  ERRORS

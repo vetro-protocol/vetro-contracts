@@ -35,7 +35,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
                            ERC-7201 STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    /// @custom:storage-location erc7201:stakingvault.storage.main
+    /// @custom:storage-location erc7201:vetro.storage.stakingVault
     struct StakingVaultStorage {
         address yieldDistributor;
         address vaultRewards;
@@ -49,7 +49,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     }
 
     bytes32 private constant STAKING_VAULT_STORAGE_LOCATION =
-        keccak256(abi.encode(uint256(keccak256("stakingvault.storage.main")) - 1)) & ~bytes32(uint256(0xff));
+        keccak256(abi.encode(uint256(keccak256("vetro.storage.stakingVault")) - 1)) & ~bytes32(uint256(0xff));
 
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
@@ -433,7 +433,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         if (msg.sender != owner_) {
             _spendAllowance(owner_, msg.sender, shares_);
         }
-        _pullYield();
 
         // Update total assets in cooldown
         $.totalAssetsInCooldown += assets_;
