@@ -143,8 +143,9 @@ interface IGateway {
     /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
     function requestRedeem(uint256 peggedTokenAmount_) external;
 
-    /// @notice Toggles the withdrawal delay feature on/off
-    function toggleWithdrawalDelay() external;
+    /// @notice Sets the withdrawal delay feature enabled or disabled
+    /// @param enabled_ The intended state for withdrawal delay
+    function setWithdrawalDelayEnabled(bool enabled_) external;
 
     /// @notice Returns treasury contract address
     function treasury() external view returns (address);

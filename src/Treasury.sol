@@ -2,9 +2,8 @@
 
 pragma solidity 0.8.30;
 
-import {
-    AccessControlDefaultAdminRules
-} from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+import {AccessControlDefaultAdminRules} from
+    "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -30,15 +29,19 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error BalanceShouldBeZero();
     error CallerIsNotAuthorized(address caller);
     error DepositIsPaused(address);
+    error InvalidOraclePrice();
     error InvalidPriceTolerance();
+    error MaxWhitelistedTokensReached();
     error InvalidStalePeriod();
     error InvalidTokenDecimals(uint8);
     error PriceExceedTolerance(uint256 latestPrice, uint256 priceUpperBound, uint256 priceLowerBound);
     error RemoveFromListFailed();
     error ReservedToken();
-    error StalePrice();
+    error StalePrice(address oracle);
     error UnsupportedToken(address);
     error PeggedTokenMismatch();
+    error SwapperNotSet();
+    error TreasuryNotMigrated();
     error WithdrawIsPaused(address);
 
     string public NAME;
@@ -48,6 +51,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
 
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
+    uint256 public constant MAX_STALE_PERIOD = 72 hours;
+    uint256 public constant MAX_WHITELISTED_TOKENS = 10;
     uint256 public priceTolerance = 100; // 1% based on BPS
 
     IPeggedToken public immutable PEGGED_TOKEN;
@@ -73,12 +78,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     event Migrated(address indexed newTreasury);
     event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
-    event ToggledDepositActive(address indexed token, bool newValue);
-    event ToggledWithdrawActive(address indexed token, bool newValue);
+    event SetDepositActive(address indexed token, bool newValue);
+    event SetWithdrawActive(address indexed token, bool newValue);
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
-    event WithdrawnAll(address[] tokens, address indexed receiver);
 
     constructor(address peggedToken_, address admin_)
         AccessControlDefaultAdminRules(
@@ -115,6 +119,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     {
         if (token_ == address(0) || vault_ == address(0) || oracle_ == address(0)) revert AddressIsZero();
         if (stalePeriod_ == 0) revert InvalidStalePeriod();
+        if (_whitelistedTokens.length() >= MAX_WHITELISTED_TOKENS) revert MaxWhitelistedTokensReached();
         uint8 _decimals = IERC20Metadata(token_).decimals();
         if (_decimals > 18) revert InvalidTokenDecimals(_decimals);
         if (token_ != IERC4626(vault_).asset()) revert AssetMismatch();
@@ -154,6 +159,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     function migrate(address newTreasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTreasury_ == address(0)) revert AddressIsZero();
         if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
+        // Treasury in PEGGED_TOKEN should be updated before migrating assets. Preferably it should be done atomically
+        if (PEGGED_TOKEN.treasury() != newTreasury_) revert TreasuryNotMigrated();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
             address _token = _whitelistedTokens.at(i);
@@ -194,10 +201,13 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param oracle_ New Chainlink oracle address
      * @param newStalePeriod_ New stale period threshold in seconds
      */
-    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external onlyRole(MAINTAINER_ROLE) {
+    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_)
+        external
+        onlyRole(MAINTAINER_ROLE)
+    {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (oracle_ == address(0)) revert AddressIsZero();
-        if (newStalePeriod_ == 0) revert InvalidStalePeriod();
+        if (newStalePeriod_ == 0 || newStalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
 
         tokenConfig[token_].oracle = oracle_;
         tokenConfig[token_].stalePeriod = newStalePeriod_;
@@ -300,22 +310,22 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         }
     }
 
-    /// @notice KEEPER_ROLE: Toggle deposit activity for a whitelisted token
-    /// @param token_ Token to toggle deposit activity
-    function toggleDepositActive(address token_) external onlyRole(KEEPER_ROLE) {
+    /// @notice KEEPER_ROLE: Set deposit activity for a whitelisted token
+    /// @param token_ Token to set deposit activity for
+    /// @param active_ The intended deposit active state
+    function setDepositActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        bool _current = tokenConfig[token_].depositActive;
-        emit ToggledDepositActive(token_, !_current);
-        tokenConfig[token_].depositActive = !_current;
+        tokenConfig[token_].depositActive = active_;
+        emit SetDepositActive(token_, active_);
     }
 
-    /// @notice KEEPER_ROLE: Toggle withdraw activity for a whitelisted token
-    /// @param token_ Token to toggle withdraw activity
-    function toggleWithdrawActive(address token_) external onlyRole(KEEPER_ROLE) {
+    /// @notice KEEPER_ROLE: Set withdraw activity for a whitelisted token
+    /// @param token_ Token to set withdraw activity for
+    /// @param active_ The intended withdraw active state
+    function setWithdrawActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        bool _current = tokenConfig[token_].withdrawActive;
-        emit ToggledWithdrawActive(token_, !_current);
-        tokenConfig[token_].withdrawActive = !_current;
+        tokenConfig[token_].withdrawActive = active_;
+        emit SetWithdrawActive(token_, active_);
     }
 
     function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)
@@ -323,6 +333,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         onlyRole(KEEPER_ROLE)
         returns (uint256)
     {
+        if (swapper == address(0)) revert SwapperNotSet();
         if (_whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
         uint256 _len = _whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
@@ -400,7 +411,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         uint256 _len = _whitelistedTokens.length();
         uint256 _priceToleranceBps = priceTolerance;
 
-        for (uint256 i; i < _len;) {
+        for (uint256 i; i < _len; ++i) {
             address _token = _whitelistedTokens.at(i);
             IERC4626 _vault = IERC4626(tokenConfig[_token].vault);
             uint256 _shares = _vault.balanceOf(address(this));
@@ -417,10 +428,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
                 uint256 _reserveInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
                 // Normalize reserve to PeggedToken decimals (18) before adding to total reserve
                 _reserve += (_reserveInTokenDecimals * (10 ** (18 - tokenConfig[_token].decimals)));
-            }
-
-            unchecked {
-                ++i;
             }
         }
     }
@@ -475,7 +482,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         returns (uint256 _latestPrice, uint256 _unitPrice)
     {
         (, int256 _price,, uint256 _updatedAt,) = oracle_.latestRoundData();
-        if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice();
+        if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice(address(oracle_));
+        if (_price <= 0) revert InvalidOraclePrice();
         _latestPrice = uint256(_price);
 
         // Unit oracle price for given token relative to PeggedToken peg.

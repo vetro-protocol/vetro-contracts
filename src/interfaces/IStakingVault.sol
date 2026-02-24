@@ -54,6 +54,31 @@ interface IStakingVault is IERC4626 {
     function cancelWithdraw(uint256 requestId_) external returns (uint256 shares);
 
     /*//////////////////////////////////////////////////////////////
+                         ADMIN FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Update the yield distributor address
+    /// @param distributor_ The new yield distributor address
+    function updateYieldDistributor(address distributor_) external;
+
+    /// @notice Update the vault rewards contract address
+    /// @param vaultRewards_ The new vault rewards address
+    function updateVaultRewards(address vaultRewards_) external;
+
+    /// @notice Update instant withdraw whitelist status for an account
+    /// @param account_ The account to update
+    /// @param status_ The new whitelist status
+    function updateInstantWithdrawWhitelist(address account_, bool status_) external;
+
+    /// @notice Update cooldown enabled status
+    /// @param enabled_ The new cooldown enabled status
+    function updateCooldownEnabled(bool enabled_) external;
+
+    /// @notice Update cooldown duration
+    /// @param duration_ The new cooldown duration in seconds
+    function updateCooldownDuration(uint256 duration_) external;
+
+    /*//////////////////////////////////////////////////////////////
                            VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 

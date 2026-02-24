@@ -51,7 +51,7 @@ contract VUSD_E2E_Test is Test {
         treasury.grantRole(treasury.UMM_ROLE(), owner);
 
         // Disable withdrawal delay for E2E tests (allows instant redemptions)
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
 
         // Whitelist USDC backed by real usdcVault using Chainlink USDC/USD feed
         treasury.addToWhitelist(USDC, usdcVault, USDC_USD_FEED, 24 hours);

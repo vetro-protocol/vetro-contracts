@@ -100,6 +100,24 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
     }
 
+    /// @notice Audit S4: Whitelist should be bounded to MAX_WHITELISTED_TOKENS.
+    function test_addToWhitelist_revertIfMaxWhitelistedTokensReached() public {
+        uint256 _max = treasury.MAX_WHITELISTED_TOKENS();
+        // setUp already whitelisted 1 token, so add (_max - 1) more to reach the cap
+        for (uint256 i = 1; i < _max; i++) {
+            MockERC20 _t = new MockERC20();
+            MockYieldVault _v = new MockYieldVault(address(_t));
+            MockChainlinkOracle _o = new MockChainlinkOracle(1e8);
+            treasury.addToWhitelist(address(_t), address(_v), address(_o), 1 hours);
+        }
+        // Now at the cap — the next add should revert
+        MockERC20 _extra = new MockERC20();
+        MockYieldVault _extraVault = new MockYieldVault(address(_extra));
+        MockChainlinkOracle _extraOracle = new MockChainlinkOracle(1e8);
+        vm.expectRevert(Treasury.MaxWhitelistedTokensReached.selector);
+        treasury.addToWhitelist(address(_extra), address(_extraVault), address(_extraOracle), 1 hours);
+    }
+
     // --- removeFromWhitelist ---
     function test_removeFromWhitelist_success() public {
         treasury.removeFromWhitelist(address(token));
@@ -135,6 +153,8 @@ contract TreasuryTest is Test {
         uint256 _vaultShares = 50 * VAULT_UNIT; // 50 shares
         deal(address(token), address(treasury), _tokenAmount);
         deal(address(mockVault), address(treasury), _vaultShares);
+        // Update PeggedToken treasury pointer to new treasury before migrating
+        VUSD.updateTreasury(address(_newTreasury));
         // Migrate
         treasury.migrate(address(_newTreasury));
         assertEq(token.balanceOf(address(_newTreasury)), _tokenAmount);
@@ -150,6 +170,13 @@ contract TreasuryTest is Test {
         PeggedToken _fakePeggedToken = new PeggedToken("fakeVUSD", "fakeVUSD", owner);
         Treasury _newTreasury = new Treasury(address(_fakePeggedToken), owner);
         vm.expectRevert(Treasury.PeggedTokenMismatch.selector);
+        treasury.migrate(address(_newTreasury));
+    }
+
+    function test_migrate_revertIfTreasuryNotMigrated() public {
+        Treasury _newTreasury = new Treasury(address(VUSD), owner);
+        // PeggedToken.treasury() still points to old treasury, not newTreasury
+        vm.expectRevert(Treasury.TreasuryNotMigrated.selector);
         treasury.migrate(address(_newTreasury));
     }
 
@@ -223,6 +250,15 @@ contract TreasuryTest is Test {
         treasury.updateOracle(address(token), address(_newOracle), 0);
     }
 
+    /// @notice Audit: Stale period must be bounded to MAX_STALE_PERIOD (72 hours).
+    function test_updateOracle_revertIfStalePeriodExceedsMax() public {
+        MockChainlinkOracle _newOracle = new MockChainlinkOracle(2e8);
+        // 72 hours + 1 second should revert after fix (max allowed = 72 hours)
+        vm.expectRevert(Treasury.InvalidStalePeriod.selector);
+        vm.prank(maintainer);
+        treasury.updateOracle(address(token), address(_newOracle), 72 hours + 1);
+    }
+
     // --- updatePriceTolerance ---
     function test_updatePriceTolerance_success() public {
         vm.prank(maintainer);
@@ -273,7 +309,7 @@ contract TreasuryTest is Test {
     }
 
     function test_deposit_onlyGateway_revertIfDepositPaused() public {
-        treasury.toggleDepositActive(address(token));
+        treasury.setDepositActive(address(token), false);
         vm.expectRevert(abi.encodeWithSignature("DepositIsPaused(address)", token));
         vm.prank(gateway);
         treasury.deposit(address(token), 10 * TOKEN_UNIT);
@@ -323,7 +359,7 @@ contract TreasuryTest is Test {
     }
 
     function test_withdraw_onlyGateway_revertIfWithdrawPaused() public {
-        treasury.toggleWithdrawActive(address(token));
+        treasury.setWithdrawActive(address(token), false);
         vm.expectRevert(abi.encodeWithSignature("WithdrawIsPaused(address)", token));
         vm.prank(gateway);
         treasury.withdraw(address(token), 10 * TOKEN_UNIT, alice);
@@ -383,44 +419,77 @@ contract TreasuryTest is Test {
         treasury.pull(address(_token2), 10 * TOKEN_UNIT);
     }
 
-    // --- toggleDepositActive ---
-    function test_toggleDepositActive_onlyKeeper_success() public {
+    // --- setDepositActive ---
+    function test_setDepositActive_onlyKeeper_success() public {
         treasury.grantRole(keeperRole, keeper);
         (,,, bool depositActiveBefore,,) = treasury.tokenConfig(address(token));
-        vm.prank(keeper);
-        treasury.toggleDepositActive(address(token));
-        (,,, bool depositActiveAfter,,) = treasury.tokenConfig(address(token));
+        assertTrue(depositActiveBefore, "Deposit should be active initially");
 
-        assertTrue(depositActiveBefore != depositActiveAfter);
+        vm.prank(keeper);
+        treasury.setDepositActive(address(token), false);
+        (,,, bool depositActiveAfter,,) = treasury.tokenConfig(address(token));
+        assertFalse(depositActiveAfter, "Deposit should be inactive after setting false");
     }
 
-    function test_toggleDepositActive_onlyKeeper_revertIfNotWhitelisted() public {
+    function test_setDepositActive_idempotent() public {
+        treasury.grantRole(keeperRole, keeper);
+        // Setting to same value should not change state
+        vm.prank(keeper);
+        treasury.setDepositActive(address(token), true);
+        (,,, bool depositActive,,) = treasury.tokenConfig(address(token));
+        assertTrue(depositActive, "Deposit should still be active");
+    }
+
+    function test_setDepositActive_onlyKeeper_revertIfNotWhitelisted() public {
         treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
-        treasury.toggleDepositActive(address(_token2));
+        treasury.setDepositActive(address(_token2), false);
     }
 
-    // --- toggleWithdrawActive ---
-    function test_toggleWithdrawActive_onlyKeeper_success() public {
+    // --- setWithdrawActive ---
+    function test_setWithdrawActive_onlyKeeper_success() public {
         treasury.grantRole(keeperRole, keeper);
         (,,,, bool withdrawActiveBefore,) = treasury.tokenConfig(address(token));
+        assertTrue(withdrawActiveBefore, "Withdraw should be active initially");
+
         vm.prank(keeper);
-        treasury.toggleWithdrawActive(address(token));
+        treasury.setWithdrawActive(address(token), false);
         (,,,, bool withdrawActiveAfter,) = treasury.tokenConfig(address(token));
-        assertTrue(withdrawActiveBefore != withdrawActiveAfter);
+        assertFalse(withdrawActiveAfter, "Withdraw should be inactive after setting false");
     }
 
-    function test_toggleWithdrawActive_onlyKeeper_revertIfNotWhitelisted() public {
+    function test_setWithdrawActive_idempotent() public {
+        treasury.grantRole(keeperRole, keeper);
+        // Setting to same value should not change state
+        vm.prank(keeper);
+        treasury.setWithdrawActive(address(token), true);
+        (,,,, bool withdrawActive,) = treasury.tokenConfig(address(token));
+        assertTrue(withdrawActive, "Withdraw should still be active");
+    }
+
+    function test_setWithdrawActive_onlyKeeper_revertIfNotWhitelisted() public {
         treasury.grantRole(keeperRole, keeper);
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
-        treasury.toggleWithdrawActive(address(_token2));
+        treasury.setWithdrawActive(address(_token2), false);
     }
 
     // --- swap ---
+
+    /// @notice Audit S6: Treasury.swap() should validate swapper is set
+    function test_swap_revertIfSwapperNotSet() public {
+        MockERC20 _other = new MockERC20();
+        uint256 _amountIn = 100 * TOKEN_UNIT;
+        deal(address(_other), address(treasury), _amountIn);
+        treasury.grantRole(keeperRole, keeper);
+        vm.expectRevert(Treasury.SwapperNotSet.selector);
+        vm.prank(keeper);
+        treasury.swap(address(_other), address(token), _amountIn, 1);
+    }
+
     function test_swap_onlyKeeper_success() public {
         address _swapper = address(new MockSwapper());
         treasury.updateSwapper(_swapper);
@@ -440,6 +509,8 @@ contract TreasuryTest is Test {
     }
 
     function test_swap_onlyKeeper_revertIfReservedToken() public {
+        vm.prank(maintainer);
+        treasury.updateSwapper(makeAddr("swapper"));
         treasury.grantRole(keeperRole, keeper);
         vm.expectRevert(Treasury.ReservedToken.selector);
         vm.prank(keeper);
@@ -447,6 +518,8 @@ contract TreasuryTest is Test {
     }
 
     function test_swap_onlyKeeper_revertOnVaultShareToken() public {
+        vm.prank(maintainer);
+        treasury.updateSwapper(makeAddr("swapper"));
         treasury.grantRole(keeperRole, keeper);
         vm.expectRevert(Treasury.ReservedToken.selector);
         vm.prank(keeper);
@@ -462,7 +535,19 @@ contract TreasuryTest is Test {
 
     function test_getPrice_revertIfStale() public {
         vm.warp(2 hours);
-        vm.expectRevert(Treasury.StalePrice.selector);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(mockOracle)));
+        treasury.getPrice(address(token));
+    }
+
+    function test_getPrice_revertIfZeroPrice() public {
+        mockOracle.updatePrice(0);
+        vm.expectRevert(Treasury.InvalidOraclePrice.selector);
+        treasury.getPrice(address(token));
+    }
+
+    function test_getPrice_revertIfNegativePrice() public {
+        mockOracle.updatePrice(-1e8);
+        vm.expectRevert(Treasury.InvalidOraclePrice.selector);
         treasury.getPrice(address(token));
     }
 

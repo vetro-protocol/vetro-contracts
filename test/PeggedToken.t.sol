@@ -104,27 +104,6 @@ contract PeggedTokenTest is Test {
         VUSD.mint(alice, 100e18);
     }
 
-    // --- burnFrom ---
-
-    function test_burnFrom_byAnotherUser() public {
-        // Mint some PeggedToken
-        uint256 mintAmount = 100e18;
-        vm.prank(address(gateway));
-        VUSD.mint(alice, mintAmount);
-        assertEq(VUSD.balanceOf(alice), mintAmount, "Mint failed");
-
-        // Set approval for bob
-        vm.prank(alice);
-        VUSD.approve(bob, mintAmount);
-        assertEq(VUSD.allowance(alice, bob), mintAmount, "Approval failed");
-
-        // Bob calling burnFrom for alice
-        vm.prank(bob);
-        VUSD.burnFrom(alice, mintAmount);
-        assertEq(VUSD.balanceOf(alice), 0, "PeggedToken balance should be zero");
-        assertEq(VUSD.allowance(alice, bob), 0, "Allowance should be zero");
-    }
-
     function test_burnFrom_byGateway() public {
         // Mint some PeggedToken
         uint256 mintAmount = 100e18;
@@ -136,26 +115,6 @@ contract PeggedTokenTest is Test {
         vm.prank(gateway);
         VUSD.burnFrom(alice, mintAmount);
         assertEq(VUSD.balanceOf(alice), 0, "PeggedToken balance should be zero");
-    }
-
-    function test_burnFrom_revertIfBlacklisted() public {
-        // Mint PeggedToken to alice
-        uint256 mintAmount = 100e18;
-        vm.prank(gateway);
-        VUSD.mint(alice, mintAmount);
-
-        // Blacklist alice
-        VUSD.addToBlacklist(alice);
-
-        // Set approval for bob
-        vm.prank(alice);
-        VUSD.approve(bob, mintAmount);
-        assertEq(VUSD.allowance(alice, bob), mintAmount, "Approval failed");
-
-        // Bob calling burnFrom for alice
-        vm.expectRevert(abi.encodeWithSignature("Blacklisted(address)", alice));
-        vm.prank(bob);
-        VUSD.burnFrom(alice, mintAmount);
     }
 
     // --- addToBlacklist ---

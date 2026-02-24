@@ -14,7 +14,7 @@ import {ITreasury} from "./interfaces/ITreasury.sol";
 import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title Gateway - Handles both minting and redeeming of PeggedToken
-/// @custom:storage-location erc7201:victor.storage.Gateway
+/// @custom:storage-location erc7201:vetro.storage.gateway
 contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     using SafeERC20 for IPeggedToken;
     using SafeERC20 for IERC20;
@@ -32,7 +32,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     // ERC-7201 namespace storage
-    /// @custom:storage-location erc7201:victor.storage.Gateway
+    /// @custom:storage-location erc7201:vetro.storage.gateway
     struct GatewayStorage {
         string name;
         IPeggedToken peggedToken;
@@ -52,12 +52,18 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
                         STATE VARIABLES
     /////////////////////////////////////////////////////////////*/
 
-    // keccak256(abi.encode(uint256(keccak256("victor.storage.Gateway")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _GATEWAY_STORAGE_LOCATION =
-        0x776acce308c7c164a04fb34f4f55c1dfc0a572b40aacd748a96ecbbeebf67800;
+        keccak256(abi.encode(uint256(keccak256("vetro.storage.gateway")) - 1)) & ~bytes32(uint256(0xff));
 
     string public constant VERSION = "1.0.0";
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
+    uint256 public constant MAX_FEE_BPS = 500; // 500 = 5%
+    uint256 public constant MAX_WITHDRAWAL_DELAY = 30 days;
+
+    // Inlined role IDs matching Treasury's definitions to avoid chained external calls
+    bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
+    bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
+    bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
 
     /*/////////////////////////////////////////////////////////////
                             EVENTS
@@ -75,7 +81,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     event UpdatedMintFee(uint256 previousMintFee, uint256 newMintFee);
     event UpdatedRedeemFee(uint256 previousRedeemFee, uint256 newRedeemFee);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
-    event WithdrawalDelayToggled(bool enabled);
+    event WithdrawalDelayEnabled(bool enabled);
     event WithdrawalDelayUpdated(uint256 previousDelay, uint256 newDelay);
 
     /*/////////////////////////////////////////////////////////////
@@ -87,7 +93,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AddressIsZero();
     error AccessControlUnauthorizedAccount(address account, bytes32 role);
     error CallerNotWhitelisted(address caller);
-    error ExceededExcessReserve(uint256 requested, uint256 available);
     error ExceededMaxMint(uint256 requested, uint256 available);
     error ExceededMaxWithdraw(uint256 requested, uint256 available);
     error FeeOnTransferToken(address token);
@@ -98,11 +103,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error MintableIsLessThanMinimum(uint256 peggedTokenOut, uint256 minPeggedTokenOut);
     error NoActiveWithdrawalRequest();
-    error NoExcessReserve(uint256 reserve, uint256 supply);
     error PeggedTokenToBurnIsHigherThanMax(uint256 peggedTokenIn, uint256 maxPeggedTokenIn);
     error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
-    error TokenNotSupported(address token);
     error AmountIsZero();
     error WithdrawalDelayFeatureNotEnabled();
 
@@ -142,7 +145,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
         // Initialize withdrawal delay settings
         $.withdrawalDelayEnabled = true; // Enabled by default
-        if (initialWithdrawalDelay_ == 0) revert InvalidWithdrawalDelay();
+        if (initialWithdrawalDelay_ == 0 || initialWithdrawalDelay_ > MAX_WITHDRAWAL_DELAY) {
+            revert InvalidWithdrawalDelay();
+        }
         $.withdrawalDelay = initialWithdrawalDelay_; // e.g., 7 days (604800 seconds)
 
         // Initialize default redeem fee to 0.3%
@@ -150,7 +155,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function mintToAMO(uint256 amount_, address receiver_) external onlyRole(_ummRole()) {
+    function mintToAMO(uint256 amount_, address receiver_) external onlyRole(UMM_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
 
         GatewayStorage storage $ = _getGatewayStorage();
@@ -168,7 +173,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function burnFromAMO(uint256 amount_) external onlyRole(_ummRole()) {
+    function burnFromAMO(uint256 amount_) external onlyRole(UMM_ROLE) {
         if (amount_ == 0) revert AmountIsZero();
 
         GatewayStorage storage $ = _getGatewayStorage();
@@ -182,7 +187,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateAmoMintLimit(uint256 newAmoMintLimit_) external onlyRole(_defaultAdminRole()) {
+    function updateAmoMintLimit(uint256 newAmoMintLimit_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         // AMO mint limit cannot be less than current AMO supply
         uint256 _currentAmoSupply = $.amoSupply;
@@ -195,41 +200,41 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateMintFee(uint256 newMintFee_) external onlyRole(_maintainerRole()) {
-        if (newMintFee_ >= MAX_BPS) revert InvalidMintFee(newMintFee_);
+    function updateMintFee(uint256 newMintFee_) external onlyRole(MAINTAINER_ROLE) {
+        if (newMintFee_ > MAX_FEE_BPS) revert InvalidMintFee(newMintFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedMintFee($.mintFee, newMintFee_);
         $.mintFee = newMintFee_;
     }
 
     /// @inheritdoc IGateway
-    function updateMintLimit(uint256 newMintLimit_) external onlyRole(_defaultAdminRole()) {
+    function updateMintLimit(uint256 newMintLimit_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         emit MintLimitUpdated($.mintLimit, newMintLimit_);
         $.mintLimit = newMintLimit_;
     }
 
     /// @inheritdoc IGateway
-    function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(_maintainerRole()) {
-        if (newRedeemFee_ >= MAX_BPS) revert InvalidRedeemFee(newRedeemFee_);
+    function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(MAINTAINER_ROLE) {
+        if (newRedeemFee_ > MAX_FEE_BPS) revert InvalidRedeemFee(newRedeemFee_);
         GatewayStorage storage $ = _getGatewayStorage();
         emit UpdatedRedeemFee($.redeemFee, newRedeemFee_);
         $.redeemFee = newRedeemFee_;
     }
 
-    /// @notice Toggle withdrawal delay feature on/off
+    /// @notice Set withdrawal delay feature enabled or disabled
     /// @dev When disabled, all users can instant redeem/withdraw
-    function toggleWithdrawalDelay() external onlyRole(_maintainerRole()) {
+    /// @param enabled_ The intended state for withdrawal delay
+    function setWithdrawalDelayEnabled(bool enabled_) external onlyRole(MAINTAINER_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
-        bool _newState = !$.withdrawalDelayEnabled;
-        $.withdrawalDelayEnabled = _newState;
-        emit WithdrawalDelayToggled(_newState);
+        $.withdrawalDelayEnabled = enabled_;
+        emit WithdrawalDelayEnabled(enabled_);
     }
 
     /// @notice Update the withdrawal delay period
     /// @param newDelay_ New delay period in seconds
-    function updateWithdrawalDelay(uint256 newDelay_) external onlyRole(_maintainerRole()) {
-        if (newDelay_ == 0) revert InvalidWithdrawalDelay();
+    function updateWithdrawalDelay(uint256 newDelay_) external onlyRole(MAINTAINER_ROLE) {
+        if (newDelay_ == 0 || newDelay_ > MAX_WITHDRAWAL_DELAY) revert InvalidWithdrawalDelay();
         GatewayStorage storage $ = _getGatewayStorage();
         emit WithdrawalDelayUpdated($.withdrawalDelay, newDelay_);
         $.withdrawalDelay = newDelay_;
@@ -237,7 +242,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Add address to instant redeem whitelist
     /// @param account_ Address to whitelist
-    function addToInstantRedeemWhitelist(address account_) external onlyRole(_maintainerRole()) {
+    function addToInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
         if (account_ == address(0)) revert AddressIsZero();
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.instantRedeemWhitelist.add(account_)) revert AccountAlreadyWhitelisted(account_);
@@ -246,7 +251,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Remove address from instant redeem whitelist
     /// @param account_ Address to remove from whitelist
-    function removeFromInstantRedeemWhitelist(address account_) external onlyRole(_maintainerRole()) {
+    function removeFromInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.instantRedeemWhitelist.remove(account_)) revert AccountNotWhitelisted(account_);
         emit RemovedFromInstantRedeemWhitelist(account_);
@@ -468,13 +473,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @notice Get redeem request details for a user
     /// @param user_ User address
-    /// @return amountLocked Amount of peggedToken locked in Gateway contract
-    /// @return claimableAt Timestamp when request can be claimed
-    function getRedeemRequest(address user_)
-        external
-        view
-        returns (uint256 amountLocked, uint256 claimableAt)
-    {
+    /// @return _amountLocked Amount of peggedToken locked in Gateway contract
+    /// @return _claimableAt Timestamp when request can be claimed
+    function getRedeemRequest(address user_) external view returns (uint256 _amountLocked, uint256 _claimableAt) {
         RedeemRequest memory _request = _getGatewayStorage().redeemRequests[user_];
         return (_request.amountLocked, _request.claimableAt);
     }
@@ -500,18 +501,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         if (!ITreasury(treasury()).hasRole(role_, msg.sender)) {
             revert AccessControlUnauthorizedAccount(msg.sender, role_);
         }
-    }
-
-    function _defaultAdminRole() private view returns (bytes32) {
-        return ITreasury(treasury()).DEFAULT_ADMIN_ROLE();
-    }
-
-    function _maintainerRole() private view returns (bytes32) {
-        return ITreasury(treasury()).MAINTAINER_ROLE();
-    }
-
-    function _ummRole() private view returns (bytes32) {
-        return ITreasury(treasury()).UMM_ROLE();
     }
 
     /**
@@ -604,8 +593,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     function _getGatewayStorage() private pure returns (GatewayStorage storage $) {
+        bytes32 _location = _GATEWAY_STORAGE_LOCATION;
         assembly {
-            $.slot := _GATEWAY_STORAGE_LOCATION
+            $.slot := _location
         }
     }
 

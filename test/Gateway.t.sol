@@ -78,7 +78,7 @@ contract GatewayTest is Test {
     function testFuzz_deposit(int256 price, uint256 mintFee, uint256 tokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -278,7 +278,7 @@ contract GatewayTest is Test {
     function testFuzz_mint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
@@ -351,11 +351,11 @@ contract GatewayTest is Test {
     function testFuzz_redeem(int256 price, uint256 redeemFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
-        gateway.toggleWithdrawalDelay(); // Disable withdrawal delay for instant redeem
+        gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant redeem
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
 
@@ -414,11 +414,11 @@ contract GatewayTest is Test {
     function testFuzz_withdraw(int256 price, uint256 redeemFee, uint256 tokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
 
         // Setup test conditions
-        gateway.toggleWithdrawalDelay(); // Disable withdrawal delay for instant withdraw
+        gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant withdraw
         mockOracle.updatePrice(price);
         gateway.updateRedeemFee(redeemFee);
 
@@ -473,7 +473,7 @@ contract GatewayTest is Test {
     function testFuzz_previewDeposit(int256 price, uint256 mintFee, uint256 amount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         amount = bound(amount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
@@ -502,7 +502,7 @@ contract GatewayTest is Test {
     function testFuzz_previewMint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        mintFee = bound(mintFee, 0, gateway.MAX_BPS() - 1);
+        mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
 
         // Setup test conditions
@@ -528,7 +528,7 @@ contract GatewayTest is Test {
     function testFuzz_previewRedeem(int256 price, uint256 redeemFee, uint256 VUSDAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8); // Price within 0.2% of $1
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -556,7 +556,7 @@ contract GatewayTest is Test {
     function testFuzz_previewWithdraw(int256 price, uint256 redeemFee, uint256 tokenAmount) public {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
-        redeemFee = bound(redeemFee, 0, gateway.MAX_BPS() - 1);
+        redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
 
         // Setup test conditions
@@ -650,6 +650,14 @@ contract GatewayTest is Test {
         gateway.updateMintFee(newFee);
     }
 
+    /// @notice Audit: Mint fee must be bounded to MAX_FEE_BPS (5%).
+    function test_updateMintFee_revertIfFeeExceedsMaxFeeBps() public {
+        // 501 BPS = 5.01%, should revert after fix (max allowed = 500 BPS = 5%)
+        uint256 newFee = 501;
+        vm.expectRevert(abi.encodeWithSignature("InvalidMintFee(uint256)", newFee));
+        gateway.updateMintFee(newFee);
+    }
+
     // --- update redeem fee ---
     function test_updateRedeemFee() public {
         uint256 newFee = 500;
@@ -667,6 +675,14 @@ contract GatewayTest is Test {
 
     function test_updateRedeemFee_revertIfFeeIsHigherThanMax() public {
         uint256 newFee = 10001;
+        vm.expectRevert(abi.encodeWithSignature("InvalidRedeemFee(uint256)", newFee));
+        gateway.updateRedeemFee(newFee);
+    }
+
+    /// @notice Audit: Redeem fee must be bounded to MAX_FEE_BPS (5%).
+    function test_updateRedeemFee_revertIfFeeExceedsMaxFeeBps() public {
+        // 501 BPS = 5.01%, should revert after fix (max allowed = 500 BPS = 5%)
+        uint256 newFee = 501;
         vm.expectRevert(abi.encodeWithSignature("InvalidRedeemFee(uint256)", newFee));
         gateway.updateRedeemFee(newFee);
     }
@@ -780,7 +796,7 @@ contract GatewayTest is Test {
 
     function test_requestRedeem_revertIfWithdrawalDelayDisabled() public {
         // Disable withdrawal delay
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
 
         uint256 VUSDAmount = 100e18;
         mintPeggedToken(alice, VUSDAmount);
@@ -860,7 +876,6 @@ contract GatewayTest is Test {
 
         // Verify VUSD was burned from gateway
         assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
-
     }
 
     function test_redeem_afterRequest_partialAmount() public {
@@ -1059,7 +1074,7 @@ contract GatewayTest is Test {
         uint256 VUSDAmount = 100e18;
 
         // Disable withdrawal delay
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
 
         // Mint VUSD to alice
         mintPeggedToken(alice, VUSDAmount);
@@ -1074,28 +1089,35 @@ contract GatewayTest is Test {
         assertEq(VUSD.balanceOf(alice), 0, "Alice should have 0 VUSD");
     }
 
-    function test_toggleWithdrawalDelay() public {
+    function test_setWithdrawalDelayEnabled() public {
         // Initial state is enabled
         assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled initially");
 
         vm.expectEmit(false, false, false, true);
-        emit Gateway.WithdrawalDelayToggled(false);
-        gateway.toggleWithdrawalDelay();
+        emit Gateway.WithdrawalDelayEnabled(false);
+        gateway.setWithdrawalDelayEnabled(false);
 
-        assertFalse(gateway.withdrawalDelayEnabled(), "Should be disabled after toggle");
+        assertFalse(gateway.withdrawalDelayEnabled(), "Should be disabled after setting false");
 
         vm.expectEmit(false, false, false, true);
-        emit Gateway.WithdrawalDelayToggled(true);
-        gateway.toggleWithdrawalDelay();
+        emit Gateway.WithdrawalDelayEnabled(true);
+        gateway.setWithdrawalDelayEnabled(true);
 
-        assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled after second toggle");
+        assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled after setting true");
     }
 
-    function test_toggleWithdrawalDelay_revertIfNotMaintainerRole() public {
+    function test_setWithdrawalDelayEnabled_idempotent() public {
+        // Setting to same value should not change state
+        assertTrue(gateway.withdrawalDelayEnabled(), "Should be enabled initially");
+        gateway.setWithdrawalDelayEnabled(true);
+        assertTrue(gateway.withdrawalDelayEnabled(), "Should still be enabled");
+    }
+
+    function test_setWithdrawalDelayEnabled_revertIfNotMaintainerRole() public {
         bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
-        gateway.toggleWithdrawalDelay();
+        gateway.setWithdrawalDelayEnabled(false);
     }
 
     function test_updateWithdrawalDelay() public {
