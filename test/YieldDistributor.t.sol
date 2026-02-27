@@ -401,6 +401,43 @@ contract YieldDistributorTest is Test {
         assertEq(yieldDistributor.periodFinish(), block.timestamp + 7 days);
     }
 
+    /// @notice HV-1 edge case: distribute() after period ends without pullYield() orphans tokens
+    function test_distribute_afterPeriodEnds_orphansUnpulledYield() public {
+        // Step 1: distribute 70 tokens over 7 days
+        vm.startPrank(distributor);
+        vusd.approve(address(yieldDistributor), 200 * UNIT);
+        yieldDistributor.distribute(70 * UNIT);
+        vm.stopPrank();
+
+        // Step 2: period finishes, nobody pulls
+        vm.warp(block.timestamp + 10 days);
+
+        // At this point, pendingYield should be 70 (full period elapsed, capped at periodFinish)
+        assertApproxEqAbs(yieldDistributor.pendingYield(), 70 * UNIT, 10, "all yield should be pending");
+
+        // Step 3: distribute another 70 tokens after period ends (no pull happened)
+        vm.prank(distributor);
+        yieldDistributor.distribute(70 * UNIT);
+
+        // The new schedule should account for the 70 unpulled tokens + 70 new = 140 total
+        // Contract balance is 140 (70 old + 70 new)
+        assertEq(vusd.balanceOf(address(yieldDistributor)), 140 * UNIT, "contract should hold 140 tokens");
+
+        // Wait for the new period to fully elapse
+        vm.warp(block.timestamp + 7 days);
+
+        // Pull all yield - should get all 140 tokens (70 unpulled from first + 70 from second)
+        vm.prank(address(vault));
+        uint256 pulled = yieldDistributor.pullYield();
+
+        assertApproxEqAbs(pulled, 140 * UNIT, 10, "should pull all 140 tokens, none orphaned");
+
+        // Contract should be empty (no orphaned tokens)
+        assertApproxEqAbs(
+            vusd.balanceOf(address(yieldDistributor)), 0, 10, "no tokens should be orphaned in contract"
+        );
+    }
+
     function test_pullYieldAfterPeriodEnds() public {
         // Distribute yield
         vm.startPrank(distributor);

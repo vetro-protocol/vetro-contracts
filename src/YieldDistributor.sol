@@ -209,7 +209,7 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
         $.asset.safeTransferFrom(msg.sender, address(this), amount_);
 
         uint256 _remaining;
-        if (block.timestamp < $.periodFinish) {
+        if ($.lastUpdateTime < $.periodFinish && $.rewardRate != 0 && $.lastUpdateTime != 0) {
             _remaining = (($.periodFinish - $.lastUpdateTime) * $.rewardRate) / PRECISION;
         }
 
