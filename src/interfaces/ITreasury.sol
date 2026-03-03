@@ -36,6 +36,7 @@ interface ITreasury {
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice);
     function isWhitelistedToken(address token_) external view returns (bool);
     function owner() external view returns (address);
+    function priceTolerance() external view returns (uint256);
     function reserve() external view returns (uint256 _reserve);
     function withdrawable(address token_) external view returns (uint256);
     function whitelistedTokens() external view returns (address[] memory);
