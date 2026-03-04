@@ -687,6 +687,247 @@ contract GatewayTest is Test {
         gateway.updateRedeemFee(newFee);
     }
 
+    // --- updatePegBand ---
+
+    function test_updatePegBand_success() public {
+        // Treasury priceTolerance is 100 BPS (1%), so we can set up to 99
+        vm.prank(admin);
+        gateway.updatePegBand(token, 50); // 0.5%
+        assertEq(gateway.pegBand(token), 50);
+    }
+
+    function test_updatePegBand_revertIfNotDefaultAdmin() public {
+        bytes32 _role = gateway.DEFAULT_ADMIN_ROLE();
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, _role));
+        vm.prank(alice);
+        gateway.updatePegBand(token, 50);
+    }
+
+    function test_updatePegBand_revertIfEqualToPriceTolerance() public {
+        // Treasury priceTolerance = 100, setting to 100 should fail
+        vm.expectRevert(abi.encodeWithSignature("InvalidPegBand(uint256,uint256)", 100, 100));
+        vm.prank(admin);
+        gateway.updatePegBand(token, 100);
+    }
+
+    function test_updatePegBand_revertIfExceedsPriceTolerance() public {
+        vm.expectRevert(abi.encodeWithSignature("InvalidPegBand(uint256,uint256)", 200, 100));
+        vm.prank(admin);
+        gateway.updatePegBand(token, 200);
+    }
+
+    function test_updatePegBand_emitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit Gateway.PegBandUpdated(token, 0, 50);
+        vm.prank(admin);
+        gateway.updatePegBand(token, 50);
+    }
+
+    function test_updatePegBand_defaultIsZero() public view {
+        assertEq(gateway.pegBand(token), 0);
+    }
+
+    // --- peg band affects deposit (mint) pricing ---
+
+    function test_deposit_withinPegBand_mints1to1() public {
+        // Set peg band to 50 BPS (0.5%)
+        vm.prank(admin);
+        gateway.updatePegBand(token, 50);
+
+        // Price = 0.996 (0.4% below peg, within 0.5% peg band)
+        mockOracle.updatePrice(0.996e8);
+
+        uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
+        deal(token, alice, depositAmount);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), depositAmount);
+        uint256 peggedTokenOut = gateway.previewDeposit(token, depositAmount);
+        gateway.deposit(token, depositAmount, peggedTokenOut, alice);
+        vm.stopPrank();
+
+        // Should mint 1:1 (1000 VUSD) since price is within peg band
+        assertEq(VUSD.balanceOf(alice), 1000e18);
+    }
+
+    function test_deposit_belowPegBand_mintsAtDiscount() public {
+        // Set peg band to 50 BPS (0.5%)
+        vm.prank(admin);
+        gateway.updatePegBand(token, 50);
+
+        // Price = 0.990 (1% below peg, outside 0.5% peg band)
+        mockOracle.updatePrice(0.990e8);
+
+        uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
+        deal(token, alice, depositAmount);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), depositAmount);
+        uint256 peggedTokenOut = gateway.previewDeposit(token, depositAmount);
+        gateway.deposit(token, depositAmount, peggedTokenOut, alice);
+        vm.stopPrank();
+
+        // Should mint discounted: 1000 * 0.990 = 990 VUSD
+        assertEq(VUSD.balanceOf(alice), 990e18);
+    }
+
+    function test_deposit_zeroPegBand_mintsAtDiscount() public {
+        // Default peg band = 0, any price below unitPrice triggers discount
+        mockOracle.updatePrice(0.999e8);
+
+        uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
+        deal(token, alice, depositAmount);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), depositAmount);
+        uint256 peggedTokenOut = gateway.previewDeposit(token, depositAmount);
+        gateway.deposit(token, depositAmount, peggedTokenOut, alice);
+        vm.stopPrank();
+
+        // With pegBand=0, price 0.999 < unitPrice 1.0, so discount applies
+        // 1000 * 0.999 = 999 VUSD
+        assertEq(VUSD.balanceOf(alice), 999e18);
+    }
+
+    // --- peg band affects redeem (withdraw) pricing ---
+
+    function test_redeem_withinPegBand_redeems1to1() public {
+        // Disable withdrawal delay for instant redeem
+        gateway.setWithdrawalDelayEnabled(false);
+
+        // First mint some VUSD at price=1.0
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(alice, 1000e18);
+
+        // Set peg band to 50 BPS (0.5%)
+        vm.prank(admin);
+        gateway.updatePegBand(token, 50);
+
+        // Price = 1.004 (0.4% above peg, within 0.5% peg band)
+        mockOracle.updatePrice(1.004e8);
+
+        uint256 redeemAmount = 100e18;
+        uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), redeemAmount);
+        gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
+        vm.stopPrank();
+
+        // Within peg band → no price discount (1:1 on price), but 30 BPS default redeem fee still applies
+        // 100e18 * (10000-30)/10000 = 99.7e18, converted to 6 decimals = 99_700_000
+        uint256 redeemFee = gateway.redeemFee();
+        uint256 expectedAfterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
+        uint256 expectedTokens = expectedAfterFee / 10 ** (18 - MockERC20(token).decimals());
+        assertEq(IERC20(token).balanceOf(alice), expectedTokens);
+    }
+
+    function test_redeem_abovePegBand_redeemsAtDiscount() public {
+        // Disable withdrawal delay for instant redeem
+        gateway.setWithdrawalDelayEnabled(false);
+
+        // First mint some VUSD at price=1.0
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(alice, 1000e18);
+
+        // Set peg band to 50 BPS (0.5%)
+        vm.prank(admin);
+        gateway.updatePegBand(token, 50);
+
+        // Price = 1.008 (0.8% above peg, outside 0.5% peg band)
+        mockOracle.updatePrice(1.008e8);
+
+        uint256 redeemAmount = 1000e18;
+        uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), redeemAmount);
+        gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
+        vm.stopPrank();
+
+        // Outside peg band → price discount applied, plus 30 BPS default redeem fee
+        // 1000e18 * (10000-30)/10000 = 997e18 (after fee)
+        // 997e18 * 1e8 / 1.008e8 (discount) → converted to 6 decimals
+        uint256 redeemFee = gateway.redeemFee();
+        uint256 afterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
+        uint256 discounted = afterFee * 1e8 / 1.008e8;
+        uint256 expected = discounted / 10 ** (18 - MockERC20(token).decimals());
+        assertApproxEqAbs(IERC20(token).balanceOf(alice), expected, 1);
+    }
+
+    function test_redeem_zeroPegBand_redeemsAtDiscount() public {
+        // Disable withdrawal delay for instant redeem
+        gateway.setWithdrawalDelayEnabled(false);
+
+        // First mint some VUSD at price=1.0
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(alice, 1000e18);
+
+        // Default peg band = 0, pegCeiling = unitPrice = 1.0
+        // Price = 1.001 (above unitPrice, outside zero band)
+        mockOracle.updatePrice(1.001e8);
+
+        uint256 redeemAmount = 1000e18;
+        uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), redeemAmount);
+        gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
+        vm.stopPrank();
+
+        // With pegBand=0, pegCeiling = 1.0, price 1.001 > 1.0 → discount path
+        // afterFee = 1000e18 * (10000-30)/10000 = 997e18
+        // discounted = 997e18 * 1e8 / 1.001e8
+        uint256 redeemFee = gateway.redeemFee();
+        uint256 afterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
+        uint256 discounted = afterFee * 1e8 / 1.001e8;
+        uint256 expected = discounted / 10 ** (18 - MockERC20(token).decimals());
+        assertApproxEqAbs(IERC20(token).balanceOf(alice), expected, 1);
+    }
+
+    function test_deposit_zeroPegBand_mints1to1_atExactPeg() public {
+        // Default peg band = 0, pegFloor = unitPrice = 1.0
+        // Price = exactly 1.0 → should mint 1:1
+        mockOracle.updatePrice(1e8);
+
+        uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
+        deal(token, alice, depositAmount);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), depositAmount);
+        uint256 peggedTokenOut = gateway.previewDeposit(token, depositAmount);
+        gateway.deposit(token, depositAmount, peggedTokenOut, alice);
+        vm.stopPrank();
+
+        // With pegBand=0, price == unitPrice (1.0 >= 1.0) → 1:1 path
+        assertEq(VUSD.balanceOf(alice), 1000e18);
+    }
+
+    function test_redeem_zeroPegBand_redeems1to1_atExactPeg() public {
+        // Disable withdrawal delay for instant redeem
+        gateway.setWithdrawalDelayEnabled(false);
+
+        // First mint some VUSD at price=1.0
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(alice, 1000e18);
+
+        // Default peg band = 0, pegCeiling = unitPrice = 1.0
+        // Price = exactly 1.0 → should redeem 1:1 (minus fee)
+        uint256 redeemAmount = 100e18;
+        uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), redeemAmount);
+        gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
+        vm.stopPrank();
+
+        // With pegBand=0, price == unitPrice (1.0 <= 1.0) → 1:1 path, only redeem fee applies
+        uint256 redeemFee = gateway.redeemFee();
+        uint256 expectedAfterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
+        uint256 expectedTokens = expectedAfterFee / 10 ** (18 - MockERC20(token).decimals());
+        assertEq(IERC20(token).balanceOf(alice), expectedTokens);
+    }
+
     function test_maxDeposit() public view {
         assertEq(gateway.maxDeposit(), type(uint256).max);
     }

@@ -46,6 +46,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 withdrawalDelay;
         EnumerableSet.AddressSet instantRedeemWhitelist;
         mapping(address user => RedeemRequest) redeemRequests;
+        mapping(address token => uint256 pegBand) pegBand;
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -81,6 +82,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     event UpdatedMintFee(uint256 previousMintFee, uint256 newMintFee);
     event UpdatedRedeemFee(uint256 previousRedeemFee, uint256 newRedeemFee);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
+    event PegBandUpdated(address indexed token, uint256 previousPegBandBps, uint256 newPegBandBps);
     event WithdrawalDelayEnabled(bool enabled);
     event WithdrawalDelayUpdated(uint256 previousDelay, uint256 newDelay);
 
@@ -107,6 +109,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
     error AmountIsZero();
+    error InvalidPegBand(uint256 pegBand, uint256 maxPegBandBps);
     error WithdrawalDelayFeatureNotEnabled();
 
     /*/////////////////////////////////////////////////////////////
@@ -212,6 +215,18 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         GatewayStorage storage $ = _getGatewayStorage();
         emit MintLimitUpdated($.mintLimit, newMintLimit_);
         $.mintLimit = newMintLimit_;
+    }
+
+    /// @notice Update the peg tolerance for a specific token
+    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Tolerance must be less than Treasury's priceTolerance.
+    /// @param token_ The token address
+    /// @param newPegBandBps_ The new peg band in BPS
+    function updatePegBand(address token_, uint256 newPegBandBps_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 _priceTolerance = ITreasury(treasury()).priceTolerance();
+        if (newPegBandBps_ >= _priceTolerance) revert InvalidPegBand(newPegBandBps_, _priceTolerance);
+        GatewayStorage storage $ = _getGatewayStorage();
+        emit PegBandUpdated(token_, $.pegBand[token_], newPegBandBps_);
+        $.pegBand[token_] = newPegBandBps_;
     }
 
     /// @inheritdoc IGateway
@@ -493,6 +508,13 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().instantRedeemWhitelist.values();
     }
 
+    /// @notice Get the peg tolerance for a specific token
+    /// @param token_ The token address
+    /// @return The peg tolerance in BPS
+    function pegBand(address token_) external view returns (uint256) {
+        return _getGatewayStorage().pegBand[token_];
+    }
+
     /*/////////////////////////////////////////////////////////////
                         PRIVATE FUNCTIONS
     /////////////////////////////////////////////////////////////*/
@@ -508,15 +530,18 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      * @param tokenIn_ Input token address
      * @param amountIn_ Input token amount
      * @return _peggedTokenOut Amount of PeggedToken to mint after applying price and fees
-     * @custom:formula if price >= 1: peggedTokenOut = amountIn * (1 - mintFee)
-     *                if price < 1:  peggedTokenOut = amountIn * price * (1 - mintFee)
+     * @custom:formula treasury allows minor variation in price. Lower bound is calculated based on pegBand.
+     * @custom:formula if price >= pegFloor: peggedTokenOut = amountIn * (1 - mintFee)
+     *                if price < pegFloor:  peggedTokenOut = amountIn * price * (1 - mintFee)
      */
     function _calculatePeggedTokenOutput(address tokenIn_, uint256 amountIn_) private view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
         (uint256 _latestPrice, uint256 _unitPrice) = ITreasury($.peggedToken.treasury()).getPrice(tokenIn_);
-        uint256 _amountInAfterFee = $.mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - $.mintFee), MAX_BPS) : amountIn_;
+        uint256 _mintFee = $.mintFee;
+        uint256 _amountInAfterFee = _mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - _mintFee), MAX_BPS) : amountIn_;
+        uint256 _pegFloor = _unitPrice - (_unitPrice * $.pegBand[tokenIn_] / MAX_BPS);
         uint256 _rawPeggedTokenAmount =
-            _latestPrice >= _unitPrice ? _amountInAfterFee : _amountInAfterFee.mulDiv(_latestPrice, _unitPrice);
+            _latestPrice >= _pegFloor ? _amountInAfterFee : _amountInAfterFee.mulDiv(_latestPrice, _unitPrice);
         // convert _rawPeggedTokenAmount into peggedToken decimal
         uint8 _decimals = $.peggedTokenDecimals;
         return _rawPeggedTokenAmount * 10 ** (_decimals - IERC20Metadata(tokenIn_).decimals());
@@ -527,15 +552,17 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      * @param tokenOut_ Output token address
      * @param peggedTokenIn_ Input PeggedToken amount
      * @return _tokenOut Token amount after price and fee adjustments
-     * @custom:formula if price <= 1: tokenOut = peggedTokenIn * (1 - redeemFee)
-     *                if price > 1:  tokenOut = peggedTokenIn / price * (1 - redeemFee)
+     * @custom:formula if price <= pegCeiling: tokenOut = peggedTokenIn * (1 - redeemFee)
+     *                if price > pegCeiling:  tokenOut = peggedTokenIn / price * (1 - redeemFee)
      */
     function _calculateTokenOutput(address tokenOut_, uint256 peggedTokenIn_) private view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
         (uint256 _latestPrice, uint256 _unitPrice) = ITreasury(treasury()).getPrice(tokenOut_);
+        uint256 _redeemFee = $.redeemFee;
         uint256 _peggedTokenInAfterFee =
-            $.redeemFee > 0 ? peggedTokenIn_.mulDiv((MAX_BPS - $.redeemFee), MAX_BPS) : peggedTokenIn_;
-        uint256 _rawTokenAmount = _latestPrice <= _unitPrice
+            _redeemFee > 0 ? peggedTokenIn_.mulDiv((MAX_BPS - _redeemFee), MAX_BPS) : peggedTokenIn_;
+        uint256 _pegCeiling = _unitPrice + (_unitPrice * $.pegBand[tokenOut_] / MAX_BPS);
+        uint256 _rawTokenAmount = _latestPrice <= _pegCeiling
             ? _peggedTokenInAfterFee
             : _peggedTokenInAfterFee.mulDiv(_unitPrice, _latestPrice);
         // convert _rawTokenAmount to token_ decimal
