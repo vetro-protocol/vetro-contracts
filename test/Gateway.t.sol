@@ -82,7 +82,7 @@ contract GatewayTest is Test {
         tokenAmount = bound(tokenAmount, 0, type(uint128).max);
         // Setup test conditions
         mockOracle.updatePrice(price);
-        gateway.updateMintFee(mintFee);
+        gateway.updateMintFee(token, mintFee);
         deal(token, bob, tokenAmount);
 
         uint256 expectedPeggedToken = gateway.previewDeposit(token, tokenAmount);
@@ -283,7 +283,7 @@ contract GatewayTest is Test {
 
         // Setup test conditions
         mockOracle.updatePrice(price);
-        gateway.updateMintFee(mintFee);
+        gateway.updateMintFee(token, mintFee);
 
         uint256 tokenAmount = gateway.previewMint(token, VUSDAmount);
         deal(token, bob, tokenAmount);
@@ -357,7 +357,7 @@ contract GatewayTest is Test {
         // Setup test conditions
         gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant redeem
         mockOracle.updatePrice(price);
-        gateway.updateRedeemFee(redeemFee);
+        gateway.updateRedeemFee(token, redeemFee);
 
         // Mint PeggedToken for testing
         mintPeggedToken(alice, VUSDAmount);
@@ -420,7 +420,7 @@ contract GatewayTest is Test {
         // Setup test conditions
         gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant withdraw
         mockOracle.updatePrice(price);
-        gateway.updateRedeemFee(redeemFee);
+        gateway.updateRedeemFee(token, redeemFee);
 
         // Mint PeggedToken for testing
         uint256 VUSDAmount = gateway.previewWithdraw(token, tokenAmount);
@@ -478,12 +478,12 @@ contract GatewayTest is Test {
 
         // Setup test conditions
         mockOracle.updatePrice(price);
-        gateway.updateMintFee(mintFee);
+        gateway.updateMintFee(token, mintFee);
 
         // Calculate expected PeggedToken amount
         (uint256 latestPrice, uint256 unitPrice) = treasury.getPrice(token);
         uint256 maxBps = gateway.MAX_BPS();
-        uint256 amountAfterFee = amount.mulDiv((maxBps - gateway.mintFee()), maxBps);
+        uint256 amountAfterFee = amount.mulDiv((maxBps - gateway.mintFee(token)), maxBps);
         uint256 expectedPeggedToken = latestPrice >= unitPrice
             ? parseAmount(amountAfterFee, token, address(VUSD))
             : parseAmount(amountAfterFee.mulDiv(latestPrice, unitPrice), token, address(VUSD));
@@ -507,7 +507,7 @@ contract GatewayTest is Test {
 
         // Setup test conditions
         mockOracle.updatePrice(price);
-        gateway.updateMintFee(mintFee);
+        gateway.updateMintFee(token, mintFee);
 
         // Calculate expected token amount
         uint256 oneToken = parseAmount(1, address(0), token);
@@ -532,12 +532,12 @@ contract GatewayTest is Test {
         VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
         // Setup test conditions
         mockOracle.updatePrice(price);
-        gateway.updateRedeemFee(redeemFee);
+        gateway.updateRedeemFee(token, redeemFee);
 
         // Calculate expected token amount
         (uint256 latestPrice, uint256 unitPrice) = treasury.getPrice(token);
         uint256 maxBps = gateway.MAX_BPS();
-        uint256 VUSDAfterFee = VUSDAmount.mulDiv((maxBps - gateway.redeemFee()), maxBps);
+        uint256 VUSDAfterFee = VUSDAmount.mulDiv((maxBps - gateway.redeemFee(token)), maxBps);
         uint256 expectedToken = latestPrice <= unitPrice
             ? parseAmount(VUSDAfterFee, address(VUSD), token)
             : parseAmount(VUSDAfterFee.mulDiv(unitPrice, latestPrice), address(VUSD), token);
@@ -561,7 +561,7 @@ contract GatewayTest is Test {
 
         // Setup test conditions
         mockOracle.updatePrice(price);
-        gateway.updateRedeemFee(redeemFee);
+        gateway.updateRedeemFee(token, redeemFee);
 
         // Calculate expected PeggedToken amount
         uint256 onePeggedToken = parseAmount(1, address(0), address(VUSD));
@@ -629,62 +629,118 @@ contract GatewayTest is Test {
         assertEq(gateway.amoMintLimit(), 0, "AMO mint limit should be set to zero");
     }
 
-    // --- update mint fee ---
-    function test_updateMintFee() public {
-        uint256 newFee = 500;
-        gateway.updateMintFee(newFee);
-        assertEq(gateway.mintFee(), newFee, "Mint fee should be updated");
+    // --- updateMintFee (per-token) ---
+
+    function test_updateMintFeePerToken_success() public {
+        gateway.updateMintFee(token, 100);
+        assertEq(gateway.mintFee(token), 100);
     }
 
-    function test_updateMintFee_revertIfNotMaintainerRole() public {
-        uint256 newFee = 500;
+    function test_updateMintFeePerToken_revertIfNotMaintainerRole() public {
         bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, _role));
-        gateway.updateMintFee(newFee);
+        gateway.updateMintFee(token, 100);
     }
 
-    function test_updateMintFee_revertIfFeeIsHigherThanMax() public {
-        uint256 newFee = 10001;
-        vm.expectRevert(abi.encodeWithSignature("InvalidMintFee(uint256)", newFee));
-        gateway.updateMintFee(newFee);
-    }
-
-    /// @notice Audit: Mint fee must be bounded to MAX_FEE_BPS (5%).
-    function test_updateMintFee_revertIfFeeExceedsMaxFeeBps() public {
-        // 501 BPS = 5.01%, should revert after fix (max allowed = 500 BPS = 5%)
+    function test_updateMintFeePerToken_revertIfFeeExceedsMax() public {
         uint256 newFee = 501;
         vm.expectRevert(abi.encodeWithSignature("InvalidMintFee(uint256)", newFee));
-        gateway.updateMintFee(newFee);
+        gateway.updateMintFee(token, newFee);
     }
 
-    // --- update redeem fee ---
-    function test_updateRedeemFee() public {
-        uint256 newFee = 500;
-        gateway.updateRedeemFee(newFee);
-        assertEq(gateway.redeemFee(), newFee, "Redeem fee should be updated");
+    function test_updateMintFeePerToken_revertIfTokenNotWhitelisted() public {
+        address fakeToken = makeAddr("fakeToken");
+        vm.expectRevert(abi.encodeWithSignature("TokenNotWhitelisted(address)", fakeToken));
+        gateway.updateMintFee(fakeToken, 100);
     }
 
-    function test_updateRedeemFee_revertIfNotMaintainerRole() public {
-        uint256 newFee = 500;
+    function test_updateMintFeePerToken_emitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit Gateway.MintFeeUpdated(token, 0, 100);
+        gateway.updateMintFee(token, 100);
+    }
+
+    function test_updateMintFeePerToken_defaultIsZero() public view {
+        assertEq(gateway.mintFee(token), 0);
+    }
+
+    // --- updateRedeemFee (per-token) ---
+
+    function test_updateRedeemFeePerToken_success() public {
+        gateway.updateRedeemFee(token, 50);
+        assertEq(gateway.redeemFee(token), 50);
+    }
+
+    function test_updateRedeemFeePerToken_revertIfNotMaintainerRole() public {
         bytes32 _role = treasury.MAINTAINER_ROLE();
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bob, _role));
-        gateway.updateRedeemFee(newFee);
+        gateway.updateRedeemFee(token, 50);
     }
 
-    function test_updateRedeemFee_revertIfFeeIsHigherThanMax() public {
-        uint256 newFee = 10001;
-        vm.expectRevert(abi.encodeWithSignature("InvalidRedeemFee(uint256)", newFee));
-        gateway.updateRedeemFee(newFee);
-    }
-
-    /// @notice Audit: Redeem fee must be bounded to MAX_FEE_BPS (5%).
-    function test_updateRedeemFee_revertIfFeeExceedsMaxFeeBps() public {
-        // 501 BPS = 5.01%, should revert after fix (max allowed = 500 BPS = 5%)
+    function test_updateRedeemFeePerToken_revertIfFeeExceedsMax() public {
         uint256 newFee = 501;
         vm.expectRevert(abi.encodeWithSignature("InvalidRedeemFee(uint256)", newFee));
-        gateway.updateRedeemFee(newFee);
+        gateway.updateRedeemFee(token, newFee);
+    }
+
+    function test_updateRedeemFeePerToken_revertIfTokenNotWhitelisted() public {
+        address fakeToken = makeAddr("fakeToken");
+        vm.expectRevert(abi.encodeWithSignature("TokenNotWhitelisted(address)", fakeToken));
+        gateway.updateRedeemFee(fakeToken, 50);
+    }
+
+    function test_updateRedeemFeePerToken_emitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit Gateway.RedeemFeeUpdated(token, 0, 50);
+        gateway.updateRedeemFee(token, 50);
+    }
+
+    function test_updateRedeemFeePerToken_defaultIsZero() public view {
+        assertEq(gateway.redeemFee(token), 0);
+    }
+
+    // --- per-token fee takes priority over global ---
+
+    function test_deposit_usesPerTokenMintFeeOverGlobal() public {
+        mockOracle.updatePrice(1e8);
+        // Set per-token mint fee to 200 BPS (2%)
+        gateway.updateMintFee(token, 200);
+
+        uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
+        deal(token, alice, depositAmount);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), depositAmount);
+        uint256 peggedTokenOut = gateway.previewDeposit(token, depositAmount);
+        gateway.deposit(token, depositAmount, peggedTokenOut, alice);
+        vm.stopPrank();
+
+        // Per-token fee of 200 BPS (2%) should apply: 1000 * 0.98 = 980 VUSD
+        assertEq(VUSD.balanceOf(alice), 980e18);
+    }
+
+    function test_redeem_usesPerTokenRedeemFeeOverGlobal() public {
+        gateway.setWithdrawalDelayEnabled(false);
+        mockOracle.updatePrice(1e8);
+        // Set per-token redeem fee to 100 BPS (1%)
+        gateway.updateRedeemFee(token, 100);
+
+        mintPeggedToken(alice, 1000e18);
+
+        uint256 redeemAmount = 1000e18;
+        uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), redeemAmount);
+        gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
+        vm.stopPrank();
+
+        // Per-token fee of 100 BPS (1%): 1000 * 0.99 = 990 after fee
+        uint256 afterFee = redeemAmount * (10_000 - 100) / 10_000;
+        uint256 expected = afterFee / 10 ** (18 - MockERC20(token).decimals());
+        assertEq(IERC20(token).balanceOf(alice), expected);
     }
 
     // --- updatePegBand ---
@@ -799,9 +855,10 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(1e8);
         mintPeggedToken(alice, 1000e18);
 
-        // Set peg band to 50 BPS (0.5%)
+        // Set peg band to 50 BPS (0.5%) and per-token redeem fee to 30 BPS
         vm.prank(admin);
         gateway.updatePegBand(token, 50);
+        gateway.updateRedeemFee(token, 30);
 
         // Price = 1.004 (0.4% above peg, within 0.5% peg band)
         mockOracle.updatePrice(1.004e8);
@@ -814,9 +871,9 @@ contract GatewayTest is Test {
         gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
         vm.stopPrank();
 
-        // Within peg band → no price discount (1:1 on price), but 30 BPS default redeem fee still applies
+        // Within peg band → no price discount (1:1 on price), but 30 BPS per-token redeem fee applies
         // 100e18 * (10000-30)/10000 = 99.7e18, converted to 6 decimals = 99_700_000
-        uint256 redeemFee = gateway.redeemFee();
+        uint256 redeemFee = gateway.redeemFee(token);
         uint256 expectedAfterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
         uint256 expectedTokens = expectedAfterFee / 10 ** (18 - MockERC20(token).decimals());
         assertEq(IERC20(token).balanceOf(alice), expectedTokens);
@@ -830,9 +887,10 @@ contract GatewayTest is Test {
         mockOracle.updatePrice(1e8);
         mintPeggedToken(alice, 1000e18);
 
-        // Set peg band to 50 BPS (0.5%)
+        // Set peg band to 50 BPS (0.5%) and per-token redeem fee to 30 BPS
         vm.prank(admin);
         gateway.updatePegBand(token, 50);
+        gateway.updateRedeemFee(token, 30);
 
         // Price = 1.008 (0.8% above peg, outside 0.5% peg band)
         mockOracle.updatePrice(1.008e8);
@@ -845,10 +903,10 @@ contract GatewayTest is Test {
         gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
         vm.stopPrank();
 
-        // Outside peg band → price discount applied, plus 30 BPS default redeem fee
+        // Outside peg band → price discount applied, plus 30 BPS per-token redeem fee
         // 1000e18 * (10000-30)/10000 = 997e18 (after fee)
         // 997e18 * 1e8 / 1.008e8 (discount) → converted to 6 decimals
-        uint256 redeemFee = gateway.redeemFee();
+        uint256 redeemFee = gateway.redeemFee(token);
         uint256 afterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
         uint256 discounted = afterFee * 1e8 / 1.008e8;
         uint256 expected = discounted / 10 ** (18 - MockERC20(token).decimals());
@@ -864,6 +922,9 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, 1000e18);
 
         // Default peg band = 0, pegCeiling = unitPrice = 1.0
+        // Set per-token redeem fee to 30 BPS
+        gateway.updateRedeemFee(token, 30);
+
         // Price = 1.001 (above unitPrice, outside zero band)
         mockOracle.updatePrice(1.001e8);
 
@@ -878,7 +939,7 @@ contract GatewayTest is Test {
         // With pegBand=0, pegCeiling = 1.0, price 1.001 > 1.0 → discount path
         // afterFee = 1000e18 * (10000-30)/10000 = 997e18
         // discounted = 997e18 * 1e8 / 1.001e8
-        uint256 redeemFee = gateway.redeemFee();
+        uint256 redeemFee = gateway.redeemFee(token);
         uint256 afterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
         uint256 discounted = afterFee * 1e8 / 1.001e8;
         uint256 expected = discounted / 10 ** (18 - MockERC20(token).decimals());
@@ -912,6 +973,9 @@ contract GatewayTest is Test {
         mintPeggedToken(alice, 1000e18);
 
         // Default peg band = 0, pegCeiling = unitPrice = 1.0
+        // Set per-token redeem fee to 30 BPS
+        gateway.updateRedeemFee(token, 30);
+
         // Price = exactly 1.0 → should redeem 1:1 (minus fee)
         uint256 redeemAmount = 100e18;
         uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
@@ -921,8 +985,8 @@ contract GatewayTest is Test {
         gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
         vm.stopPrank();
 
-        // With pegBand=0, price == unitPrice (1.0 <= 1.0) → 1:1 path, only redeem fee applies
-        uint256 redeemFee = gateway.redeemFee();
+        // With pegBand=0, price == unitPrice (1.0 <= 1.0) → 1:1 path, only per-token redeem fee applies
+        uint256 redeemFee = gateway.redeemFee(token);
         uint256 expectedAfterFee = redeemAmount * (10_000 - redeemFee) / 10_000;
         uint256 expectedTokens = expectedAfterFee / 10 ** (18 - MockERC20(token).decimals());
         assertEq(IERC20(token).balanceOf(alice), expectedTokens);

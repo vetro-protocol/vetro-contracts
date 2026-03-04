@@ -37,8 +37,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         string name;
         IPeggedToken peggedToken;
         uint8 peggedTokenDecimals;
-        uint256 mintFee;
-        uint256 redeemFee;
         uint256 mintLimit;
         uint256 amoMintLimit;
         uint256 amoSupply;
@@ -47,6 +45,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         EnumerableSet.AddressSet instantRedeemWhitelist;
         mapping(address user => RedeemRequest) redeemRequests;
         mapping(address token => uint256 pegBand) pegBand;
+        mapping(address token => uint256 mintFeeBps) mintFee;
+        mapping(address token => uint256 redeemFeeBps) redeemFee;
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -79,10 +79,10 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     event MintedToAMO(address indexed receiver, uint256 amountMinted, uint256 newAmoSupply);
     event BurnedFromAMO(uint256 amountBurned, uint256 newAmoSupply);
     event UpdatedAmoMintLimit(uint256 previousLimit, uint256 newLimit);
-    event UpdatedMintFee(uint256 previousMintFee, uint256 newMintFee);
-    event UpdatedRedeemFee(uint256 previousRedeemFee, uint256 newRedeemFee);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
     event PegBandUpdated(address indexed token, uint256 previousPegBandBps, uint256 newPegBandBps);
+    event MintFeeUpdated(address indexed token, uint256 previousMintFee, uint256 newMintFee);
+    event RedeemFeeUpdated(address indexed token, uint256 previousRedeemFee, uint256 newRedeemFee);
     event WithdrawalDelayEnabled(bool enabled);
     event WithdrawalDelayUpdated(uint256 previousDelay, uint256 newDelay);
 
@@ -110,6 +110,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
     error AmountIsZero();
     error InvalidPegBand(uint256 pegBand, uint256 maxPegBandBps);
+    error TokenNotWhitelisted(address token);
     error WithdrawalDelayFeatureNotEnabled();
 
     /*/////////////////////////////////////////////////////////////
@@ -152,9 +153,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
             revert InvalidWithdrawalDelay();
         }
         $.withdrawalDelay = initialWithdrawalDelay_; // e.g., 7 days (604800 seconds)
-
-        // Initialize default redeem fee to 0.3%
-        $.redeemFee = 30;
     }
 
     /// @inheritdoc IGateway
@@ -203,11 +201,12 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateMintFee(uint256 newMintFee_) external onlyRole(MAINTAINER_ROLE) {
+    function updateMintFee(address token_, uint256 newMintFee_) external onlyRole(MAINTAINER_ROLE) {
+        if (!ITreasury(treasury()).isWhitelistedToken(token_)) revert TokenNotWhitelisted(token_);
         if (newMintFee_ > MAX_FEE_BPS) revert InvalidMintFee(newMintFee_);
         GatewayStorage storage $ = _getGatewayStorage();
-        emit UpdatedMintFee($.mintFee, newMintFee_);
-        $.mintFee = newMintFee_;
+        emit MintFeeUpdated(token_, $.mintFee[token_], newMintFee_);
+        $.mintFee[token_] = newMintFee_;
     }
 
     /// @inheritdoc IGateway
@@ -230,11 +229,12 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function updateRedeemFee(uint256 newRedeemFee_) external onlyRole(MAINTAINER_ROLE) {
+    function updateRedeemFee(address token_, uint256 newRedeemFee_) external onlyRole(MAINTAINER_ROLE) {
+        if (!ITreasury(treasury()).isWhitelistedToken(token_)) revert TokenNotWhitelisted(token_);
         if (newRedeemFee_ > MAX_FEE_BPS) revert InvalidRedeemFee(newRedeemFee_);
         GatewayStorage storage $ = _getGatewayStorage();
-        emit UpdatedRedeemFee($.redeemFee, newRedeemFee_);
-        $.redeemFee = newRedeemFee_;
+        emit RedeemFeeUpdated(token_, $.redeemFee[token_], newRedeemFee_);
+        $.redeemFee[token_] = newRedeemFee_;
     }
 
     /// @notice Set withdrawal delay feature enabled or disabled
@@ -380,13 +380,13 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function mintFee() external view returns (uint256) {
-        return _getGatewayStorage().mintFee;
+    function mintFee(address token_) external view returns (uint256) {
+        return _getGatewayStorage().mintFee[token_];
     }
 
     /// @inheritdoc IGateway
-    function redeemFee() external view returns (uint256) {
-        return _getGatewayStorage().redeemFee;
+    function redeemFee(address token_) external view returns (uint256) {
+        return _getGatewayStorage().redeemFee[token_];
     }
 
     /// @inheritdoc IGateway
@@ -537,7 +537,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     function _calculatePeggedTokenOutput(address tokenIn_, uint256 amountIn_) private view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
         (uint256 _latestPrice, uint256 _unitPrice) = ITreasury($.peggedToken.treasury()).getPrice(tokenIn_);
-        uint256 _mintFee = $.mintFee;
+        uint256 _mintFee = $.mintFee[tokenIn_];
         uint256 _amountInAfterFee = _mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - _mintFee), MAX_BPS) : amountIn_;
         uint256 _pegFloor = _unitPrice - (_unitPrice * $.pegBand[tokenIn_] / MAX_BPS);
         uint256 _rawPeggedTokenAmount =
@@ -558,7 +558,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     function _calculateTokenOutput(address tokenOut_, uint256 peggedTokenIn_) private view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
         (uint256 _latestPrice, uint256 _unitPrice) = ITreasury(treasury()).getPrice(tokenOut_);
-        uint256 _redeemFee = $.redeemFee;
+        uint256 _redeemFee = $.redeemFee[tokenOut_];
         uint256 _peggedTokenInAfterFee =
             _redeemFee > 0 ? peggedTokenIn_.mulDiv((MAX_BPS - _redeemFee), MAX_BPS) : peggedTokenIn_;
         uint256 _pegCeiling = _unitPrice + (_unitPrice * $.pegBand[tokenOut_] / MAX_BPS);

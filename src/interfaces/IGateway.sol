@@ -40,10 +40,7 @@ interface IGateway {
     /// @param user_ User address
     /// @return amountLocked Amount of peggedToken locked in Gateway contract
     /// @return claimableAt Timestamp when request can be claimed
-    function getRedeemRequest(address user_)
-        external
-        view
-        returns (uint256 amountLocked, uint256 claimableAt);
+    function getRedeemRequest(address user_) external view returns (uint256 amountLocked, uint256 claimableAt);
 
     /// @notice Checks if address is whitelisted for instant redeem/withdraw
     /// @param account_ Address to check
@@ -77,8 +74,10 @@ interface IGateway {
         external
         returns (uint256);
 
-    /// @notice Returns current mint fee in basis points
-    function mintFee() external view returns (uint256);
+    /// @notice Gets the mint fee for a specific token
+    /// @param token_ Token address
+    /// @return The mint fee in BPS
+    function mintFee(address token_) external view returns (uint256);
 
     /// @notice Mints PeggedToken to AMO operations (UMM role)
     /// @param amount_ Amount of PeggedToken to mint
@@ -132,8 +131,10 @@ interface IGateway {
         external
         returns (uint256);
 
-    /// @notice Returns current redeem fee in basis points
-    function redeemFee() external view returns (uint256);
+    /// @notice Gets the redeem fee for a specific token
+    /// @param token_ Token address
+    /// @return The redeem fee in BPS
+    function redeemFee(address token_) external view returns (uint256);
 
     /// @notice Removes address from instant redeem whitelist
     /// @param account_ Address to remove from whitelist
@@ -150,9 +151,10 @@ interface IGateway {
     /// @notice Returns treasury contract address
     function treasury() external view returns (address);
 
-    /// @notice Updates the mint fee percentage
+    /// @notice Updates the mint fee for a specific token
+    /// @param token_ Token address
     /// @param newMintFee_ New fee in basis points (1 = 0.01%)
-    function updateMintFee(uint256 newMintFee_) external;
+    function updateMintFee(address token_, uint256 newMintFee_) external;
 
     /// @notice Updates the maximum mint limit
     /// @param newMintLimit_ New maximum mint limit in PeggedToken
@@ -162,9 +164,10 @@ interface IGateway {
     /// @param newAmoMintLimit_ New limit value
     function updateAmoMintLimit(uint256 newAmoMintLimit_) external;
 
-    /// @notice Updates the redeem fee percentage
+    /// @notice Updates the redeem fee for a specific token
+    /// @param token_ Token address
     /// @param newRedeemFee_ New fee in basis points (1 = 0.01%)
-    function updateRedeemFee(uint256 newRedeemFee_) external;
+    function updateRedeemFee(address token_, uint256 newRedeemFee_) external;
 
     /// @notice Updates the withdrawal delay period
     /// @param newDelay_ New delay period in seconds
