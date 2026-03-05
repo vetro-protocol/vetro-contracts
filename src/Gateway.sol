@@ -71,18 +71,18 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /////////////////////////////////////////////////////////////*/
 
     event AddedToInstantRedeemWhitelist(address indexed account);
+    event BurnedFromAMO(uint256 amountBurned, uint256 newAmoSupply);
     event Deposit(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
+    event MintFeeUpdated(address indexed token, uint256 previousMintFee, uint256 newMintFee);
     event MintLimitUpdated(uint256 previousMintLimit, uint256 newMintLimit);
+    event MintedToAMO(address indexed receiver, uint256 amountMinted, uint256 newAmoSupply);
+    event PegBandUpdated(address indexed token, uint256 previousPegBandBps, uint256 newPegBandBps);
+    event RedeemFeeUpdated(address indexed token, uint256 previousRedeemFee, uint256 newRedeemFee);
     event RedeemRequestCancelled(address indexed user, uint256 amount);
     event RedeemRequested(address indexed user, uint256 amount, uint256 claimableAt);
     event RemovedFromInstantRedeemWhitelist(address indexed account);
-    event MintedToAMO(address indexed receiver, uint256 amountMinted, uint256 newAmoSupply);
-    event BurnedFromAMO(uint256 amountBurned, uint256 newAmoSupply);
     event UpdatedAmoMintLimit(uint256 previousLimit, uint256 newLimit);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
-    event PegBandUpdated(address indexed token, uint256 previousPegBandBps, uint256 newPegBandBps);
-    event MintFeeUpdated(address indexed token, uint256 previousMintFee, uint256 newMintFee);
-    event RedeemFeeUpdated(address indexed token, uint256 previousRedeemFee, uint256 newRedeemFee);
     event WithdrawalDelayEnabled(bool enabled);
     event WithdrawalDelayUpdated(uint256 previousDelay, uint256 newDelay);
 
@@ -90,26 +90,26 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
                             ERRORS
     /////////////////////////////////////////////////////////////*/
 
+    error AccessControlUnauthorizedAccount(address account, bytes32 role);
     error AccountAlreadyWhitelisted(address account);
     error AccountNotWhitelisted(address account);
     error AddressIsZero();
-    error AccessControlUnauthorizedAccount(address account, bytes32 role);
+    error AmoBurnExceedsSupply(uint256 requested, uint256 available);
+    error AmountIsZero();
     error CallerNotWhitelisted(address caller);
     error ExceededMaxMint(uint256 requested, uint256 available);
     error ExceededMaxWithdraw(uint256 requested, uint256 available);
     error FeeOnTransferToken(address token);
+    error InvalidAmoMintLimit(uint256 limit, uint256 constraint);
     error InvalidMintFee(uint256 fee);
+    error InvalidPegBand(uint256 pegBand, uint256 maxPegBandBps);
     error InvalidRedeemFee(uint256 fee);
     error InvalidWithdrawalDelay();
-    error InvalidAmoMintLimit(uint256 limit, uint256 constraint);
-    error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error MintableIsLessThanMinimum(uint256 peggedTokenOut, uint256 minPeggedTokenOut);
     error NoActiveWithdrawalRequest();
     error PeggedTokenToBurnIsHigherThanMax(uint256 peggedTokenIn, uint256 maxPeggedTokenIn);
     error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
-    error AmountIsZero();
-    error InvalidPegBand(uint256 pegBand, uint256 maxPegBandBps);
     error TokenNotWhitelisted(address token);
     error WithdrawalDelayFeatureNotEnabled();
 
@@ -155,6 +155,72 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         $.withdrawalDelay = initialWithdrawalDelay_; // e.g., 7 days (604800 seconds)
     }
 
+    /*/////////////////////////////////////////////////////////////
+                    EXTERNAL STATE-CHANGING FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
+
+    /// @notice Add address to instant redeem whitelist
+    /// @param account_ Address to whitelist
+    function addToInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
+        if (account_ == address(0)) revert AddressIsZero();
+        GatewayStorage storage $ = _getGatewayStorage();
+        if (!$.instantRedeemWhitelist.add(account_)) revert AccountAlreadyWhitelisted(account_);
+        emit AddedToInstantRedeemWhitelist(account_);
+    }
+
+    /// @inheritdoc IGateway
+    function burnFromAMO(uint256 amount_) external onlyRole(UMM_ROLE) {
+        if (amount_ == 0) revert AmountIsZero();
+
+        GatewayStorage storage $ = _getGatewayStorage();
+        $.peggedToken.burnFrom(msg.sender, amount_);
+
+        uint256 _currentAmoSupply = $.amoSupply;
+        if (amount_ > _currentAmoSupply) revert AmoBurnExceedsSupply(amount_, _currentAmoSupply);
+        uint256 _newSupply = _currentAmoSupply - amount_;
+        $.amoSupply = _newSupply;
+        emit BurnedFromAMO(amount_, _newSupply);
+    }
+
+    /// @notice Cancel redeem request and return locked peggedToken to user
+    function cancelRedeemRequest() external nonReentrant {
+        GatewayStorage storage $ = _getGatewayStorage();
+        RedeemRequest memory _request = $.redeemRequests[msg.sender];
+        if (_request.claimableAt == 0) revert NoActiveWithdrawalRequest();
+
+        uint256 _amountLocked = _request.amountLocked;
+        delete $.redeemRequests[msg.sender];
+        $.peggedToken.safeTransfer(msg.sender, _amountLocked);
+
+        emit RedeemRequestCancelled(msg.sender, _amountLocked);
+    }
+
+    /// @inheritdoc IGateway
+    function deposit(address tokenIn_, uint256 amountIn_, uint256 minPeggedTokenOut_, address receiver_)
+        external
+        nonReentrant
+        returns (uint256)
+    {
+        uint256 _peggedTokenAmount = previewDeposit(tokenIn_, amountIn_);
+        if (_peggedTokenAmount < minPeggedTokenOut_) {
+            revert MintableIsLessThanMinimum(_peggedTokenAmount, minPeggedTokenOut_);
+        }
+        _executeDeposit(tokenIn_, amountIn_, _peggedTokenAmount, receiver_);
+        return _peggedTokenAmount;
+    }
+
+    /// @inheritdoc IGateway
+    function mint(address tokenIn_, uint256 peggedTokenOut_, uint256 maxAmountIn_, address receiver_)
+        external
+        nonReentrant
+        returns (uint256)
+    {
+        uint256 _tokenAmount = previewMint(tokenIn_, peggedTokenOut_);
+        if (_tokenAmount > maxAmountIn_) revert TokenAmountIsHigherThanMax(_tokenAmount, maxAmountIn_);
+        _executeDeposit(tokenIn_, _tokenAmount, peggedTokenOut_, receiver_);
+        return _tokenAmount;
+    }
+
     /// @inheritdoc IGateway
     function mintToAMO(uint256 amount_, address receiver_) external onlyRole(UMM_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
@@ -174,17 +240,53 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function burnFromAMO(uint256 amount_) external onlyRole(UMM_ROLE) {
-        if (amount_ == 0) revert AmountIsZero();
+    function redeem(address tokenOut_, uint256 peggedTokenIn_, uint256 minAmountOut_, address receiver_)
+        external
+        nonReentrant
+        returns (uint256)
+    {
+        uint256 _tokenAmount = previewRedeem(tokenOut_, peggedTokenIn_);
+        if (_tokenAmount < minAmountOut_) revert RedeemableIsLessThanMinimum(_tokenAmount, minAmountOut_);
+
+        _handleRedeemOrWithdraw(tokenOut_, peggedTokenIn_, _tokenAmount, receiver_);
+        return _tokenAmount;
+    }
+
+    /// @notice Remove address from instant redeem whitelist
+    /// @param account_ Address to remove from whitelist
+    function removeFromInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        if (!$.instantRedeemWhitelist.remove(account_)) revert AccountNotWhitelisted(account_);
+        emit RemovedFromInstantRedeemWhitelist(account_);
+    }
+
+    /// @notice Request a redeem with delay period (locks peggedToken in contract)
+    /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
+    function requestRedeem(uint256 peggedTokenAmount_) external nonReentrant {
+        if (peggedTokenAmount_ == 0) revert AmountIsZero();
 
         GatewayStorage storage $ = _getGatewayStorage();
-        $.peggedToken.burnFrom(msg.sender, amount_);
+        if (!$.withdrawalDelayEnabled) revert WithdrawalDelayFeatureNotEnabled();
 
-        uint256 _currentAmoSupply = $.amoSupply;
-        if (amount_ > _currentAmoSupply) revert AmoBurnExceedsSupply(amount_, _currentAmoSupply);
-        uint256 _newSupply = _currentAmoSupply - amount_;
-        $.amoSupply = _newSupply;
-        emit BurnedFromAMO(amount_, _newSupply);
+        $.peggedToken.safeTransferFrom(msg.sender, address(this), peggedTokenAmount_);
+
+        RedeemRequest storage _request = $.redeemRequests[msg.sender];
+        uint256 _newAmount = _request.amountLocked + peggedTokenAmount_;
+        uint256 _newClaimableAt = block.timestamp + $.withdrawalDelay;
+
+        _request.amountLocked = _newAmount;
+        _request.claimableAt = _newClaimableAt;
+
+        emit RedeemRequested(msg.sender, _newAmount, _newClaimableAt);
+    }
+
+    /// @notice Set withdrawal delay feature enabled or disabled
+    /// @dev When disabled, all users can instant redeem/withdraw
+    /// @param enabled_ The intended state for withdrawal delay
+    function setWithdrawalDelayEnabled(bool enabled_) external onlyRole(MAINTAINER_ROLE) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        $.withdrawalDelayEnabled = enabled_;
+        emit WithdrawalDelayEnabled(enabled_);
     }
 
     /// @inheritdoc IGateway
@@ -237,15 +339,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         $.redeemFee[token_] = newRedeemFee_;
     }
 
-    /// @notice Set withdrawal delay feature enabled or disabled
-    /// @dev When disabled, all users can instant redeem/withdraw
-    /// @param enabled_ The intended state for withdrawal delay
-    function setWithdrawalDelayEnabled(bool enabled_) external onlyRole(MAINTAINER_ROLE) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        $.withdrawalDelayEnabled = enabled_;
-        emit WithdrawalDelayEnabled(enabled_);
-    }
-
     /// @notice Update the withdrawal delay period
     /// @param newDelay_ New delay period in seconds
     function updateWithdrawalDelay(uint256 newDelay_) external onlyRole(MAINTAINER_ROLE) {
@@ -253,62 +346,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         GatewayStorage storage $ = _getGatewayStorage();
         emit WithdrawalDelayUpdated($.withdrawalDelay, newDelay_);
         $.withdrawalDelay = newDelay_;
-    }
-
-    /// @notice Add address to instant redeem whitelist
-    /// @param account_ Address to whitelist
-    function addToInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
-        if (account_ == address(0)) revert AddressIsZero();
-        GatewayStorage storage $ = _getGatewayStorage();
-        if (!$.instantRedeemWhitelist.add(account_)) revert AccountAlreadyWhitelisted(account_);
-        emit AddedToInstantRedeemWhitelist(account_);
-    }
-
-    /// @notice Remove address from instant redeem whitelist
-    /// @param account_ Address to remove from whitelist
-    function removeFromInstantRedeemWhitelist(address account_) external onlyRole(MAINTAINER_ROLE) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        if (!$.instantRedeemWhitelist.remove(account_)) revert AccountNotWhitelisted(account_);
-        emit RemovedFromInstantRedeemWhitelist(account_);
-    }
-
-    /// @inheritdoc IGateway
-    function deposit(address tokenIn_, uint256 amountIn_, uint256 minPeggedTokenOut_, address receiver_)
-        external
-        nonReentrant
-        returns (uint256)
-    {
-        uint256 _peggedTokenAmount = previewDeposit(tokenIn_, amountIn_);
-        if (_peggedTokenAmount < minPeggedTokenOut_) {
-            revert MintableIsLessThanMinimum(_peggedTokenAmount, minPeggedTokenOut_);
-        }
-        _executeDeposit(tokenIn_, amountIn_, _peggedTokenAmount, receiver_);
-        return _peggedTokenAmount;
-    }
-
-    /// @inheritdoc IGateway
-    function mint(address tokenIn_, uint256 peggedTokenOut_, uint256 maxAmountIn_, address receiver_)
-        external
-        nonReentrant
-        returns (uint256)
-    {
-        uint256 _tokenAmount = previewMint(tokenIn_, peggedTokenOut_);
-        if (_tokenAmount > maxAmountIn_) revert TokenAmountIsHigherThanMax(_tokenAmount, maxAmountIn_);
-        _executeDeposit(tokenIn_, _tokenAmount, peggedTokenOut_, receiver_);
-        return _tokenAmount;
-    }
-
-    /// @inheritdoc IGateway
-    function redeem(address tokenOut_, uint256 peggedTokenIn_, uint256 minAmountOut_, address receiver_)
-        external
-        nonReentrant
-        returns (uint256)
-    {
-        uint256 _tokenAmount = previewRedeem(tokenOut_, peggedTokenIn_);
-        if (_tokenAmount < minAmountOut_) revert RedeemableIsLessThanMinimum(_tokenAmount, minAmountOut_);
-
-        _handleRedeemOrWithdraw(tokenOut_, peggedTokenIn_, _tokenAmount, receiver_);
-        return _tokenAmount;
     }
 
     /// @inheritdoc IGateway
@@ -326,38 +363,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _peggedTokenToBurn;
     }
 
-    /// @notice Request a redeem with delay period (locks peggedToken in contract)
-    /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
-    function requestRedeem(uint256 peggedTokenAmount_) external nonReentrant {
-        if (peggedTokenAmount_ == 0) revert AmountIsZero();
-
-        GatewayStorage storage $ = _getGatewayStorage();
-        if (!$.withdrawalDelayEnabled) revert WithdrawalDelayFeatureNotEnabled();
-
-        $.peggedToken.safeTransferFrom(msg.sender, address(this), peggedTokenAmount_);
-
-        RedeemRequest storage _request = $.redeemRequests[msg.sender];
-        uint256 _newAmount = _request.amountLocked + peggedTokenAmount_;
-        uint256 _newClaimableAt = block.timestamp + $.withdrawalDelay;
-
-        _request.amountLocked = _newAmount;
-        _request.claimableAt = _newClaimableAt;
-
-        emit RedeemRequested(msg.sender, _newAmount, _newClaimableAt);
-    }
-
-    /// @notice Cancel redeem request and return locked peggedToken to user
-    function cancelRedeemRequest() external nonReentrant {
-        GatewayStorage storage $ = _getGatewayStorage();
-        RedeemRequest memory _request = $.redeemRequests[msg.sender];
-        if (_request.claimableAt == 0) revert NoActiveWithdrawalRequest();
-
-        uint256 _amountLocked = _request.amountLocked;
-        delete $.redeemRequests[msg.sender];
-        $.peggedToken.safeTransfer(msg.sender, _amountLocked);
-
-        emit RedeemRequestCancelled(msg.sender, _amountLocked);
-    }
+    /*/////////////////////////////////////////////////////////////
+                    EXTERNAL VIEW/PURE FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
 
     /// @notice Returns the name of the Gateway
     function NAME() external view returns (string memory) {
@@ -379,9 +387,53 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().amoSupply;
     }
 
+    /// @notice Get all whitelisted addresses
+    /// @return Array of whitelisted addresses
+    function getInstantRedeemWhitelist() external view returns (address[] memory) {
+        return _getGatewayStorage().instantRedeemWhitelist.values();
+    }
+
+    /// @notice Get redeem request details for a user
+    /// @param user_ User address
+    /// @return _amountLocked Amount of peggedToken locked in Gateway contract
+    /// @return _claimableAt Timestamp when request can be claimed
+    function getRedeemRequest(address user_) external view returns (uint256 _amountLocked, uint256 _claimableAt) {
+        RedeemRequest memory _request = _getGatewayStorage().redeemRequests[user_];
+        return (_request.amountLocked, _request.claimableAt);
+    }
+
+    /// @notice Check if address is whitelisted for instant redeem/withdraw
+    /// @param account_ Address to check
+    /// @return True if whitelisted
+    function isInstantRedeemWhitelisted(address account_) external view returns (bool) {
+        return _getGatewayStorage().instantRedeemWhitelist.contains(account_);
+    }
+
+    /// @inheritdoc IGateway
+    function maxDeposit() external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    /// @inheritdoc IGateway
+    function maxRedeem(address owner_) external view returns (uint256) {
+        return _peggedToken().balanceOf(owner_);
+    }
+
     /// @inheritdoc IGateway
     function mintFee(address token_) external view returns (uint256) {
         return _getGatewayStorage().mintFee[token_];
+    }
+
+    /// @inheritdoc IGateway
+    function mintLimit() external view returns (uint256) {
+        return _getGatewayStorage().mintLimit;
+    }
+
+    /// @notice Get the peg tolerance for a specific token
+    /// @param token_ The token address
+    /// @return The peg tolerance in BPS
+    function pegBand(address token_) external view returns (uint256) {
+        return _getGatewayStorage().pegBand[token_];
     }
 
     /// @inheritdoc IGateway
@@ -390,8 +442,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function mintLimit() external view returns (uint256) {
-        return _getGatewayStorage().mintLimit;
+    function withdrawalDelay() external view returns (uint256) {
+        return _getGatewayStorage().withdrawalDelay;
     }
 
     /// @inheritdoc IGateway
@@ -399,10 +451,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().withdrawalDelayEnabled;
     }
 
-    /// @inheritdoc IGateway
-    function withdrawalDelay() external view returns (uint256) {
-        return _getGatewayStorage().withdrawalDelay;
-    }
+    /*/////////////////////////////////////////////////////////////
+                        PUBLIC VIEW FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc IGateway
@@ -416,11 +467,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         unchecked {
             return _amoMintLimit - _amoSupply;
         }
-    }
-
-    /// @inheritdoc IGateway
-    function maxDeposit() external pure returns (uint256) {
-        return type(uint256).max;
     }
 
     /**
@@ -438,11 +484,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         unchecked {
             return _mintLimit - _userSupply;
         }
-    }
-
-    /// @inheritdoc IGateway
-    function maxRedeem(address owner_) external view returns (uint256) {
-        return _peggedToken().balanceOf(owner_);
     }
 
     /// @inheritdoc IGateway
@@ -486,43 +527,130 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _peggedToken().treasury();
     }
 
-    /// @notice Get redeem request details for a user
-    /// @param user_ User address
-    /// @return _amountLocked Amount of peggedToken locked in Gateway contract
-    /// @return _claimableAt Timestamp when request can be claimed
-    function getRedeemRequest(address user_) external view returns (uint256 _amountLocked, uint256 _claimableAt) {
-        RedeemRequest memory _request = _getGatewayStorage().redeemRequests[user_];
-        return (_request.amountLocked, _request.claimableAt);
-    }
-
-    /// @notice Check if address is whitelisted for instant redeem/withdraw
-    /// @param account_ Address to check
-    /// @return True if whitelisted
-    function isInstantRedeemWhitelisted(address account_) external view returns (bool) {
-        return _getGatewayStorage().instantRedeemWhitelist.contains(account_);
-    }
-
-    /// @notice Get all whitelisted addresses
-    /// @return Array of whitelisted addresses
-    function getInstantRedeemWhitelist() external view returns (address[] memory) {
-        return _getGatewayStorage().instantRedeemWhitelist.values();
-    }
-
-    /// @notice Get the peg tolerance for a specific token
-    /// @param token_ The token address
-    /// @return The peg tolerance in BPS
-    function pegBand(address token_) external view returns (uint256) {
-        return _getGatewayStorage().pegBand[token_];
-    }
-
     /*/////////////////////////////////////////////////////////////
                         PRIVATE FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
-    function _requireRole(bytes32 role_) private view {
-        if (!ITreasury(treasury()).hasRole(role_, msg.sender)) {
-            revert AccessControlUnauthorizedAccount(msg.sender, role_);
+    /**
+     * @dev Handle token deposit and PeggedToken minting
+     * @custom:validation Checks mint limit and rejects fee-on-transfer tokens
+     */
+    function _executeDeposit(address tokenIn_, uint256 amountIn_, uint256 peggedTokenOut_, address receiver_) private {
+        uint256 _maxMintable = maxMint();
+        if (peggedTokenOut_ > _maxMintable) revert ExceededMaxMint(peggedTokenOut_, _maxMintable);
+
+        address _treasury = treasury();
+
+        uint256 _balanceBefore = IERC20(tokenIn_).balanceOf(_treasury);
+        IERC20(tokenIn_).safeTransferFrom(msg.sender, _treasury, amountIn_);
+        uint256 _balanceAfter = IERC20(tokenIn_).balanceOf(_treasury);
+        if ((_balanceAfter - _balanceBefore) != amountIn_) revert FeeOnTransferToken(tokenIn_);
+
+        ITreasury(_treasury).deposit(tokenIn_, amountIn_);
+        IPeggedToken _token = _peggedToken();
+        _token.mint(receiver_, peggedTokenOut_);
+
+        emit Deposit(tokenIn_, amountIn_, peggedTokenOut_, receiver_);
+    }
+
+    /**
+     * @dev Handle PeggedToken burning and token withdrawal
+     * @custom:validation Checks maximum withdrawable amount from treasury
+     */
+    function _executeWithdraw(address tokenOut_, uint256 amountOut_, uint256 peggedTokenIn_, address receiver_)
+        private
+    {
+        uint256 _maxWithdraw = maxWithdraw(tokenOut_);
+        if (amountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(amountOut_, _maxWithdraw);
+        IPeggedToken _token = _peggedToken();
+        _token.burnFrom(msg.sender, peggedTokenIn_);
+        ITreasury(treasury()).withdraw(tokenOut_, amountOut_, receiver_);
+
+        emit Withdraw(tokenOut_, amountOut_, peggedTokenIn_, receiver_);
+    }
+
+    /**
+     * @dev Handle redeem or withdraw operation with claimable request check
+     * @param tokenOut_ Token to receive
+     * @param peggedTokenAmount_ Amount of peggedToken to burn
+     * @param tokenAmount_ Amount of token to receive
+     * @param receiver_ Address to receive tokens
+     */
+    function _handleRedeemOrWithdraw(
+        address tokenOut_,
+        uint256 peggedTokenAmount_,
+        uint256 tokenAmount_,
+        address receiver_
+    ) private {
+        GatewayStorage storage $ = _getGatewayStorage();
+        RedeemRequest storage _request = $.redeemRequests[msg.sender];
+
+        // Check if user has a claimable request
+        if (_request.claimableAt > 0 && block.timestamp >= _request.claimableAt) {
+            // Use locked balance (handles both partial and full+excess cases)
+            _processLockedRedeem(tokenOut_, peggedTokenAmount_, tokenAmount_, receiver_);
+            return;
         }
+
+        // No claimable request - instant redeem/withdraw
+        _checkInstantRedeemAllowed();
+        _executeWithdraw(tokenOut_, tokenAmount_, peggedTokenAmount_, receiver_);
+    }
+
+    /**
+     * @dev Process redeem using locked balance (handles both partial and full+excess cases)
+     * @param tokenOut_ Token to redeem for
+     * @param peggedTokenToBurn_ Total amount of peggedToken to burn
+     * @param tokenAmountOut_ Token amount to receive
+     * @param receiver_ Address to receive tokens
+     */
+    function _processLockedRedeem(
+        address tokenOut_,
+        uint256 peggedTokenToBurn_,
+        uint256 tokenAmountOut_,
+        address receiver_
+    ) private {
+        // Validate treasury has sufficient withdrawable amount
+        uint256 _maxWithdraw = maxWithdraw(tokenOut_);
+        if (tokenAmountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(tokenAmountOut_, _maxWithdraw);
+
+        GatewayStorage storage $ = _getGatewayStorage();
+        RedeemRequest storage _request = $.redeemRequests[msg.sender];
+        uint256 _lockedAmount = _request.amountLocked;
+        IPeggedToken _token = $.peggedToken;
+
+        if (peggedTokenToBurn_ <= _lockedAmount) {
+            // Case 1: Use only locked balance
+            unchecked {
+                _lockedAmount = _lockedAmount - peggedTokenToBurn_;
+            }
+
+            if (_lockedAmount == 0) {
+                delete $.redeemRequests[msg.sender];
+            } else {
+                _request.amountLocked = _lockedAmount;
+            }
+
+            _token.burnFrom(address(this), peggedTokenToBurn_);
+        } else {
+            // Case 2: Use locked + wallet (excess requires instant redeem permission)
+            _checkInstantRedeemAllowed();
+
+            uint256 _excessAmount;
+            unchecked {
+                _excessAmount = peggedTokenToBurn_ - _lockedAmount;
+            }
+
+            delete $.redeemRequests[msg.sender];
+
+            // Burn from both sources
+            _token.burnFrom(address(this), _lockedAmount);
+            _token.burnFrom(msg.sender, _excessAmount);
+        }
+
+        // Withdraw tokens from treasury
+        ITreasury(treasury()).withdraw(tokenOut_, tokenAmountOut_, receiver_);
+        emit Withdraw(tokenOut_, tokenAmountOut_, peggedTokenToBurn_, receiver_);
     }
 
     /**
@@ -581,79 +709,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         }
     }
 
-    /**
-     * @dev Handle token deposit and PeggedToken minting
-     * @custom:validation Checks mint limit and rejects fee-on-transfer tokens
-     */
-    function _executeDeposit(address tokenIn_, uint256 amountIn_, uint256 peggedTokenOut_, address receiver_) private {
-        uint256 _maxMintable = maxMint();
-        if (peggedTokenOut_ > _maxMintable) revert ExceededMaxMint(peggedTokenOut_, _maxMintable);
-
-        address _treasury = treasury();
-
-        uint256 _balanceBefore = IERC20(tokenIn_).balanceOf(_treasury);
-        IERC20(tokenIn_).safeTransferFrom(msg.sender, _treasury, amountIn_);
-        uint256 _balanceAfter = IERC20(tokenIn_).balanceOf(_treasury);
-        if ((_balanceAfter - _balanceBefore) != amountIn_) revert FeeOnTransferToken(tokenIn_);
-
-        ITreasury(_treasury).deposit(tokenIn_, amountIn_);
-        IPeggedToken _token = _peggedToken();
-        _token.mint(receiver_, peggedTokenOut_);
-
-        emit Deposit(tokenIn_, amountIn_, peggedTokenOut_, receiver_);
-    }
-
-    /**
-     * @dev Handle PeggedToken burning and token withdrawal
-     * @custom:validation Checks maximum withdrawable amount from treasury
-     */
-    function _executeWithdraw(address tokenOut_, uint256 amountOut_, uint256 peggedTokenIn_, address receiver_)
-        private
-    {
-        uint256 _maxWithdraw = maxWithdraw(tokenOut_);
-        if (amountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(amountOut_, _maxWithdraw);
-        IPeggedToken _token = _peggedToken();
-        _token.burnFrom(msg.sender, peggedTokenIn_);
-        ITreasury(treasury()).withdraw(tokenOut_, amountOut_, receiver_);
-
-        emit Withdraw(tokenOut_, amountOut_, peggedTokenIn_, receiver_);
-    }
-
-    function _getGatewayStorage() private pure returns (GatewayStorage storage $) {
-        bytes32 _location = _GATEWAY_STORAGE_LOCATION;
-        assembly {
-            $.slot := _location
-        }
-    }
-
-    /**
-     * @dev Handle redeem or withdraw operation with claimable request check
-     * @param tokenOut_ Token to receive
-     * @param peggedTokenAmount_ Amount of peggedToken to burn
-     * @param tokenAmount_ Amount of token to receive
-     * @param receiver_ Address to receive tokens
-     */
-    function _handleRedeemOrWithdraw(
-        address tokenOut_,
-        uint256 peggedTokenAmount_,
-        uint256 tokenAmount_,
-        address receiver_
-    ) private {
-        GatewayStorage storage $ = _getGatewayStorage();
-        RedeemRequest storage _request = $.redeemRequests[msg.sender];
-
-        // Check if user has a claimable request
-        if (_request.claimableAt > 0 && block.timestamp >= _request.claimableAt) {
-            // Use locked balance (handles both partial and full+excess cases)
-            _processLockedRedeem(tokenOut_, peggedTokenAmount_, tokenAmount_, receiver_);
-            return;
-        }
-
-        // No claimable request - instant redeem/withdraw
-        _checkInstantRedeemAllowed();
-        _executeWithdraw(tokenOut_, tokenAmount_, peggedTokenAmount_, receiver_);
-    }
-
     /// @dev Helper function to get peggedToken from storage
     function _peggedToken() private view returns (IPeggedToken) {
         return _getGatewayStorage().peggedToken;
@@ -664,59 +719,16 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().peggedTokenDecimals;
     }
 
-    /**
-     * @dev Process redeem using locked balance (handles both partial and full+excess cases)
-     * @param tokenOut_ Token to redeem for
-     * @param peggedTokenToBurn_ Total amount of peggedToken to burn
-     * @param tokenAmountOut_ Token amount to receive
-     * @param receiver_ Address to receive tokens
-     */
-    function _processLockedRedeem(
-        address tokenOut_,
-        uint256 peggedTokenToBurn_,
-        uint256 tokenAmountOut_,
-        address receiver_
-    ) private {
-        // Validate treasury has sufficient withdrawable amount
-        uint256 _maxWithdraw = maxWithdraw(tokenOut_);
-        if (tokenAmountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(tokenAmountOut_, _maxWithdraw);
-
-        GatewayStorage storage $ = _getGatewayStorage();
-        RedeemRequest storage _request = $.redeemRequests[msg.sender];
-        uint256 _lockedAmount = _request.amountLocked;
-        IPeggedToken _token = $.peggedToken;
-
-        if (peggedTokenToBurn_ <= _lockedAmount) {
-            // Case 1: Use only locked balance
-            unchecked {
-                _lockedAmount = _lockedAmount - peggedTokenToBurn_;
-            }
-
-            if (_lockedAmount == 0) {
-                delete $.redeemRequests[msg.sender];
-            } else {
-                _request.amountLocked = _lockedAmount;
-            }
-
-            _token.burnFrom(address(this), peggedTokenToBurn_);
-        } else {
-            // Case 2: Use locked + wallet (excess requires instant redeem permission)
-            _checkInstantRedeemAllowed();
-
-            uint256 _excessAmount;
-            unchecked {
-                _excessAmount = peggedTokenToBurn_ - _lockedAmount;
-            }
-
-            delete $.redeemRequests[msg.sender];
-
-            // Burn from both sources
-            _token.burnFrom(address(this), _lockedAmount);
-            _token.burnFrom(msg.sender, _excessAmount);
+    function _requireRole(bytes32 role_) private view {
+        if (!ITreasury(treasury()).hasRole(role_, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, role_);
         }
+    }
 
-        // Withdraw tokens from treasury
-        ITreasury(treasury()).withdraw(tokenOut_, tokenAmountOut_, receiver_);
-        emit Withdraw(tokenOut_, tokenAmountOut_, peggedTokenToBurn_, receiver_);
+    function _getGatewayStorage() private pure returns (GatewayStorage storage $) {
+        bytes32 _location = _GATEWAY_STORAGE_LOCATION;
+        assembly {
+            $.slot := _location
+        }
     }
 }

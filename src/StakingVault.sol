@@ -114,7 +114,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     }
 
     /*//////////////////////////////////////////////////////////////
-                   USER-FACING WRITE FUNCTIONS
+                   EXTERNAL STATE-CHANGING FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /// @inheritdoc IStakingVault
@@ -166,56 +166,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         }
     }
 
-    /// @notice Deposit assets and receive vault shares
-    /// @dev Pulls pending yield before deposit to ensure accurate share calculation.
-    ///      Protected against reentrancy.
-    /// @param assets_ The amount of assets to deposit
-    /// @param receiver_ The address to receive the vault shares
-    /// @return shares The amount of vault shares minted
-    function deposit(uint256 assets_, address receiver_)
-        public
-        override(ERC4626Upgradeable, IERC4626)
-        nonReentrant
-        returns (uint256)
-    {
-        _pullYield();
-        return super.deposit(assets_, receiver_);
-    }
-
-    /// @notice Mint exact amount of vault shares by depositing assets
-    /// @dev Pulls pending yield before mint to ensure accurate asset calculation.
-    ///      Protected against reentrancy.
-    /// @param shares_ The exact amount of vault shares to mint
-    /// @param receiver_ The address to receive the vault shares
-    /// @return assets The amount of assets deposited
-    function mint(uint256 shares_, address receiver_)
-        public
-        override(ERC4626Upgradeable, IERC4626)
-        nonReentrant
-        returns (uint256)
-    {
-        _pullYield();
-        return super.mint(shares_, receiver_);
-    }
-
-    /// @notice Redeem vault shares for assets (instant withdrawal)
-    /// @dev Only available when cooldown is disabled or owner is whitelisted.
-    ///      Pulls pending yield before redeem. Protected against reentrancy.
-    /// @param shares_ The amount of vault shares to redeem
-    /// @param receiver_ The address to receive the assets
-    /// @param owner_ The owner of the shares (requires allowance if not msg.sender)
-    /// @return assets The amount of assets withdrawn
-    function redeem(uint256 shares_, address receiver_, address owner_)
-        public
-        override(ERC4626Upgradeable, IERC4626)
-        nonReentrant
-        returns (uint256)
-    {
-        if (!_canInstantWithdraw(owner_)) revert CooldownEnabled();
-        _pullYield();
-        return super.redeem(shares_, receiver_, owner_);
-    }
-
     /// @inheritdoc IStakingVault
     function requestRedeem(uint256 shares_, address owner_)
         external
@@ -234,26 +184,62 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         (requestId, shares) = _requestWithdraw(assets_, owner_);
     }
 
-    /// @notice Withdraw exact amount of assets (instant withdrawal)
-    /// @dev Only available when cooldown is disabled or owner is whitelisted.
-    ///      Pulls pending yield before withdraw. Protected against reentrancy.
-    /// @param assets_ The exact amount of assets to withdraw
-    /// @param receiver_ The address to receive the assets
-    /// @param owner_ The owner of the shares (requires allowance if not msg.sender)
-    /// @return shares The amount of vault shares burned
-    function withdraw(uint256 assets_, address receiver_, address owner_)
-        public
-        override(ERC4626Upgradeable, IERC4626)
-        nonReentrant
-        returns (uint256)
-    {
-        if (!_canInstantWithdraw(owner_)) revert CooldownEnabled();
-        _pullYield();
-        return super.withdraw(assets_, receiver_, owner_);
+    /// @notice Update the cooldown duration for withdrawals
+    /// @dev Affects new requests only, not existing ones.
+    ///      Must be between MIN_COOLDOWN_DURATION and MAX_COOLDOWN_DURATION.
+    /// @param duration_ The new cooldown duration
+    function updateCooldownDuration(uint256 duration_) external onlyOwner {
+        if (duration_ < MIN_COOLDOWN_DURATION || duration_ > MAX_COOLDOWN_DURATION) {
+            revert InvalidCooldownDuration(duration_, MIN_COOLDOWN_DURATION, MAX_COOLDOWN_DURATION);
+        }
+
+        StakingVaultStorage storage $ = _getStakingVaultStorage();
+        emit CooldownDurationUpdated($.cooldownDuration, duration_);
+        $.cooldownDuration = duration_;
+    }
+
+    /// @notice Enable or disable cooldown for non-whitelisted users
+    /// @dev When disabled, all users can use instant withdraw/redeem
+    /// @param enabled_ The new cooldown enabled status
+    function updateCooldownEnabled(bool enabled_) external onlyOwner {
+        StakingVaultStorage storage $ = _getStakingVaultStorage();
+        emit CooldownEnabledUpdated($.cooldownEnabled, enabled_);
+        $.cooldownEnabled = enabled_;
+    }
+
+    /// @notice Add or remove an address from the instant withdraw whitelist
+    /// @dev Whitelisted addresses can bypass cooldown even when enabled
+    /// @param account_ The account to update
+    /// @param status_ The new whitelist status
+    function updateInstantWithdrawWhitelist(address account_, bool status_) external onlyOwner {
+        if (account_ == address(0)) revert ZeroAddress();
+
+        StakingVaultStorage storage $ = _getStakingVaultStorage();
+        $.instantWithdrawWhitelist[account_] = status_;
+
+        emit InstantWithdrawWhitelistUpdated(account_, status_);
+    }
+
+    /// @notice Update the vault rewards contract address
+    /// @dev Can be set to address(0) to disable rewards tracking
+    /// @param vaultRewards_ The new vault rewards address
+    function updateVaultRewards(address vaultRewards_) external onlyOwner {
+        StakingVaultStorage storage $ = _getStakingVaultStorage();
+        emit VaultRewardsUpdated($.vaultRewards, vaultRewards_);
+        $.vaultRewards = vaultRewards_;
+    }
+
+    /// @notice Update the yield distributor address
+    /// @dev Can be set to address(0) to disable yield distribution
+    /// @param distributor_ The new yield distributor address
+    function updateYieldDistributor(address distributor_) external onlyOwner {
+        StakingVaultStorage storage $ = _getStakingVaultStorage();
+        emit YieldDistributorUpdated($.yieldDistributor, distributor_);
+        $.yieldDistributor = distributor_;
     }
 
     /*//////////////////////////////////////////////////////////////
-                    USER-FACING VIEW FUNCTIONS
+                    EXTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /// @inheritdoc IStakingVault
@@ -354,18 +340,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         return _getStakingVaultStorage().nextRequestId;
     }
 
-    /// @notice Get total assets available for yield (excludes assets in cooldown)
-    /// @dev Assets in cooldown are locked and do not earn yield, so they are excluded
-    ///      from the total used for share price calculation.
-    /// @return Total assets earning yield in the vault
-    function totalAssets() public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
-        StakingVaultStorage storage $ = _getStakingVaultStorage();
-        uint256 _balance = IERC20(asset()).balanceOf(address(this));
-        uint256 _inCooldown = $.totalAssetsInCooldown;
-        // Prevent underflow if somehow _inCooldown > _balance
-        return _balance > _inCooldown ? _balance - _inCooldown : 0;
-    }
-
     /// @inheritdoc IStakingVault
     function totalAssetsInCooldown() external view returns (uint256) {
         return _getStakingVaultStorage().totalAssetsInCooldown;
@@ -382,7 +356,95 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     }
 
     /*//////////////////////////////////////////////////////////////
-                    INTERNAL WRITE FUNCTIONS
+                    PUBLIC STATE-CHANGING FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Deposit assets and receive vault shares
+    /// @dev Pulls pending yield before deposit to ensure accurate share calculation.
+    ///      Protected against reentrancy.
+    /// @param assets_ The amount of assets to deposit
+    /// @param receiver_ The address to receive the vault shares
+    /// @return shares The amount of vault shares minted
+    function deposit(uint256 assets_, address receiver_)
+        public
+        override(ERC4626Upgradeable, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
+        _pullYield();
+        return super.deposit(assets_, receiver_);
+    }
+
+    /// @notice Mint exact amount of vault shares by depositing assets
+    /// @dev Pulls pending yield before mint to ensure accurate asset calculation.
+    ///      Protected against reentrancy.
+    /// @param shares_ The exact amount of vault shares to mint
+    /// @param receiver_ The address to receive the vault shares
+    /// @return assets The amount of assets deposited
+    function mint(uint256 shares_, address receiver_)
+        public
+        override(ERC4626Upgradeable, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
+        _pullYield();
+        return super.mint(shares_, receiver_);
+    }
+
+    /// @notice Redeem vault shares for assets (instant withdrawal)
+    /// @dev Only available when cooldown is disabled or owner is whitelisted.
+    ///      Pulls pending yield before redeem. Protected against reentrancy.
+    /// @param shares_ The amount of vault shares to redeem
+    /// @param receiver_ The address to receive the assets
+    /// @param owner_ The owner of the shares (requires allowance if not msg.sender)
+    /// @return assets The amount of assets withdrawn
+    function redeem(uint256 shares_, address receiver_, address owner_)
+        public
+        override(ERC4626Upgradeable, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
+        if (!_canInstantWithdraw(owner_)) revert CooldownEnabled();
+        _pullYield();
+        return super.redeem(shares_, receiver_, owner_);
+    }
+
+    /// @notice Withdraw exact amount of assets (instant withdrawal)
+    /// @dev Only available when cooldown is disabled or owner is whitelisted.
+    ///      Pulls pending yield before withdraw. Protected against reentrancy.
+    /// @param assets_ The exact amount of assets to withdraw
+    /// @param receiver_ The address to receive the assets
+    /// @param owner_ The owner of the shares (requires allowance if not msg.sender)
+    /// @return shares The amount of vault shares burned
+    function withdraw(uint256 assets_, address receiver_, address owner_)
+        public
+        override(ERC4626Upgradeable, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
+        if (!_canInstantWithdraw(owner_)) revert CooldownEnabled();
+        _pullYield();
+        return super.withdraw(assets_, receiver_, owner_);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    PUBLIC VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get total assets available for yield (excludes assets in cooldown)
+    /// @dev Assets in cooldown are locked and do not earn yield, so they are excluded
+    ///      from the total used for share price calculation.
+    /// @return Total assets earning yield in the vault
+    function totalAssets() public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
+        StakingVaultStorage storage $ = _getStakingVaultStorage();
+        uint256 _balance = IERC20(asset()).balanceOf(address(this));
+        uint256 _inCooldown = $.totalAssetsInCooldown;
+        // Prevent underflow if somehow _inCooldown > _balance
+        return _balance > _inCooldown ? _balance - _inCooldown : 0;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    INTERNAL STATE-CHANGING FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Process a withdrawal claim
@@ -515,7 +577,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     }
 
     /*//////////////////////////////////////////////////////////////
-                      PRIVATE VIEW FUNCTIONS
+                      PRIVATE PURE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Get the storage pointer for ERC-7201 namespaced storage
@@ -525,63 +587,5 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         assembly {
             $.slot := _location
         }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                       CONTROLLED FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Update the cooldown duration for withdrawals
-    /// @dev Affects new requests only, not existing ones.
-    ///      Must be between MIN_COOLDOWN_DURATION and MAX_COOLDOWN_DURATION.
-    /// @param duration_ The new cooldown duration
-    function updateCooldownDuration(uint256 duration_) external onlyOwner {
-        if (duration_ < MIN_COOLDOWN_DURATION || duration_ > MAX_COOLDOWN_DURATION) {
-            revert InvalidCooldownDuration(duration_, MIN_COOLDOWN_DURATION, MAX_COOLDOWN_DURATION);
-        }
-
-        StakingVaultStorage storage $ = _getStakingVaultStorage();
-        emit CooldownDurationUpdated($.cooldownDuration, duration_);
-        $.cooldownDuration = duration_;
-    }
-
-    /// @notice Enable or disable cooldown for non-whitelisted users
-    /// @dev When disabled, all users can use instant withdraw/redeem
-    /// @param enabled_ The new cooldown enabled status
-    function updateCooldownEnabled(bool enabled_) external onlyOwner {
-        StakingVaultStorage storage $ = _getStakingVaultStorage();
-        emit CooldownEnabledUpdated($.cooldownEnabled, enabled_);
-        $.cooldownEnabled = enabled_;
-    }
-
-    /// @notice Add or remove an address from the instant withdraw whitelist
-    /// @dev Whitelisted addresses can bypass cooldown even when enabled
-    /// @param account_ The account to update
-    /// @param status_ The new whitelist status
-    function updateInstantWithdrawWhitelist(address account_, bool status_) external onlyOwner {
-        if (account_ == address(0)) revert ZeroAddress();
-
-        StakingVaultStorage storage $ = _getStakingVaultStorage();
-        $.instantWithdrawWhitelist[account_] = status_;
-
-        emit InstantWithdrawWhitelistUpdated(account_, status_);
-    }
-
-    /// @notice Update the vault rewards contract address
-    /// @dev Can be set to address(0) to disable rewards tracking
-    /// @param vaultRewards_ The new vault rewards address
-    function updateVaultRewards(address vaultRewards_) external onlyOwner {
-        StakingVaultStorage storage $ = _getStakingVaultStorage();
-        emit VaultRewardsUpdated($.vaultRewards, vaultRewards_);
-        $.vaultRewards = vaultRewards_;
-    }
-
-    /// @notice Update the yield distributor address
-    /// @dev Can be set to address(0) to disable yield distribution
-    /// @param distributor_ The new yield distributor address
-    function updateYieldDistributor(address distributor_) external onlyOwner {
-        StakingVaultStorage storage $ = _getStakingVaultStorage();
-        emit YieldDistributorUpdated($.yieldDistributor, distributor_);
-        $.yieldDistributor = distributor_;
     }
 }

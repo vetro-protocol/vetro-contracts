@@ -23,6 +23,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
+    /*/////////////////////////////////////////////////////////////
+                            ERRORS
+    /////////////////////////////////////////////////////////////*/
+
     error AddressIsZero();
     error AddToListFailed();
     error AssetMismatch();
@@ -31,18 +35,22 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error DepositIsPaused(address);
     error InvalidOraclePrice();
     error InvalidPriceTolerance();
-    error MaxWhitelistedTokensReached();
     error InvalidStalePeriod();
     error InvalidTokenDecimals(uint8);
+    error MaxWhitelistedTokensReached();
+    error PeggedTokenMismatch();
     error PriceExceedTolerance(uint256 latestPrice, uint256 priceUpperBound, uint256 priceLowerBound);
     error RemoveFromListFailed();
     error ReservedToken();
     error StalePrice(address oracle);
-    error UnsupportedToken(address);
-    error PeggedTokenMismatch();
     error SwapperNotSet();
     error TreasuryNotMigrated();
+    error UnsupportedToken(address);
     error WithdrawIsPaused(address);
+
+    /*/////////////////////////////////////////////////////////////
+                        STATE VARIABLES
+    /////////////////////////////////////////////////////////////*/
 
     string public NAME;
     string public constant VERSION = "1.0.0";
@@ -72,17 +80,34 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
 
     EnumerableSet.AddressSet private _whitelistedTokens;
 
+    /*/////////////////////////////////////////////////////////////
+                            EVENTS
+    /////////////////////////////////////////////////////////////*/
+
     event AddedToWhitelist(address indexed token, address indexed vault, address indexed oracle);
     event ExcessWithdrawn(address indexed token, uint256 amount);
-    event RemovedFromWhitelist(address indexed token);
     event Migrated(address indexed newTreasury);
-    event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn);
-    event Swept(address indexed token, uint256 amount, address indexed receiver);
+    event RemovedFromWhitelist(address indexed token);
     event SetDepositActive(address indexed token, bool newValue);
     event SetWithdrawActive(address indexed token, bool newValue);
+    event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn);
+    event Swept(address indexed token, uint256 amount, address indexed receiver);
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
+
+    /*/////////////////////////////////////////////////////////////
+                            MODIFIERS
+    /////////////////////////////////////////////////////////////*/
+
+    modifier onlyGateway() {
+        if (msg.sender != PEGGED_TOKEN.gateway()) revert CallerIsNotAuthorized(msg.sender);
+        _;
+    }
+
+    /*/////////////////////////////////////////////////////////////
+                            FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
 
     constructor(address peggedToken_, address admin_)
         AccessControlDefaultAdminRules(
@@ -98,14 +123,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         _grantRole(MAINTAINER_ROLE, msg.sender);
     }
 
-    modifier onlyGateway() {
-        if (msg.sender != PEGGED_TOKEN.gateway()) revert CallerIsNotAuthorized(msg.sender);
-        _;
-    }
-
     /*/////////////////////////////////////////////////////////////
-                            DEFAULT_ADMIN_ROLE
+                    EXTERNAL STATE-CHANGING FUNCTIONS
     /////////////////////////////////////////////////////////////*/
+
     /**
      * @notice DEFAULT_ADMIN_ROLE: Add token as whitelisted token for PeggedToken
      * @param token_ token address to add in whitelist.
@@ -139,104 +160,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     }
 
     /**
-     * @notice DEFAULT_ADMIN_ROLE: Remove token from whitelist
-     * @dev Removing token even if treasury has some balance of that token is intended behavior.
-     * @param token_ token address to remove from whitelist.
-     */
-    function removeFromWhitelist(address token_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
-        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
-        if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
-        IERC20(token_).forceApprove(tokenConfig[token_].vault, 0);
-        delete tokenConfig[token_];
-        emit RemovedFromWhitelist(token_);
-    }
-
-    /**
-     * @notice DEFAULT_ADMIN_ROLE: Migrate assets to new treasury
-     * @param newTreasury_ Address of new treasury of PeggedToken
-     */
-    function migrate(address newTreasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newTreasury_ == address(0)) revert AddressIsZero();
-        if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
-        // Treasury in PEGGED_TOKEN should be updated before migrating assets. Preferably it should be done atomically
-        if (PEGGED_TOKEN.treasury() != newTreasury_) revert TreasuryNotMigrated();
-        uint256 _len = _whitelistedTokens.length();
-        for (uint256 i; i < _len; ++i) {
-            address _token = _whitelistedTokens.at(i);
-            IERC20(_token).safeTransfer(newTreasury_, IERC20(_token).balanceOf(address(this)));
-
-            address _vault = tokenConfig[_token].vault;
-            IERC20(_vault).safeTransfer(newTreasury_, IERC20(_vault).balanceOf(address(this)));
-        }
-        emit Migrated(newTreasury_);
-    }
-
-    /**
-     * @notice DEFAULT_ADMIN_ROLE: Sweep any ERC20 token to owner address
-     * @dev DEFAULT_ADMIN_ROLE can call this and vault shares are not allowed to sweep
-     * @param fromToken_ Token address to sweep
-     * @param receiver_ recipient of tokens being swept
-     */
-    function sweep(address fromToken_, address receiver_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (receiver_ == address(0)) revert AddressIsZero();
-        if (_whitelistedTokens.contains(fromToken_)) revert ReservedToken();
-        uint256 _len = _whitelistedTokens.length();
-        for (uint256 i; i < _len; ++i) {
-            if (tokenConfig[_whitelistedTokens.at(i)].vault == fromToken_) revert ReservedToken();
-        }
-
-        uint256 _amount = IERC20(fromToken_).balanceOf(address(this));
-        IERC20(fromToken_).safeTransfer(receiver_, _amount);
-        emit Swept(fromToken_, _amount, receiver_);
-    }
-
-    /*/////////////////////////////////////////////////////////////
-                            MAINTAINER_ROLE
-    /////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice MAINTAINER_ROLE: Update oracle and stale period
-     * @param token_ Token to update oracle configuration for
-     * @param oracle_ New Chainlink oracle address
-     * @param newStalePeriod_ New stale period threshold in seconds
-     */
-    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_)
-        external
-        onlyRole(MAINTAINER_ROLE)
-    {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (oracle_ == address(0)) revert AddressIsZero();
-        if (newStalePeriod_ == 0 || newStalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
-
-        tokenConfig[token_].oracle = oracle_;
-        tokenConfig[token_].stalePeriod = newStalePeriod_;
-
-        emit UpdatedOracle(token_, oracle_, newStalePeriod_);
-    }
-
-    /// @notice MAINTAINER_ROLE: Update oracle price tolerance
-    function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
-        if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
-        emit UpdatedPriceTolerance(priceTolerance, newPriceTolerance_);
-        priceTolerance = newPriceTolerance_;
-    }
-
-    /**
-     * @notice MAINTAINER_ROLE: Update swapper address
-     * @param swapper_ new swapper address
-     */
-    function updateSwapper(address swapper_) external onlyRole(MAINTAINER_ROLE) {
-        if (swapper_ == address(0)) revert AddressIsZero();
-        emit UpdatedSwapper(address(swapper), swapper_);
-        swapper = swapper_;
-    }
-
-    /*/////////////////////////////////////////////////////////////
-                            onlyGateway
-    /////////////////////////////////////////////////////////////*/
-
-    /**
      * @notice onlyGateway: Deposit token to yield vault
      * @dev `depositActive` must be true to call deposit.
      * @param token_ token to deposit, must be one of the whitelisted tokens.
@@ -248,105 +171,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
 
         IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this));
     }
-
-    /**
-     * @notice onlyGateway: Withdraw given amount of token.
-     * @dev `withdrawActive` must be true to call withdraw.
-     * @param token_ token to withdraw, must be one of the whitelisted tokens.
-     * @param amount_ token amount to withdraw
-     * @param tokenReceiver_ address of token receiver
-     */
-    function withdraw(address token_, uint256 amount_, address tokenReceiver_) external nonReentrant onlyGateway {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-
-        TokenConfig memory config = tokenConfig[token_];
-        if (!config.withdrawActive) revert WithdrawIsPaused(token_);
-
-        uint256 _tokenBalance = IERC20(token_).balanceOf(address(this));
-        if (_tokenBalance >= amount_) {
-            // Transfer directly if we have enough balance
-            IERC20(token_).safeTransfer(tokenReceiver_, amount_);
-        } else {
-            // Handle partial balance + vault withdrawal
-            if (_tokenBalance > 0) {
-                IERC20(token_).safeTransfer(tokenReceiver_, _tokenBalance);
-                amount_ -= _tokenBalance;
-            }
-            IERC4626(config.vault).withdraw(amount_, tokenReceiver_, address(this));
-        }
-    }
-
-    /*/////////////////////////////////////////////////////////////
-                            KEEPER_ROLE
-    /////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice KEEPER_ROLE: Deposit token into the vault
-     * @dev Keeper is allowed to deposit even if depositActive is false.
-     * @param token_ token to deposit into the vault
-     * @param amount_ token amount to deposit
-     */
-    function push(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (amount_ == type(uint256).max) {
-            amount_ = IERC20(token_).balanceOf(address(this));
-        }
-        if (amount_ > 0) {
-            IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this));
-        }
-    }
-
-    /**
-     * @notice KEEPER_ROLE: Withdraw token from vault.
-     * @dev Keeper is allowed to withdraw even if withdrawActive is false.
-     * @dev Keeper can withdraw tokens at treasury address only.
-     * @param token_ token to withdraw from vault
-     * @param amount_ token amount to withdraw
-     */
-    function pull(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (amount_ > 0) {
-            IERC4626(tokenConfig[token_].vault).withdraw(amount_, address(this), address(this));
-        }
-    }
-
-    /// @notice KEEPER_ROLE: Set deposit activity for a whitelisted token
-    /// @param token_ Token to set deposit activity for
-    /// @param active_ The intended deposit active state
-    function setDepositActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        tokenConfig[token_].depositActive = active_;
-        emit SetDepositActive(token_, active_);
-    }
-
-    /// @notice KEEPER_ROLE: Set withdraw activity for a whitelisted token
-    /// @param token_ Token to set withdraw activity for
-    /// @param active_ The intended withdraw active state
-    function setWithdrawActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        tokenConfig[token_].withdrawActive = active_;
-        emit SetWithdrawActive(token_, active_);
-    }
-
-    function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)
-        external
-        onlyRole(KEEPER_ROLE)
-        returns (uint256)
-    {
-        if (swapper == address(0)) revert SwapperNotSet();
-        if (_whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
-        uint256 _len = _whitelistedTokens.length();
-        for (uint256 i; i < _len; ++i) {
-            if (tokenConfig[_whitelistedTokens.at(i)].vault == tokenIn_) revert ReservedToken();
-        }
-        IERC20(tokenIn_).forceApprove(swapper, amountIn_);
-        emit Swapped(tokenIn_, tokenOut_, amountIn_);
-        return ISwapper(swapper).swapExactInput(tokenIn_, tokenOut_, amountIn_, minAmountOut_, address(this));
-    }
-
-    /*/////////////////////////////////////////////////////////////
-                            UMM_ROLE
-    /////////////////////////////////////////////////////////////*/
 
     /**
      * @notice UMM_ROLE: Withdraw excess tokens from reserve.
@@ -387,8 +211,189 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         return _paid;
     }
 
+    /**
+     * @notice DEFAULT_ADMIN_ROLE: Migrate assets to new treasury
+     * @param newTreasury_ Address of new treasury of PeggedToken
+     */
+    function migrate(address newTreasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newTreasury_ == address(0)) revert AddressIsZero();
+        if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
+        // Treasury in PEGGED_TOKEN should be updated before migrating assets. Preferably it should be done atomically
+        if (PEGGED_TOKEN.treasury() != newTreasury_) revert TreasuryNotMigrated();
+        uint256 _len = _whitelistedTokens.length();
+        for (uint256 i; i < _len; ++i) {
+            address _token = _whitelistedTokens.at(i);
+            IERC20(_token).safeTransfer(newTreasury_, IERC20(_token).balanceOf(address(this)));
+
+            address _vault = tokenConfig[_token].vault;
+            IERC20(_vault).safeTransfer(newTreasury_, IERC20(_vault).balanceOf(address(this)));
+        }
+        emit Migrated(newTreasury_);
+    }
+
+    /**
+     * @notice KEEPER_ROLE: Withdraw token from vault.
+     * @dev Keeper is allowed to withdraw even if withdrawActive is false.
+     * @dev Keeper can withdraw tokens at treasury address only.
+     * @param token_ token to withdraw from vault
+     * @param amount_ token amount to withdraw
+     */
+    function pull(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
+        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        if (amount_ > 0) {
+            IERC4626(tokenConfig[token_].vault).withdraw(amount_, address(this), address(this));
+        }
+    }
+
+    /**
+     * @notice KEEPER_ROLE: Deposit token into the vault
+     * @dev Keeper is allowed to deposit even if depositActive is false.
+     * @param token_ token to deposit into the vault
+     * @param amount_ token amount to deposit
+     */
+    function push(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
+        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        if (amount_ == type(uint256).max) {
+            amount_ = IERC20(token_).balanceOf(address(this));
+        }
+        if (amount_ > 0) {
+            IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this));
+        }
+    }
+
+    /**
+     * @notice DEFAULT_ADMIN_ROLE: Remove token from whitelist
+     * @dev Removing token even if treasury has some balance of that token is intended behavior.
+     * @param token_ token address to remove from whitelist.
+     */
+    function removeFromWhitelist(address token_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
+        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
+        if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
+        IERC20(token_).forceApprove(tokenConfig[token_].vault, 0);
+        delete tokenConfig[token_];
+        emit RemovedFromWhitelist(token_);
+    }
+
+    /// @notice KEEPER_ROLE: Set deposit activity for a whitelisted token
+    /// @param token_ Token to set deposit activity for
+    /// @param active_ The intended deposit active state
+    function setDepositActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
+        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        tokenConfig[token_].depositActive = active_;
+        emit SetDepositActive(token_, active_);
+    }
+
+    /// @notice KEEPER_ROLE: Set withdraw activity for a whitelisted token
+    /// @param token_ Token to set withdraw activity for
+    /// @param active_ The intended withdraw active state
+    function setWithdrawActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
+        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        tokenConfig[token_].withdrawActive = active_;
+        emit SetWithdrawActive(token_, active_);
+    }
+
+    function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)
+        external
+        onlyRole(KEEPER_ROLE)
+        returns (uint256)
+    {
+        if (swapper == address(0)) revert SwapperNotSet();
+        if (_whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
+        uint256 _len = _whitelistedTokens.length();
+        for (uint256 i; i < _len; ++i) {
+            if (tokenConfig[_whitelistedTokens.at(i)].vault == tokenIn_) revert ReservedToken();
+        }
+        IERC20(tokenIn_).forceApprove(swapper, amountIn_);
+        emit Swapped(tokenIn_, tokenOut_, amountIn_);
+        return ISwapper(swapper).swapExactInput(tokenIn_, tokenOut_, amountIn_, minAmountOut_, address(this));
+    }
+
+    /**
+     * @notice DEFAULT_ADMIN_ROLE: Sweep any ERC20 token to owner address
+     * @dev DEFAULT_ADMIN_ROLE can call this and vault shares are not allowed to sweep
+     * @param fromToken_ Token address to sweep
+     * @param receiver_ recipient of tokens being swept
+     */
+    function sweep(address fromToken_, address receiver_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (receiver_ == address(0)) revert AddressIsZero();
+        if (_whitelistedTokens.contains(fromToken_)) revert ReservedToken();
+        uint256 _len = _whitelistedTokens.length();
+        for (uint256 i; i < _len; ++i) {
+            if (tokenConfig[_whitelistedTokens.at(i)].vault == fromToken_) revert ReservedToken();
+        }
+
+        uint256 _amount = IERC20(fromToken_).balanceOf(address(this));
+        IERC20(fromToken_).safeTransfer(receiver_, _amount);
+        emit Swept(fromToken_, _amount, receiver_);
+    }
+
+    /**
+     * @notice MAINTAINER_ROLE: Update oracle and stale period
+     * @param token_ Token to update oracle configuration for
+     * @param oracle_ New Chainlink oracle address
+     * @param newStalePeriod_ New stale period threshold in seconds
+     */
+    function updateOracle(address token_, address oracle_, uint256 newStalePeriod_)
+        external
+        onlyRole(MAINTAINER_ROLE)
+    {
+        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        if (oracle_ == address(0)) revert AddressIsZero();
+        if (newStalePeriod_ == 0 || newStalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
+
+        tokenConfig[token_].oracle = oracle_;
+        tokenConfig[token_].stalePeriod = newStalePeriod_;
+
+        emit UpdatedOracle(token_, oracle_, newStalePeriod_);
+    }
+
+    /// @notice MAINTAINER_ROLE: Update oracle price tolerance
+    function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
+        if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
+        emit UpdatedPriceTolerance(priceTolerance, newPriceTolerance_);
+        priceTolerance = newPriceTolerance_;
+    }
+
+    /**
+     * @notice MAINTAINER_ROLE: Update swapper address
+     * @param swapper_ new swapper address
+     */
+    function updateSwapper(address swapper_) external onlyRole(MAINTAINER_ROLE) {
+        if (swapper_ == address(0)) revert AddressIsZero();
+        emit UpdatedSwapper(address(swapper), swapper_);
+        swapper = swapper_;
+    }
+
+    /**
+     * @notice onlyGateway: Withdraw given amount of token.
+     * @dev `withdrawActive` must be true to call withdraw.
+     * @param token_ token to withdraw, must be one of the whitelisted tokens.
+     * @param amount_ token amount to withdraw
+     * @param tokenReceiver_ address of token receiver
+     */
+    function withdraw(address token_, uint256 amount_, address tokenReceiver_) external nonReentrant onlyGateway {
+        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+
+        TokenConfig memory config = tokenConfig[token_];
+        if (!config.withdrawActive) revert WithdrawIsPaused(token_);
+
+        uint256 _tokenBalance = IERC20(token_).balanceOf(address(this));
+        if (_tokenBalance >= amount_) {
+            // Transfer directly if we have enough balance
+            IERC20(token_).safeTransfer(tokenReceiver_, amount_);
+        } else {
+            // Handle partial balance + vault withdrawal
+            if (_tokenBalance > 0) {
+                IERC20(token_).safeTransfer(tokenReceiver_, _tokenBalance);
+                amount_ -= _tokenBalance;
+            }
+            IERC4626(config.vault).withdraw(amount_, tokenReceiver_, address(this));
+        }
+    }
+
     /*/////////////////////////////////////////////////////////////
-                            getter
+                    EXTERNAL VIEW FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
     function gateway() external view returns (address) {
@@ -405,6 +410,29 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     function isWhitelistedToken(address token_) external view returns (bool) {
         return _whitelistedTokens.contains(token_);
     }
+
+    /// @notice Return list of whitelisted tokens
+    function whitelistedTokens() external view returns (address[] memory) {
+        return _whitelistedTokens.values();
+    }
+
+    /**
+     * @notice Current withdrawable for given token.
+     * If token is not supported by treasury it will return 0.
+     * @param token_ token address
+     */
+    function withdrawable(address token_) external view returns (uint256) {
+        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
+        // Token is not supported
+        if (address(_vault) == address(0)) return 0;
+
+        uint256 _shares = _vault.balanceOf(address(this));
+        return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
+    }
+
+    /*/////////////////////////////////////////////////////////////
+                    PUBLIC VIEW FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
 
     /// @notice Returns total reserve value denominated in PeggedToken units
     function reserve() public view returns (uint256 _reserve) {
@@ -432,24 +460,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         }
     }
 
-    /// @notice Return list of whitelisted tokens
-    function whitelistedTokens() external view returns (address[] memory) {
-        return _whitelistedTokens.values();
-    }
-
-    /**
-     * @notice Current withdrawable for given token.
-     * If token is not supported by treasury it will return 0.
-     * @param token_ token address
-     */
-    function withdrawable(address token_) external view returns (uint256) {
-        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
-        // Token is not supported
-        if (address(_vault) == address(0)) return 0;
-
-        uint256 _shares = _vault.balanceOf(address(this));
-        return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
-    }
+    /*/////////////////////////////////////////////////////////////
+                        PRIVATE FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
 
     function _excessTokens(address token_) private view returns (uint256 excess) {
         // Excess = reserve - (supply - amoSupply)
