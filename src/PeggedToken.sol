@@ -15,21 +15,21 @@ contract PeggedToken is IPeggedToken, ERC20Permit, Ownable2Step {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     error AddressIsZero();
-    error CallerIsNotGateway(address);
-    error TreasuryCanNotBeZero();
     error AlreadyBlacklisted(address);
     error Blacklisted(address);
+    error CallerIsNotGateway(address);
     error NotBlacklisted(address);
+    error TreasuryCanNotBeZero();
 
     address public gateway;
     address public treasury;
 
     EnumerableSet.AddressSet private _blacklistedAddresses;
 
-    event UpdatedGateway(address indexed previousGateway, address indexed newGateway);
-    event UpdatedTreasury(address indexed previousTreasury, address indexed newTreasury);
     event AddedToBlacklist(address indexed account);
     event RemovedFromBlacklist(address indexed account);
+    event UpdatedGateway(address indexed previousGateway, address indexed newGateway);
+    event UpdatedTreasury(address indexed previousTreasury, address indexed newTreasury);
 
     constructor(string memory name_, string memory symbol_, address owner_)
         ERC20Permit(name_)
@@ -37,16 +37,18 @@ contract PeggedToken is IPeggedToken, ERC20Permit, Ownable2Step {
         Ownable(owner_)
     {}
 
+    /*/////////////////////////////////////////////////////////////
+                    EXTERNAL STATE-CHANGING FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
+
     /**
-     * @notice Burn PeggedToken e.g. VUSD from account.
-     * If Gateway is the caller then approval is not required.
-     * Only Gateway can burn PeggedToken.
-     * @param account_ PeggedToken will be burnt from this address
-     * @param amount_ PeggedToken amount to burn
+     * @notice Add address to blacklist
+     * @param account_ address to blacklist
      */
-    function burnFrom(address account_, uint256 amount_) public virtual {
-        if (msg.sender != gateway) revert CallerIsNotGateway(msg.sender);
-        _burn(account_, amount_);
+    function addToBlacklist(address account_) external onlyOwner {
+        if (account_ == address(0)) revert AddressIsZero();
+        if (!_blacklistedAddresses.add(account_)) revert AlreadyBlacklisted(account_);
+        emit AddedToBlacklist(account_);
     }
 
     /**
@@ -57,16 +59,6 @@ contract PeggedToken is IPeggedToken, ERC20Permit, Ownable2Step {
     function mint(address account_, uint256 amount_) external {
         if (msg.sender != gateway) revert CallerIsNotGateway(msg.sender);
         _mint(account_, amount_);
-    }
-
-    /**
-     * @notice Add address to blacklist
-     * @param account_ address to blacklist
-     */
-    function addToBlacklist(address account_) external onlyOwner {
-        if (account_ == address(0)) revert AddressIsZero();
-        if (!_blacklistedAddresses.add(account_)) revert AlreadyBlacklisted(account_);
-        emit AddedToBlacklist(account_);
     }
 
     /**
@@ -100,6 +92,10 @@ contract PeggedToken is IPeggedToken, ERC20Permit, Ownable2Step {
         treasury = newTreasury_;
     }
 
+    /*/////////////////////////////////////////////////////////////
+                    EXTERNAL VIEW FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
+
     /**
      * @notice Get all blacklisted addresses
      * @return array of blacklisted addresses
@@ -116,6 +112,26 @@ contract PeggedToken is IPeggedToken, ERC20Permit, Ownable2Step {
     function isBlacklisted(address account_) external view returns (bool) {
         return _blacklistedAddresses.contains(account_);
     }
+
+    /*/////////////////////////////////////////////////////////////
+                    PUBLIC STATE-CHANGING FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Burn PeggedToken e.g. VUSD from account.
+     * If Gateway is the caller then approval is not required.
+     * Only Gateway can burn PeggedToken.
+     * @param account_ PeggedToken will be burnt from this address
+     * @param amount_ PeggedToken amount to burn
+     */
+    function burnFrom(address account_, uint256 amount_) public virtual {
+        if (msg.sender != gateway) revert CallerIsNotGateway(msg.sender);
+        _burn(account_, amount_);
+    }
+
+    /*/////////////////////////////////////////////////////////////
+                    INTERNAL FUNCTIONS
+    /////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Override _update to prevent transfers to/from blacklisted addresses

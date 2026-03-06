@@ -94,8 +94,32 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     }
 
     /*//////////////////////////////////////////////////////////////
-                   USER-FACING WRITE FUNCTIONS
+                   EXTERNAL STATE-CHANGING FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+
+    /// @notice Distribute yield to be dripped to the vault
+    /// @dev Combines remaining undistributed yield with new amount and extends period.
+    ///      Only callable by addresses with DISTRIBUTOR_ROLE.
+    /// @param amount_ The amount of yield to distribute
+    function distribute(uint256 amount_) external onlyRole(DISTRIBUTOR_ROLE) {
+        if (amount_ == 0) revert ZeroAmount();
+
+        YieldDistributorStorage storage $ = _getYieldDistributorStorage();
+
+        $.asset.safeTransferFrom(msg.sender, address(this), amount_);
+
+        uint256 _remaining;
+        if ($.lastUpdateTime < $.periodFinish && $.rewardRate != 0 && $.lastUpdateTime != 0) {
+            _remaining = (($.periodFinish - $.lastUpdateTime) * $.rewardRate) / PRECISION;
+        }
+
+        uint256 _newTotal = _remaining + amount_;
+        $.rewardRate = (_newTotal * PRECISION) / $.yieldDuration;
+        $.lastUpdateTime = block.timestamp;
+        $.periodFinish = block.timestamp + $.yieldDuration;
+
+        emit YieldDistributed(msg.sender, amount_, $.rewardRate, $.periodFinish);
+    }
 
     /// @notice Pull accrued yield to the vault
     /// @dev Only callable by the vault contract. Transfers all pending yield
@@ -115,8 +139,34 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
         }
     }
 
+    /// @notice Rescue tokens accidentally sent to this contract
+    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Cannot rescue the distribution asset.
+    /// @param token_ The token to rescue
+    /// @param to_ The address to send rescued tokens to
+    /// @param amount_ The amount to rescue
+    function rescueTokens(address token_, address to_, uint256 amount_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (token_ == address(_getYieldDistributorStorage().asset)) revert CannotRescueAsset();
+        if (to_ == address(0)) revert ZeroAddress();
+
+        IERC20(token_).safeTransfer(to_, amount_);
+    }
+
+    /// @notice Update the yield distribution duration
+    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Only affects future distributions,
+    ///      not current ongoing distribution. Must be >= MIN_YIELD_DURATION (1 day).
+    /// @param duration_ The new yield duration
+    function updateYieldDuration(uint256 duration_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (duration_ < MIN_YIELD_DURATION) {
+            revert InvalidDuration(duration_, MIN_YIELD_DURATION);
+        }
+
+        YieldDistributorStorage storage $ = _getYieldDistributorStorage();
+        emit YieldDurationUpdated($.yieldDuration, duration_);
+        $.yieldDuration = duration_;
+    }
+
     /*//////////////////////////////////////////////////////////////
-                    USER-FACING VIEW FUNCTIONS
+                    EXTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Get the asset token being distributed
@@ -129,14 +179,6 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     /// @return The Unix timestamp when yield was last pulled
     function lastUpdateTime() external view returns (uint256) {
         return _getYieldDistributorStorage().lastUpdateTime;
-    }
-
-    /// @notice Calculate pending yield available to pull
-    /// @dev Calculates based on time elapsed since last pull multiplied by reward rate.
-    ///      Returns 0 if no distribution is active or period has not started.
-    /// @return The amount of yield tokens available to pull
-    function pendingYield() public view returns (uint256) {
-        return _pendingYield(_getYieldDistributorStorage());
     }
 
     /// @notice Get the timestamp when current distribution period ends
@@ -165,6 +207,18 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     }
 
     /*//////////////////////////////////////////////////////////////
+                    PUBLIC VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Calculate pending yield available to pull
+    /// @dev Calculates based on time elapsed since last pull multiplied by reward rate.
+    ///      Returns 0 if no distribution is active or period has not started.
+    /// @return The amount of yield tokens available to pull
+    function pendingYield() public view returns (uint256) {
+        return _pendingYield(_getYieldDistributorStorage());
+    }
+
+    /*//////////////////////////////////////////////////////////////
                      INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
@@ -181,7 +235,7 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     }
 
     /*//////////////////////////////////////////////////////////////
-                      PRIVATE VIEW FUNCTIONS
+                      PRIVATE PURE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Get the storage pointer for ERC-7201 namespaced storage
@@ -191,59 +245,5 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
         assembly {
             $.slot := _location
         }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                       CONTROLLED FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Distribute yield to be dripped to the vault
-    /// @dev Combines remaining undistributed yield with new amount and extends period.
-    ///      Only callable by addresses with DISTRIBUTOR_ROLE.
-    /// @param amount_ The amount of yield to distribute
-    function distribute(uint256 amount_) external onlyRole(DISTRIBUTOR_ROLE) {
-        if (amount_ == 0) revert ZeroAmount();
-
-        YieldDistributorStorage storage $ = _getYieldDistributorStorage();
-
-        $.asset.safeTransferFrom(msg.sender, address(this), amount_);
-
-        uint256 _remaining;
-        if ($.lastUpdateTime < $.periodFinish && $.rewardRate != 0 && $.lastUpdateTime != 0) {
-            _remaining = (($.periodFinish - $.lastUpdateTime) * $.rewardRate) / PRECISION;
-        }
-
-        uint256 _newTotal = _remaining + amount_;
-        $.rewardRate = (_newTotal * PRECISION) / $.yieldDuration;
-        $.lastUpdateTime = block.timestamp;
-        $.periodFinish = block.timestamp + $.yieldDuration;
-
-        emit YieldDistributed(msg.sender, amount_, $.rewardRate, $.periodFinish);
-    }
-
-    /// @notice Rescue tokens accidentally sent to this contract
-    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Cannot rescue the distribution asset.
-    /// @param token_ The token to rescue
-    /// @param to_ The address to send rescued tokens to
-    /// @param amount_ The amount to rescue
-    function rescueTokens(address token_, address to_, uint256 amount_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (token_ == address(_getYieldDistributorStorage().asset)) revert CannotRescueAsset();
-        if (to_ == address(0)) revert ZeroAddress();
-
-        IERC20(token_).safeTransfer(to_, amount_);
-    }
-
-    /// @notice Update the yield distribution duration
-    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Only affects future distributions,
-    ///      not current ongoing distribution. Must be >= MIN_YIELD_DURATION (1 day).
-    /// @param duration_ The new yield duration
-    function updateYieldDuration(uint256 duration_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (duration_ < MIN_YIELD_DURATION) {
-            revert InvalidDuration(duration_, MIN_YIELD_DURATION);
-        }
-
-        YieldDistributorStorage storage $ = _getYieldDistributorStorage();
-        emit YieldDurationUpdated($.yieldDuration, duration_);
-        $.yieldDuration = duration_;
     }
 }

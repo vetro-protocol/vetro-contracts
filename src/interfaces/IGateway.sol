@@ -50,11 +50,11 @@ interface IGateway {
     /// @notice Returns remaining AMO mint capacity
     function maxAmoMint() external view returns (uint256);
 
-    /// @notice Returns remaining mint capacity
-    function maxMint() external view returns (uint256);
-
     /// @notice Returns maximum deposit amount possible
     function maxDeposit() external pure returns (uint256);
+
+    /// @notice Returns remaining mint capacity
+    function maxMint() external view returns (uint256);
 
     /// @notice Returns maximum PeggedToken amount owner can redeem
     /// @param owner_ Address to check redeem limit for
@@ -79,13 +79,13 @@ interface IGateway {
     /// @return The mint fee in BPS
     function mintFee(address token_) external view returns (uint256);
 
+    /// @notice Returns current mint limit in PeggedToken
+    function mintLimit() external view returns (uint256);
+
     /// @notice Mints PeggedToken to AMO operations (UMM role)
     /// @param amount_ Amount of PeggedToken to mint
     /// @param receiver_ Address to receive the minted PeggedToken
     function mintToAMO(uint256 amount_, address receiver_) external;
-
-    /// @notice Returns current mint limit in PeggedToken
-    function mintLimit() external view returns (uint256);
 
     // solhint-disable-next-line func-name-mixedcase
     function NAME() external view returns (string memory);
@@ -151,6 +151,10 @@ interface IGateway {
     /// @notice Returns treasury contract address
     function treasury() external view returns (address);
 
+    /// @notice Updates the AMO mint limit
+    /// @param newAmoMintLimit_ New limit value
+    function updateAmoMintLimit(uint256 newAmoMintLimit_) external;
+
     /// @notice Updates the mint fee for a specific token
     /// @param token_ Token address
     /// @param newMintFee_ New fee in basis points (1 = 0.01%)
@@ -159,10 +163,6 @@ interface IGateway {
     /// @notice Updates the maximum mint limit
     /// @param newMintLimit_ New maximum mint limit in PeggedToken
     function updateMintLimit(uint256 newMintLimit_) external;
-
-    /// @notice Updates the AMO mint limit
-    /// @param newAmoMintLimit_ New limit value
-    function updateAmoMintLimit(uint256 newAmoMintLimit_) external;
 
     /// @notice Updates the redeem fee for a specific token
     /// @param token_ Token address
