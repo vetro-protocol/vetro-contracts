@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "network": "ethereum",
+  "chainId": 1,
+  "contracts": {
+    "PeggedToken": {
+      "address": "0xCa83DDE9c22254f58e771bE5E157773212AcBAc3",
+      "name": "Vetro USD",
+      "symbol": "VUSD"
+    },
+    "Treasury": {
+      "address": "0xC8317A10385BE07901A4c9ee3d06E1D83AE378c9"
+    },
+    "Gateway": {
+      "address": "0xDaD503f8B9d42bb7af3AfC588358D30163e4416F",
+      "implementation": "0x7AFcFcC9619272B4610dDB1E98e6f0cF8E765C81",
+      "proxyAdmin": "0x83B2435d9A30b7463B3Ba997ba47a14B73149e2A"
+    },
+    "StakingVault": {
+      "address": "0x476310E34D2810f7d79C43A74E4D79405bd7a925",
+      "implementation": "0xFBe09b404E50193237D7c9777585a27eB927fF25",
+      "proxyAdmin": "0x3912505880b9b8F0Ac2531cde9428994a7728aa3"
+    },
+    "YieldDistributor": {
+      "address": "0x55745265Ba172378cf45d224F09F0673cB470cef",
+      "implementation": "0xe8Ac98555f8815F4c125C871F803DFCaD2101886",
+      "proxyAdmin": "0xDd751f2B4FA3445C7befa39cf981b6bEc1FeB1B1"
+    }
+  },
+  "whitelistedTokens": {
+    "USDC": {
+      "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "vault": "0x8C78D34176C971114151a9d5Dd2DBad1e6F30811",
+      "oracle": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
+      "stalePeriod": 86400
+    },
+    "USDT": {
+      "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "vault": "0x3D58BcCFDb150ad4689b04b9Dfdfb149038C1377",
+      "oracle": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
+      "stalePeriod": 86400
+    }
+  },
+  "governance": {
+    "owner": "0xE173b056eF552c7322040703dDfC1e0638A575d3"
+  }
+}

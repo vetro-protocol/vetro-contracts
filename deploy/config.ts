@@ -19,7 +19,7 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
   // Ethereum Mainnet
   1: {
     // Governance - UPDATE BEFORE MAINNET DEPLOYMENT
-    GOVERNOR: '0xdf826ff6518e609E4cEE86299d40611C148099d5',
+    GOVERNOR: '0xE173b056eF552c7322040703dDfC1e0638A575d3',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
   },
 
@@ -35,8 +35,8 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
 // =============================================================================
 
 export const PeggedTokenConfig = {
-  name: 'Test USD',
-  symbol: 'TESTUSD',
+  name: 'Vetro USD',
+  symbol: 'VUSD',
 }
 
 // =============================================================================
@@ -57,10 +57,7 @@ export const GatewayConfig = {
   mintLimit: parseEther('100000000'), // 100M VUSD
 
   // Withdrawal delay period in seconds
-  withdrawalDelay: 7 * 24 * 60 * 60, // 7 days
-
-  // Default redeem fee (set in contract initialize): 0.3% (30 bps)
-  // Default mint fee: 0% (can be updated via updateMintFee)
+  withdrawalDelay: 2 * 60,
 }
 
 // =============================================================================

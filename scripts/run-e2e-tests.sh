@@ -21,7 +21,7 @@ set -e
 #   ETHEREUM_NODE_URL     - RPC URL for ethereum fork (required)
 #   MAINNET_BLOCK_NUMBER - Block number to fork from (optional)
 
-RELEASE_FILE=${1:-"ethereum-1.0.0-beta.1.json"}
+RELEASE_FILE=${1:-"ethereum-1.0.0.json"}
 NETWORK=${2:-"ethereum"}
 NODE_PID=""
 NODE_LOG="/tmp/hardhat-node-e2e.log"

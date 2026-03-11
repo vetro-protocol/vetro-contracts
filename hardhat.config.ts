@@ -1,5 +1,10 @@
 import {HardhatUserConfig} from 'hardhat/types'
-import '@nomicfoundation/hardhat-toolbox'
+import '@nomicfoundation/hardhat-chai-matchers'
+import '@nomiclabs/hardhat-ethers'
+import '@nomicfoundation/hardhat-verify'
+import '@typechain/hardhat'
+import 'hardhat-gas-reporter'
+import 'solidity-coverage'
 import 'hardhat-deploy'
 import 'hardhat-log-remover'
 import 'hardhat-contract-sizer'
@@ -10,7 +15,11 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
-const accounts = process.env.MNEMONIC ? {mnemonic: process.env.MNEMONIC} : undefined
+const accounts = process.env.PRIVATE_KEY
+  ? [process.env.PRIVATE_KEY]
+  : process.env.MNEMONIC
+    ? {mnemonic: process.env.MNEMONIC}
+    : undefined
 const deployer = process.env.DEPLOYER || 0
 
 // Hardhat do not support adding chainId at runtime. Only way to set it in hardhat-config.js

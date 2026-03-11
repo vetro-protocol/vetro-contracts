@@ -23,7 +23,7 @@ Manual operations guide for the devops team until automation bots are ready.
 
 | Role | Address |
 |------|---------|
-| Owner / DEFAULT_ADMIN | `0xdf826ff6518e609E4cEE86299d40611C148099d5` |
+| Owner / DEFAULT_ADMIN | `0xE173b056eF552c7322040703dDfC1e0638A575d3` |
 
 ---
 
