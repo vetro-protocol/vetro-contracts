@@ -52,6 +52,8 @@ interface ReleaseConfig {
 // Token addresses (mainnet)
 const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
 const USDC_WHALE = '0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341' // Binance
+const USDT_ADDRESS = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
+const USDT_WHALE = '0xF977814e90dA44bFA03b6295A0616a897441aceC' // Binance
 
 const ONE_DAY = 24 * 60 * 60
 
@@ -87,6 +89,7 @@ const setupForkAndRoles = async (
   deployer: SignerWithAddress,
   keeper: SignerWithAddress,
   usdc: Contract,
+  usdt: Contract,
   user1: SignerWithAddress,
   user2: SignerWithAddress
 ) => {
@@ -122,6 +125,13 @@ const setupForkAndRoles = async (
   await usdc.connect(whale).transfer(user1.address, parseUnits('100000', 6))
   await usdc.connect(whale).transfer(user2.address, parseUnits('50000', 6))
   await stopImpersonating(USDC_WHALE)
+
+  // Fund users with USDT from whale
+  const usdtWhale = await impersonate(USDT_WHALE, deployer)
+  await resetBaseFee()
+  await usdt.connect(usdtWhale).transfer(user1.address, parseUnits('100000', 6))
+  await usdt.connect(usdtWhale).transfer(user2.address, parseUnits('50000', 6))
+  await stopImpersonating(USDT_WHALE)
 }
 
 describe('E2E: Deployed Contracts', function () {
@@ -143,6 +153,7 @@ describe('E2E: Deployed Contracts', function () {
   let stakingVault: Contract
   let yieldDistributor: Contract
   let usdc: Contract
+  let usdt: Contract
 
   before(async function () {
     this.timeout(300000)
@@ -168,8 +179,9 @@ describe('E2E: Deployed Contracts', function () {
     stakingVault = await ethers.getContractAt('StakingVault', release.contracts.StakingVault.address)
     yieldDistributor = await ethers.getContractAt('YieldDistributor', release.contracts.YieldDistributor.address)
     usdc = await ethers.getContractAt('IERC20', USDC_ADDRESS)
+    usdt = await ethers.getContractAt('IERC20', USDT_ADDRESS)
 
-    await setupForkAndRoles(release, treasury, gateway, yieldDistributor, deployer, keeper, usdc, user1, user2)
+    await setupForkAndRoles(release, treasury, gateway, yieldDistributor, deployer, keeper, usdc, usdt, user1, user2)
 
     // Log on-chain config
     const withdrawalDelay = await gateway.withdrawalDelay()
@@ -178,13 +190,18 @@ describe('E2E: Deployed Contracts', function () {
     const cooldownEnabled = await stakingVault.cooldownEnabled()
     const mintFee = await gateway.mintFee(USDC_ADDRESS)
     const redeemFee = await gateway.redeemFee(USDC_ADDRESS)
+    const usdtMintFee = await gateway.mintFee(USDT_ADDRESS)
+    const usdtRedeemFee = await gateway.redeemFee(USDT_ADDRESS)
 
     console.log('\nOn-chain config:')
     console.log(`  Withdrawal delay: ${withdrawalDelay} seconds (enabled: ${withdrawalDelayEnabled})`)
     console.log(`  Cooldown duration: ${cooldownDuration} seconds (enabled: ${cooldownEnabled})`)
     console.log(`  Mint fee (USDC): ${mintFee} bps`)
     console.log(`  Redeem fee (USDC): ${redeemFee} bps`)
+    console.log(`  Mint fee (USDT): ${usdtMintFee} bps`)
+    console.log(`  Redeem fee (USDT): ${usdtRedeemFee} bps`)
     console.log(`  User1 USDC balance: ${formatUnits(await usdc.balanceOf(user1.address), 6)}`)
+    console.log(`  User1 USDT balance: ${formatUnits(await usdt.balanceOf(user1.address), 6)}`)
   })
 
   describe('1. User Actions', function () {
@@ -233,6 +250,46 @@ describe('E2E: Deployed Contracts', function () {
 
         expect(received).to.equal(mintAmount)
       })
+
+      it('should allow user to deposit USDT and receive PeggedToken', async function () {
+        const depositAmount = parseUnits('1000', 6)
+
+        await usdt.connect(user1).approve(gateway.address, depositAmount)
+
+        const expectedPeggedToken = await gateway.previewDeposit(USDT_ADDRESS, depositAmount)
+        console.log(
+          `    Preview: ${formatUnits(depositAmount, 6)} USDT -> ${formatUnits(expectedPeggedToken, 18)} PeggedToken`
+        )
+
+        const peggedTokenBefore = await peggedToken.balanceOf(user1.address)
+        await gateway.connect(user1).deposit(USDT_ADDRESS, depositAmount, 0, user1.address)
+        const peggedTokenAfter = await peggedToken.balanceOf(user1.address)
+
+        const received = peggedTokenAfter.sub(peggedTokenBefore)
+        console.log(`    Received: ${formatUnits(received, 18)} PeggedToken`)
+
+        expect(received).to.equal(expectedPeggedToken)
+      })
+
+      it('should allow user to mint exact PeggedToken amount with USDT', async function () {
+        const mintAmount = parseUnits('500', 18)
+
+        const requiredUSDT = await gateway.previewMint(USDT_ADDRESS, mintAmount)
+        console.log(
+          `    Preview: ${formatUnits(mintAmount, 18)} PeggedToken requires ${formatUnits(requiredUSDT, 6)} USDT`
+        )
+
+        await usdt.connect(user1).approve(gateway.address, requiredUSDT)
+
+        const peggedTokenBefore = await peggedToken.balanceOf(user1.address)
+        await gateway.connect(user1).mint(USDT_ADDRESS, mintAmount, requiredUSDT, user1.address)
+        const peggedTokenAfter = await peggedToken.balanceOf(user1.address)
+
+        const received = peggedTokenAfter.sub(peggedTokenBefore)
+        console.log(`    Received: ${formatUnits(received, 18)} PeggedToken`)
+
+        expect(received).to.equal(mintAmount)
+      })
     })
 
     describe('1.2 Redeem (Burn PeggedToken)', function () {
@@ -268,6 +325,37 @@ describe('E2E: Deployed Contracts', function () {
 
         const received = usdcAfter.sub(usdcBefore)
         console.log(`    Received: ${formatUnits(received, 6)} USDC`)
+
+        expect(received).to.be.gt(0)
+      })
+
+      it('should allow user to request and claim redeem for USDT', async function () {
+        const redeemAmount = parseUnits('200', 18)
+
+        const delayEnabled = await gateway.withdrawalDelayEnabled()
+        const delay = await gateway.withdrawalDelay()
+
+        const expectedUSDT = await gateway.previewRedeem(USDT_ADDRESS, redeemAmount)
+        console.log(`    Preview: ${formatUnits(redeemAmount, 18)} PeggedToken -> ${formatUnits(expectedUSDT, 6)} USDT`)
+
+        await peggedToken.connect(user1).approve(gateway.address, redeemAmount)
+
+        if (delayEnabled) {
+          await gateway.connect(user1).requestRedeem(redeemAmount)
+
+          const [amountLocked] = await gateway.getRedeemRequest(user1.address)
+          expect(amountLocked).to.equal(redeemAmount)
+
+          await network.provider.send('evm_increaseTime', [delay.toNumber() + 1])
+          await network.provider.send('evm_mine', [])
+        }
+
+        const usdtBefore = await usdt.balanceOf(user1.address)
+        await gateway.connect(user1).redeem(USDT_ADDRESS, redeemAmount, 0, user1.address)
+        const usdtAfter = await usdt.balanceOf(user1.address)
+
+        const received = usdtAfter.sub(usdtBefore)
+        console.log(`    Received: ${formatUnits(received, 6)} USDT`)
 
         expect(received).to.be.gt(0)
       })
@@ -330,7 +418,7 @@ describe('E2E: Deployed Contracts', function () {
     this.timeout(120000)
 
     describe('2.1 Pull (Withdraw from Vault)', function () {
-      it('should allow keeper to pull tokens from vault', async function () {
+      it('should allow keeper to pull USDC from vault', async function () {
         const pullAmount = parseUnits('500', 6)
 
         const treasuryUSDCBefore = await usdc.balanceOf(treasury.address)
@@ -340,10 +428,21 @@ describe('E2E: Deployed Contracts', function () {
         console.log(`    Pulled: ${formatUnits(pullAmount, 6)} USDC from vault`)
         expect(treasuryUSDCAfter).to.equal(treasuryUSDCBefore.add(pullAmount))
       })
+
+      it('should allow keeper to pull USDT from vault', async function () {
+        const pullAmount = parseUnits('500', 6)
+
+        const treasuryUSDTBefore = await usdt.balanceOf(treasury.address)
+        await treasury.connect(keeper).pull(USDT_ADDRESS, pullAmount)
+        const treasuryUSDTAfter = await usdt.balanceOf(treasury.address)
+
+        console.log(`    Pulled: ${formatUnits(pullAmount, 6)} USDT from vault`)
+        expect(treasuryUSDTAfter).to.equal(treasuryUSDTBefore.add(pullAmount))
+      })
     })
 
     describe('2.2 Push (Deposit to Vault)', function () {
-      it('should allow keeper to push tokens to vault', async function () {
+      it('should allow keeper to push USDC to vault', async function () {
         const treasuryUSDC = await usdc.balanceOf(treasury.address)
         if (treasuryUSDC.eq(0)) {
           console.log('    No USDC in Treasury to push')
@@ -357,35 +456,78 @@ describe('E2E: Deployed Contracts', function () {
         console.log(`    Pushed: ${formatUnits(pushAmount, 6)} USDC to vault`)
         expect(treasuryUSDCAfter).to.equal(treasuryUSDC.sub(pushAmount))
       })
+
+      it('should allow keeper to push USDT to vault', async function () {
+        const treasuryUSDT = await usdt.balanceOf(treasury.address)
+        if (treasuryUSDT.eq(0)) {
+          console.log('    No USDT in Treasury to push')
+          return
+        }
+
+        const pushAmount = treasuryUSDT.div(2)
+        await treasury.connect(keeper).push(USDT_ADDRESS, pushAmount)
+
+        const treasuryUSDTAfter = await usdt.balanceOf(treasury.address)
+        console.log(`    Pushed: ${formatUnits(pushAmount, 6)} USDT to vault`)
+        expect(treasuryUSDTAfter).to.equal(treasuryUSDT.sub(pushAmount))
+      })
     })
 
     describe('2.3 Toggle Deposit/Withdraw', function () {
-      it('should allow keeper to toggle deposit activity', async function () {
+      it('should allow keeper to toggle USDC deposit activity', async function () {
         const [, , , depositActive] = await treasury.tokenConfig(USDC_ADDRESS)
-        console.log(`    Deposit active before: ${depositActive}`)
+        console.log(`    USDC deposit active before: ${depositActive}`)
 
         await treasury.connect(keeper).setDepositActive(USDC_ADDRESS, !depositActive)
 
         const [, , , depositActiveAfter] = await treasury.tokenConfig(USDC_ADDRESS)
-        console.log(`    Deposit active after: ${depositActiveAfter}`)
+        console.log(`    USDC deposit active after: ${depositActiveAfter}`)
         expect(depositActiveAfter).to.equal(!depositActive)
 
         // Restore
         await treasury.connect(keeper).setDepositActive(USDC_ADDRESS, depositActive)
       })
 
-      it('should allow keeper to toggle withdraw activity', async function () {
+      it('should allow keeper to toggle USDC withdraw activity', async function () {
         const [, , , , withdrawActive] = await treasury.tokenConfig(USDC_ADDRESS)
-        console.log(`    Withdraw active before: ${withdrawActive}`)
+        console.log(`    USDC withdraw active before: ${withdrawActive}`)
 
         await treasury.connect(keeper).setWithdrawActive(USDC_ADDRESS, !withdrawActive)
 
         const [, , , , withdrawActiveAfter] = await treasury.tokenConfig(USDC_ADDRESS)
-        console.log(`    Withdraw active after: ${withdrawActiveAfter}`)
+        console.log(`    USDC withdraw active after: ${withdrawActiveAfter}`)
         expect(withdrawActiveAfter).to.equal(!withdrawActive)
 
         // Restore
         await treasury.connect(keeper).setWithdrawActive(USDC_ADDRESS, withdrawActive)
+      })
+
+      it('should allow keeper to toggle USDT deposit activity', async function () {
+        const [, , , depositActive] = await treasury.tokenConfig(USDT_ADDRESS)
+        console.log(`    USDT deposit active before: ${depositActive}`)
+
+        await treasury.connect(keeper).setDepositActive(USDT_ADDRESS, !depositActive)
+
+        const [, , , depositActiveAfter] = await treasury.tokenConfig(USDT_ADDRESS)
+        console.log(`    USDT deposit active after: ${depositActiveAfter}`)
+        expect(depositActiveAfter).to.equal(!depositActive)
+
+        // Restore
+        await treasury.connect(keeper).setDepositActive(USDT_ADDRESS, depositActive)
+      })
+
+      it('should allow keeper to toggle USDT withdraw activity', async function () {
+        const [, , , , withdrawActive] = await treasury.tokenConfig(USDT_ADDRESS)
+        console.log(`    USDT withdraw active before: ${withdrawActive}`)
+
+        await treasury.connect(keeper).setWithdrawActive(USDT_ADDRESS, !withdrawActive)
+
+        const [, , , , withdrawActiveAfter] = await treasury.tokenConfig(USDT_ADDRESS)
+        console.log(`    USDT withdraw active after: ${withdrawActiveAfter}`)
+        expect(withdrawActiveAfter).to.equal(!withdrawActive)
+
+        // Restore
+        await treasury.connect(keeper).setWithdrawActive(USDT_ADDRESS, withdrawActive)
       })
     })
   })
@@ -397,7 +539,7 @@ describe('E2E: Deployed Contracts', function () {
       this.timeout(300000)
       // Re-fork to get fresh oracle data (previous tests may have fast-forwarded time)
       ;[deployer, user1, user2, keeper] = await ethers.getSigners()
-      await setupForkAndRoles(release, treasury, gateway, yieldDistributor, deployer, keeper, usdc, user1, user2)
+      await setupForkAndRoles(release, treasury, gateway, yieldDistributor, deployer, keeper, usdc, usdt, user1, user2)
 
       // Deposit and stake for user2
       await usdc.connect(user2).approve(gateway.address, parseUnits('2000', 6))
@@ -493,9 +635,15 @@ describe('E2E: Deployed Contracts', function () {
       expect(reserve).to.be.gte(0)
     })
 
-    it('should return correct withdrawable amount', async function () {
+    it('should return correct USDC withdrawable amount', async function () {
       const withdrawable = await treasury.withdrawable(USDC_ADDRESS)
       console.log(`    USDC withdrawable: ${formatUnits(withdrawable, 6)}`)
+      expect(withdrawable).to.be.gte(0)
+    })
+
+    it('should return correct USDT withdrawable amount', async function () {
+      const withdrawable = await treasury.withdrawable(USDT_ADDRESS)
+      console.log(`    USDT withdrawable: ${formatUnits(withdrawable, 6)}`)
       expect(withdrawable).to.be.gte(0)
     })
 
