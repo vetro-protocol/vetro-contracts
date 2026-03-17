@@ -30,13 +30,13 @@
   "whitelistedTokens": {
     "USDC": {
       "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-      "vault": "0x8C78D34176C971114151a9d5Dd2DBad1e6F30811",
+      "vault": "0xe3DA4B83C9dd4c4D185ecE42077462b3F35c454a",
       "oracle": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
       "stalePeriod": 86400
     },
     "USDT": {
       "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-      "vault": "0x3D58BcCFDb150ad4689b04b9Dfdfb149038C1377",
+      "vault": "0x6d134cAAD0CA29Cd6ea145f6C0DC766076690547",
       "oracle": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
       "stalePeriod": 86400
     }
