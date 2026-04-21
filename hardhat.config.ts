@@ -1,4 +1,5 @@
 import {HardhatUserConfig} from 'hardhat/types'
+import '@nomicfoundation/hardhat-foundry'
 import '@nomicfoundation/hardhat-chai-matchers'
 import '@nomiclabs/hardhat-ethers'
 import '@nomicfoundation/hardhat-verify'
