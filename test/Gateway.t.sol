@@ -498,6 +498,34 @@ contract GatewayTest is Test {
         gateway.previewDeposit(token2, 100e18);
     }
 
+    function test_previewDeposit_wbtcLikeCollateral_parityPrice_mints1to1() public {
+        MockERC20 _wbtc = new MockERC20();
+        _wbtc.setDecimals(8);
+        MockYieldVault _wbtcVault = new MockYieldVault(address(_wbtc));
+        MockChainlinkOracle _wbtcBtcOracle = new MockChainlinkOracle(1e8);
+
+        vm.prank(admin);
+        treasury.addToWhitelist(address(_wbtc), address(_wbtcVault), address(_wbtcBtcOracle), 1 hours);
+
+        uint256 _amountIn = 1e8; // 1 WBTC (8 decimals)
+        uint256 _peggedTokenOut = gateway.previewDeposit(address(_wbtc), _amountIn);
+        assertEq(_peggedTokenOut, 1e18);
+    }
+
+    function test_previewDeposit_hemiBtcLikeCollateral_withinTolerance_mintsAtDiscount() public {
+        MockERC20 _hemiBtc = new MockERC20();
+        _hemiBtc.setDecimals(8);
+        MockYieldVault _hemiBtcVault = new MockYieldVault(address(_hemiBtc));
+        MockChainlinkOracle _hemiBtcBtcOracle = new MockChainlinkOracle(0.995e8);
+
+        vm.prank(admin);
+        treasury.addToWhitelist(address(_hemiBtc), address(_hemiBtcVault), address(_hemiBtcBtcOracle), 1 hours);
+
+        uint256 _amountIn = 1e8; // 1 hemiBTC (8 decimals)
+        uint256 _peggedTokenOut = gateway.previewDeposit(address(_hemiBtc), _amountIn);
+        assertEq(_peggedTokenOut, 995e15); // 0.995 vetBTC (18 decimals)
+    }
+
     // --- previewMint ---
     function testFuzz_previewMint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
@@ -550,6 +578,20 @@ contract GatewayTest is Test {
         address token2 = makeAddr("token2");
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", token2));
         gateway.previewRedeem(token2, 100e18);
+    }
+
+    function test_previewRedeem_wbtcLikeCollateral_parityPrice_redeems1to1() public {
+        MockERC20 _wbtc = new MockERC20();
+        _wbtc.setDecimals(8);
+        MockYieldVault _wbtcVault = new MockYieldVault(address(_wbtc));
+        MockChainlinkOracle _wbtcBtcOracle = new MockChainlinkOracle(1e8);
+
+        vm.prank(admin);
+        treasury.addToWhitelist(address(_wbtc), address(_wbtcVault), address(_wbtcBtcOracle), 1 hours);
+
+        uint256 _peggedTokenIn = 2e18;
+        uint256 _tokenOut = gateway.previewRedeem(address(_wbtc), _peggedTokenIn);
+        assertEq(_tokenOut, 2e8); // 2 WBTC (8 decimals)
     }
 
     // --- previewWithdraw ---
@@ -812,7 +854,7 @@ contract GatewayTest is Test {
         gateway.updatePegBand(token, 50);
 
         // Price = 0.990 (1% below peg, outside 0.5% peg band)
-        mockOracle.updatePrice(0.990e8);
+        mockOracle.updatePrice(0.99e8);
 
         uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
         deal(token, alice, depositAmount);

@@ -563,6 +563,46 @@ contract TreasuryTest is Test {
         treasury.getPrice(_token2);
     }
 
+    function test_getPrice_wbtcLikeCollateral_success() public {
+        MockERC20 _wbtc = new MockERC20();
+        _wbtc.setDecimals(8);
+        MockYieldVault _wbtcVault = new MockYieldVault(address(_wbtc));
+        MockChainlinkOracle _wbtcBtcOracle = new MockChainlinkOracle(1e8);
+
+        treasury.addToWhitelist(address(_wbtc), address(_wbtcVault), address(_wbtcBtcOracle), 1 hours);
+
+        (uint256 _latest, uint256 _unitPrice) = treasury.getPrice(address(_wbtc));
+        assertEq(_latest, 1e8);
+        assertEq(_unitPrice, 1e8);
+    }
+
+    function test_getPrice_hemiBtcLikeCollateral_revertIfNotNearParity() public {
+        MockERC20 _hemiBtc = new MockERC20();
+        _hemiBtc.setDecimals(8);
+        MockYieldVault _hemiBtcVault = new MockYieldVault(address(_hemiBtc));
+        MockChainlinkOracle _hemiBtcBtcOracle = new MockChainlinkOracle(0.97e8);
+
+        treasury.addToWhitelist(address(_hemiBtc), address(_hemiBtcVault), address(_hemiBtcBtcOracle), 1 hours);
+
+        vm.expectRevert(
+            abi.encodeWithSignature("PriceExceedTolerance(uint256,uint256,uint256)", 0.97e8, 1.01e8, 0.99e8)
+        );
+        treasury.getPrice(address(_hemiBtc));
+    }
+
+    function test_getPrice_hemiBtcLikeCollateral_withinTolerance_success() public {
+        MockERC20 _hemiBtc = new MockERC20();
+        _hemiBtc.setDecimals(8);
+        MockYieldVault _hemiBtcVault = new MockYieldVault(address(_hemiBtc));
+        MockChainlinkOracle _hemiBtcBtcOracle = new MockChainlinkOracle(0.995e8);
+
+        treasury.addToWhitelist(address(_hemiBtc), address(_hemiBtcVault), address(_hemiBtcBtcOracle), 1 hours);
+
+        (uint256 _latest, uint256 _unitPrice) = treasury.getPrice(address(_hemiBtc));
+        assertEq(_latest, 0.995e8);
+        assertEq(_unitPrice, 1e8);
+    }
+
     function test_isWhitelistedToken() public view {
         assertTrue(treasury.isWhitelistedToken(address(token)));
     }
@@ -648,6 +688,22 @@ contract TreasuryTest is Test {
         assertEq(treasury.reserve(), _expectedReserve);
     }
 
+    function test_reserve_btcLikeCollateral_withinTolerance_usesOracleRatio() public {
+        MockERC20 _wbtc = new MockERC20();
+        _wbtc.setDecimals(8);
+        MockYieldVault _wbtcVault = new MockYieldVault(address(_wbtc));
+        MockChainlinkOracle _wbtcBtcOracle = new MockChainlinkOracle(0.995e8);
+
+        treasury.addToWhitelist(address(_wbtc), address(_wbtcVault), address(_wbtcBtcOracle), 1 hours);
+
+        uint256 _amount = 2e8; // 2 WBTC
+        deal(address(_wbtc), address(treasury), _amount);
+
+        uint256 _reserveInTokenDecimals = _amount.mulDiv(0.995e8, 1e8);
+        uint256 _expectedReserve = _reserveInTokenDecimals * 1e10; // normalize 8 decimals to 18
+        assertEq(treasury.reserve(), _expectedReserve);
+    }
+
     function test_reserve_isZero_whenNoTokens() public view {
         assertEq(treasury.reserve(), 0);
     }
@@ -728,6 +784,35 @@ contract TreasuryTest is Test {
         treasury.harvest(address(token), alice);
 
         assertEq(token.balanceOf(alice), 0);
+    }
+
+    function test_harvest_btcLikeCollateral_withinTolerance_withdrawsExpectedExcess() public {
+        address umm = makeAddr("UMM");
+        treasury.grantRole(ummRole, umm);
+
+        MockERC20 _wbtc = new MockERC20();
+        _wbtc.setDecimals(8);
+        MockYieldVault _wbtcVault = new MockYieldVault(address(_wbtc));
+        MockChainlinkOracle _wbtcBtcOracle = new MockChainlinkOracle(0.995e8);
+
+        treasury.addToWhitelist(address(_wbtc), address(_wbtcVault), address(_wbtcBtcOracle), 1 hours);
+
+        uint256 _wbtcAmount = 2e8; // 2 WBTC in treasury
+        deal(address(_wbtc), address(treasury), _wbtcAmount);
+
+        // Backed supply is 1.5e18, reserve is 1.99e18 -> excess is 0.49e18.
+        vm.prank(gateway);
+        VUSD.mint(alice, 1.5e18);
+
+        uint256 _expectedExcessInPegUnits = 1.99e18 - 1.5e18;
+        uint256 _expectedHarvest = _expectedExcessInPegUnits.mulDiv(1e8, 0.995e8) / 1e10;
+
+        vm.prank(umm);
+        uint256 _harvested = treasury.harvest(address(_wbtc), umm);
+
+        assertEq(_harvested, _expectedHarvest);
+        assertEq(_wbtc.balanceOf(umm), _expectedHarvest);
+        assertEq(_wbtc.balanceOf(address(treasury)), _wbtcAmount - _expectedHarvest);
     }
 
     function test_harvest_revertIfNotUMM() public {

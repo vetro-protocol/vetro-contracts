@@ -22,6 +22,7 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     GOVERNOR: '0xE173b056eF552c7322040703dDfC1e0638A575d3',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
     CHAINLINK_BTC_USD_FEED: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
+    CHAINLINK_CBBTC_USD_FEED: '0x2665701293fCbEB223D11A08D826563EDcCE423A',
   },
 
   // Hardhat local network - mirrors mainnet for fork testing
@@ -29,6 +30,7 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     GOVERNOR: '0x0000000000000000000000000000000000000000',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
     CHAINLINK_BTC_USD_FEED: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
+    CHAINLINK_CBBTC_USD_FEED: '0x0000000000000000000000000000000000000000',
   },
 }
 
@@ -96,6 +98,7 @@ export const ContractAliases = {
   StakingVault: 'StakingVault',
   YieldDistributor: 'YieldDistributor',
   ChainlinkFeedAdapter: 'ChainlinkFeedAdapter',
+  DerivedPriceFeedAdapter: 'DerivedPriceFeedAdapter',
 } as const
 
 // =============================================================================

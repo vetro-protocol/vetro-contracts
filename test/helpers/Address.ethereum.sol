@@ -5,6 +5,7 @@ pragma solidity 0.8.30;
 address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 address constant ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+address constant cbBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
 
 // Bloq
 address constant SWAPPER = 0x229f19942612A8dbdec3643CB23F88685CCd56A5;
@@ -17,3 +18,5 @@ address constant COMPOUND_V3_STRATEGY = 0x91332bf00A3d9d88acd486746A8Ec6eD7e3d06
 
 // Chainlink
 address constant USDC_USD_FEED = 0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6;
+address constant CBBTC_USD_FEED = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
+address constant BTC_USD_FEED = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
