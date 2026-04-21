@@ -7,8 +7,9 @@ const { DerivedPriceFeedAdapter } = ContractAliases
 
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   await deployNonUpgradeable(hre, DerivedPriceFeedAdapter, [
-    Address.CHAINLINK_CBBTC_USD_FEED, // baseFeed  (cbBTC/USD)
-    Address.CHAINLINK_BTC_USD_FEED,   // quoteFeed (BTC/USD)
+    Address.CHAINLINK_CBBTC_USD_FEED, // baseFeed   (cbBTC/USD)
+    Address.CHAINLINK_BTC_USD_FEED,   // quoteFeed  (BTC/USD)
+    8,                                // decimals_  (output precision, min 8)
   ])
 }
 

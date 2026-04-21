@@ -18,7 +18,7 @@ contract DerivedPriceFeedAdapterTest is Test {
     function setUp() public {
         baseFeed = new MockChainlinkOracle(BASE_USD_PRICE);
         quoteFeed = new MockChainlinkOracle(QUOTE_USD_PRICE);
-        adapter = new DerivedPriceFeedAdapter(baseFeed, quoteFeed);
+        adapter = new DerivedPriceFeedAdapter(baseFeed, quoteFeed, 8);
     }
 
     // ── constructor ──────────────────────────────────────────────────────────
@@ -30,25 +30,35 @@ contract DerivedPriceFeedAdapterTest is Test {
 
     function test_constructor_revertIfBaseFeedIsZero() public {
         vm.expectRevert(DerivedPriceFeedAdapter.ZeroAddress.selector);
-        new DerivedPriceFeedAdapter(MockChainlinkOracle(address(0)), quoteFeed);
+        new DerivedPriceFeedAdapter(MockChainlinkOracle(address(0)), quoteFeed, 8);
     }
 
     function test_constructor_revertIfQuoteFeedIsZero() public {
         vm.expectRevert(DerivedPriceFeedAdapter.ZeroAddress.selector);
-        new DerivedPriceFeedAdapter(baseFeed, MockChainlinkOracle(address(0)));
+        new DerivedPriceFeedAdapter(baseFeed, MockChainlinkOracle(address(0)), 8);
     }
 
-    function test_constructor_revertIfDecimalsMismatch() public {
-        MockDifferentDecimals wrongDecimals = new MockDifferentDecimals(18);
-        vm.expectRevert(DerivedPriceFeedAdapter.FeedDecimalsMismatch.selector);
-        new DerivedPriceFeedAdapter(baseFeed, wrongDecimals);
+    function test_constructor_revertIfOutputDecimalsTooLow() public {
+        vm.expectRevert(DerivedPriceFeedAdapter.OutputDecimalsTooLow.selector);
+        new DerivedPriceFeedAdapter(baseFeed, quoteFeed, 7);
+    }
+
+    function test_constructor_allowsDifferentFeedDecimals() public {
+        MockChainlinkOracle feed18 = new MockChainlinkOracle(75_298.57e18);
+        feed18.setDecimals(18);
+        // baseFeed 8 decimals, quoteFeed 18 decimals — should not revert
+        new DerivedPriceFeedAdapter(baseFeed, feed18, 8);
     }
 
     // ── metadata ─────────────────────────────────────────────────────────────
 
     function test_decimals() public view {
-        assertEq(adapter.decimals(), baseFeed.decimals());
         assertEq(adapter.decimals(), 8);
+    }
+
+    function test_decimals_deployer_can_set_18() public {
+        DerivedPriceFeedAdapter adapter18 = new DerivedPriceFeedAdapter(baseFeed, quoteFeed, 18);
+        assertEq(adapter18.decimals(), 18);
     }
 
     function test_description() public view {
@@ -68,10 +78,15 @@ contract DerivedPriceFeedAdapterTest is Test {
         assertEq(answer, expected);
     }
 
-    function test_latestRoundData_roundFieldsAreZero() public view {
+    function test_latestRoundData_roundFieldsAreOne() public view {
         (uint80 roundId,,,, uint80 answeredInRound) = adapter.latestRoundData();
-        assertEq(roundId, 0);
-        assertEq(answeredInRound, 0);
+        assertEq(roundId, 1);
+        assertEq(answeredInRound, 1);
+    }
+
+    function test_latestRoundData_startedAtEqualsUpdatedAt() public view {
+        (,, uint256 startedAt, uint256 updatedAt,) = adapter.latestRoundData();
+        assertEq(startedAt, updatedAt);
     }
 
     function test_latestRoundData_exactParity() public {
@@ -114,6 +129,26 @@ contract DerivedPriceFeedAdapterTest is Test {
         adapter.latestRoundData();
     }
 
+    function test_latestRoundData_differentFeedDecimals() public {
+        // baseFeed: 18 decimals (e.g. hemiBTC/USD)
+        // quoteFeed: 8 decimals (BTC/USD standard)
+        // output: 8 decimals
+        // result = (basePrice * 10^(8+8)) / (quotePrice * 10^18)
+        //        = basePrice / (quotePrice * 100) ... simplified
+        int256 basePrice18 = 75_298.57e18;
+        int256 quotePrice8 = 76_351.94e8;
+
+        MockChainlinkOracle feed18 = new MockChainlinkOracle(basePrice18);
+        feed18.setDecimals(18);
+        DerivedPriceFeedAdapter mixedAdapter = new DerivedPriceFeedAdapter(feed18, quoteFeed, 8);
+
+        quoteFeed.updatePrice(quotePrice8);
+        (, int256 answer,,,) = mixedAdapter.latestRoundData();
+
+        int256 expected = (basePrice18 * int256(10 ** (8 + 8))) / (quotePrice8 * int256(10 ** 18));
+        assertEq(answer, expected);
+    }
+
     // ── getRoundData ─────────────────────────────────────────────────────────
 
     function test_getRoundData_reverts() public {
@@ -136,8 +171,8 @@ contract DerivedPriceFeedAdapterTest is Test {
         assertEq(adapter.latestTimestamp(), baseTimestamp);
     }
 
-    function test_latestRound_returnsZero() public view {
-        assertEq(adapter.latestRound(), 0);
+    function test_latestRound_returnsOne() public view {
+        assertEq(adapter.latestRound(), 1);
     }
 
     function test_getAnswer_reverts() public {
@@ -148,54 +183,5 @@ contract DerivedPriceFeedAdapterTest is Test {
     function test_getTimestamp_reverts() public {
         vm.expectRevert(DerivedPriceFeedAdapter.HistoricalRoundsNotSupported.selector);
         adapter.getTimestamp(1);
-    }
-}
-
-/// @dev Minimal AggregatorV2V3Interface mock with configurable decimals, for constructor revert testing.
-contract MockDifferentDecimals is AggregatorV2V3Interface {
-    uint8 private _dec;
-
-    constructor(uint8 dec_) {
-        _dec = dec_;
-    }
-
-    function decimals() external view returns (uint8) {
-        return _dec;
-    }
-
-    function description() external pure returns (string memory) {
-        return "";
-    }
-
-    function version() external pure returns (uint256) {
-        return 1;
-    }
-
-    function latestRoundData() external pure returns (uint80, int256, uint256, uint256, uint80) {
-        return (0, 1e18, 0, 0, 0);
-    }
-
-    function getRoundData(uint80 r) external pure returns (uint80, int256, uint256, uint256, uint80) {
-        return (r, 1e18, 0, 0, r);
-    }
-
-    function latestAnswer() external pure returns (int256) {
-        return 1e18;
-    }
-
-    function latestTimestamp() external pure returns (uint256) {
-        return 0;
-    }
-
-    function latestRound() external pure returns (uint256) {
-        return 0;
-    }
-
-    function getAnswer(uint256) external pure returns (int256) {
-        return 1e18;
-    }
-
-    function getTimestamp(uint256) external pure returns (uint256) {
-        return 0;
     }
 }

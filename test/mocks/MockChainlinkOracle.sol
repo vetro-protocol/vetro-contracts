@@ -6,6 +6,7 @@ import {AggregatorV2V3Interface} from "@chainlink/contracts/interfaces/feeds/Agg
 contract MockChainlinkOracle is AggregatorV2V3Interface {
     int256 private price;
     uint256 updatedAt = block.timestamp;
+    uint8 private _decimals = 8;
 
     constructor(int256 _price) {
         price = _price;
@@ -16,8 +17,12 @@ contract MockChainlinkOracle is AggregatorV2V3Interface {
         updatedAt = block.timestamp;
     }
 
-    function decimals() external pure returns (uint8) {
-        return 8;
+    function setDecimals(uint8 decimals_) external {
+        _decimals = decimals_;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
     }
 
     function description() external pure returns (string memory) {

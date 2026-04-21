@@ -35,7 +35,7 @@ contract vetBTC_E2E_Test is Test {
 
         // Deploy DerivedPriceFeedAdapter: cbBTC/USD ÷ BTC/USD = cbBTC/BTC
         cbBtcBtcFeed =
-            new DerivedPriceFeedAdapter(AggregatorV2V3Interface(CBBTC_USD_FEED), AggregatorV2V3Interface(BTC_USD_FEED));
+            new DerivedPriceFeedAdapter(AggregatorV2V3Interface(CBBTC_USD_FEED), AggregatorV2V3Interface(BTC_USD_FEED), 8);
 
         // Deploy a passthrough ERC-4626 vault wrapping real cbBTC
         cbBtcVault = new MockCbBTCVault(IERC20(cbBTC));
