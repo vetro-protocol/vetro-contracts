@@ -21,16 +21,37 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     // Governance - UPDATE BEFORE MAINNET DEPLOYMENT
     GOVERNOR: '0xE173b056eF552c7322040703dDfC1e0638A575d3',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
+
+    // Chainlink feeds
     CHAINLINK_BTC_USD_FEED: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
     CHAINLINK_CBBTC_USD_FEED: '0x2665701293fCbEB223D11A08D826563EDcCE423A',
+
+    // Tokens
+    WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    CBBTC: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+
+    VETRO_VAULT_WBTC: '0x30c410D92e54B2b492D725D6CEBed98891817C91',
+    VETRO_VAULT_CBBTC: '0xD954d72D885f8409bCBe3f15ad2fc3EcA4a5Ba33',
+    VETRO_VAULT_HemiBTC: '0x54b8a87c9f85Dd2515CaAE1fad2dd85199900076',
   },
 
   // Hardhat local network - mirrors mainnet for fork testing
   31337: {
     GOVERNOR: '0x0000000000000000000000000000000000000000',
     GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
+
+    // Chainlink feeds
     CHAINLINK_BTC_USD_FEED: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
     CHAINLINK_CBBTC_USD_FEED: '0x0000000000000000000000000000000000000000',
+
+    // Tokens
+    WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    CBBTC: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+
+    // vetBTC yield vaults
+    VETRO_VAULT_WBTC: '0x30c410D92e54B2b492D725D6CEBed98891817C91',
+    VETRO_VAULT_CBBTC: '0xD954d72D885f8409bCBe3f15ad2fc3EcA4a5Ba33',
+    VETRO_VAULT_HemiBTC: '0x54b8a87c9f85Dd2515CaAE1fad2dd85199900076',
   },
 }
 
@@ -41,6 +62,15 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
 export const PeggedTokenConfig = {
   name: 'Vetro USD',
   symbol: 'VUSD',
+}
+
+// =============================================================================
+// vetBTC TOKEN CONFIGURATION
+// =============================================================================
+
+export const VetBTCConfig = {
+  name: 'Vetro BTC',
+  symbol: 'vetBTC',
 }
 
 // =============================================================================
@@ -64,6 +94,14 @@ export const GatewayConfig = {
   withdrawalDelay: 2 * 60,
 }
 
+export const VetBTCGatewayConfig = {
+  // Maximum total mint limit for vetBTC
+  mintLimit: parseEther('1320'), // 1320 vetBTC, approx 100M USD
+
+  // Withdrawal delay period in seconds
+  withdrawalDelay: 2 * 60,
+}
+
 // =============================================================================
 // STAKING VAULT (sVUSD) CONFIGURATION
 // =============================================================================
@@ -75,6 +113,15 @@ export const StakingVaultConfig = {
   // Default cooldown duration is set in contract: 7 days
   // Min: 1 day, Max: 30 days
   // Cooldown is enabled by default
+}
+
+// =============================================================================
+// STAKING VAULT (svetBTC) CONFIGURATION
+// =============================================================================
+
+export const SVetBTCConfig = {
+  name: 'Staked Vetro BTC',
+  symbol: 'svetBTC',
 }
 
 // =============================================================================
@@ -92,6 +139,7 @@ export const YieldDistributorConfig = {
 // =============================================================================
 
 export const ContractAliases = {
+  // VUSD ecosystem
   PeggedToken: 'PeggedToken',
   Treasury: 'Treasury',
   Gateway: 'Gateway',
@@ -99,6 +147,14 @@ export const ContractAliases = {
   YieldDistributor: 'YieldDistributor',
   ChainlinkFeedAdapter: 'ChainlinkFeedAdapter',
   DerivedPriceFeedAdapter: 'DerivedPriceFeedAdapter',
+
+  // vetBTC ecosystem
+  VetBTC: 'VetBTC',
+  VetBTCTreasury: 'VetBTCTreasury',
+  VetBTCGateway: 'VetBTCGateway',
+  SVetBTC: 'SVetBTC',
+  VetBTCYieldDistributor: 'VetBTCYieldDistributor',
+  FixedPriceFeedAdapter: 'FixedPriceFeedAdapter',
 } as const
 
 // =============================================================================
@@ -111,6 +167,7 @@ interface ContractConfig {
 }
 
 export const UpgradableContracts: {[key: string]: ContractConfig} = {
+  // VUSD ecosystem
   Gateway: {
     alias: 'Gateway',
     contract: 'Gateway',
@@ -121,6 +178,20 @@ export const UpgradableContracts: {[key: string]: ContractConfig} = {
   },
   YieldDistributor: {
     alias: 'YieldDistributor',
+    contract: 'YieldDistributor',
+  },
+
+  // vetBTC ecosystem
+  VetBTCGateway: {
+    alias: ContractAliases.VetBTCGateway,
+    contract: 'Gateway',
+  },
+  SVetBTC: {
+    alias: ContractAliases.SVetBTC,
+    contract: 'StakingVault',
+  },
+  VetBTCYieldDistributor: {
+    alias: ContractAliases.VetBTCYieldDistributor,
     contract: 'YieldDistributor',
   },
 }
