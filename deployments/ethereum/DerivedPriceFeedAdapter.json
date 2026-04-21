@@ -1,0 +1,387 @@
+{
+  "address": "0x33F1E44DB47400C9BD6221962712D882Adb8fFA6",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "contract AggregatorV2V3Interface",
+          "name": "baseFeed_",
+          "type": "address"
+        },
+        {
+          "internalType": "contract AggregatorV2V3Interface",
+          "name": "quoteFeed_",
+          "type": "address"
+        },
+        {
+          "internalType": "uint8",
+          "name": "decimals_",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "HistoricalRoundsNotSupported",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidPrice",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OutputDecimalsTooLow",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroAddress",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "int256",
+          "name": "current",
+          "type": "int256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "roundId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "updatedAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "AnswerUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "roundId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "startedBy",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "startedAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "NewRound",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "baseFeed",
+      "outputs": [
+        {
+          "internalType": "contract AggregatorV2V3Interface",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "decimals",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "description",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "getAnswer",
+      "outputs": [
+        {
+          "internalType": "int256",
+          "name": "",
+          "type": "int256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint80",
+          "name": "",
+          "type": "uint80"
+        }
+      ],
+      "name": "getRoundData",
+      "outputs": [
+        {
+          "internalType": "uint80",
+          "name": "",
+          "type": "uint80"
+        },
+        {
+          "internalType": "int256",
+          "name": "",
+          "type": "int256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint80",
+          "name": "",
+          "type": "uint80"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "getTimestamp",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestAnswer",
+      "outputs": [
+        {
+          "internalType": "int256",
+          "name": "",
+          "type": "int256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestRound",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestRoundData",
+      "outputs": [
+        {
+          "internalType": "uint80",
+          "name": "_roundId",
+          "type": "uint80"
+        },
+        {
+          "internalType": "int256",
+          "name": "_answer",
+          "type": "int256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_startedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_updatedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint80",
+          "name": "_answeredInRound",
+          "type": "uint80"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestTimestamp",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "quoteFeed",
+      "outputs": [
+        {
+          "internalType": "contract AggregatorV2V3Interface",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "version",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    }
+  ],
+  "transactionHash": "0xe9f0e02635ef509739e46cd7e8f30724b4674bbe0495624543b7dc9b65cb627d",
+  "receipt": {
+    "to": null,
+    "from": "0x26D4333E2E5572A5609ddEDd65748F8F237042D9",
+    "contractAddress": "0x33F1E44DB47400C9BD6221962712D882Adb8fFA6",
+    "transactionIndex": 128,
+    "gasUsed": "649100",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "blockHash": "0x78f51d7677032196d730289d79ea0256d0339c770e09b67a61f89507d33bd3db",
+    "transactionHash": "0xe9f0e02635ef509739e46cd7e8f30724b4674bbe0495624543b7dc9b65cb627d",
+    "logs": [],
+    "blockNumber": 24931136,
+    "cumulativeGasUsed": "22402280",
+    "status": 1,
+    "byzantium": true
+  },
+  "args": [
+    "0x2665701293fCbEB223D11A08D826563EDcCE423A",
+    "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c",
+    8
+  ],
+  "numDeployments": 1,
+  "solcInputHash": "0506567e0c2fedf45fd3ce2a56eefd6b",
+  "metadata": "{\"compiler\":{\"version\":\"0.8.30+commit.73712a01\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"baseFeed_\",\"type\":\"address\"},{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"quoteFeed_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"decimals_\",\"type\":\"uint8\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[],\"name\":\"HistoricalRoundsNotSupported\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"InvalidPrice\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"OutputDecimalsTooLow\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"ZeroAddress\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"int256\",\"name\":\"current\",\"type\":\"int256\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"}],\"name\":\"AnswerUpdated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"startedBy\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"}],\"name\":\"NewRound\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"baseFeed\",\"outputs\":[{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"decimals\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"description\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"getAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint80\",\"name\":\"\",\"type\":\"uint80\"}],\"name\":\"getRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"\",\"type\":\"uint80\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"getTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRound\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"_roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"_answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"_startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"_updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"_answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"quoteFeed\",\"outputs\":[{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"version\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"}],\"devdoc\":{\"kind\":\"dev\",\"methods\":{\"constructor\":{\"params\":{\"baseFeed_\":\"Chainlink feed for the base asset (e.g. cbBTC/USD, hemiBTC/USD).\",\"decimals_\":\"Decimal precision of the derived output feed (minimum 8).\",\"quoteFeed_\":\"Chainlink feed for the quote asset (e.g. BTC/USD).\"}},\"getAnswer(uint256)\":{\"details\":\"Not supported: round IDs are independent across two feeds and cannot be correlated.\"},\"getRoundData(uint80)\":{\"details\":\"Not supported: round IDs are independent across two feeds and cannot be correlated.\"},\"getTimestamp(uint256)\":{\"details\":\"Not supported: round IDs are independent across two feeds and cannot be correlated.\"},\"latestRound()\":{\"details\":\"Always returns 1 \\u2014 consistent with the synthetic roundId returned by latestRoundData.\"},\"latestRoundData()\":{\"details\":\"roundId and answeredInRound are always 1 \\u2014 this feed has no real round system; the      constant 1 satisfies consumers that check answeredInRound > 0.      startedAt equals updatedAt (roundAge = 0) because derivation is instantaneous.      updatedAt is the minimum of both feeds' updatedAt to reflect the least-fresh source.\"}},\"stateVariables\":{\"_numeratorScale\":{\"details\":\"result = (basePrice * _numeratorScale) / (quotePrice * _denominatorScale)      _numeratorScale   = 10^(d_quote + d_out)      _denominatorScale = 10^d_base      Kept separate to avoid negative exponents when feed decimals differ.\"}},\"title\":\"DerivedPriceFeedAdapter\",\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{\"baseFeed()\":{\"notice\":\"Chainlink feed for the base asset (e.g. cbBTC/USD).\"},\"quoteFeed()\":{\"notice\":\"Chainlink feed for the quote asset, sharing the same intermediate as baseFeed         (e.g. BTC/USD).\"}},\"notice\":\"Derives a base/quote price from two Chainlink feeds that share a common intermediate:         base/quote = (base/X) / (quote/X)         E.g. cbBTC/BTC from cbBTC/USD and BTC/USD, or hemiBTC/BTC from hemiBTC/USD and BTC/USD.         Feeds may have different decimal precisions; output decimals are set at deployment.         Historical round queries are not supported; only latest-price methods are meaningful         for a derived feed whose two sources update on independent schedules.\",\"version\":1}},\"settings\":{\"compilationTarget\":{\"src/DerivedPriceFeedAdapter.sol\":\"DerivedPriceFeedAdapter\"},\"evmVersion\":\"cancun\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\",\"useLiteralContent\":true},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[]},\"sources\":{\"@chainlink/contracts/interfaces/feeds/AggregatorInterface.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity >=0.6.2 <0.9.0;\\n\\ninterface AggregatorInterface {\\n  function latestAnswer() external view returns (int256);\\n\\n  function latestTimestamp() external view returns (uint256);\\n\\n  function latestRound() external view returns (uint256);\\n\\n  function getAnswer(uint256 roundId) external view returns (int256);\\n\\n  function getTimestamp(uint256 roundId) external view returns (uint256);\\n\\n  event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt);\\n\\n  event NewRound(uint256 indexed roundId, address indexed startedBy, uint256 startedAt);\\n}\\n\",\"keccak256\":\"0x7136ab15edbae4d2826e8fb39d299642d7a2b54273bdcdbb1aa244bdde5c4b51\",\"license\":\"MIT\"},\"@chainlink/contracts/interfaces/feeds/AggregatorV2V3Interface.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity >=0.6.2 <0.9.0;\\n\\nimport \\\"./AggregatorInterface.sol\\\";\\nimport \\\"./AggregatorV3Interface.sol\\\";\\n\\ninterface AggregatorV2V3Interface is AggregatorInterface, AggregatorV3Interface {}\\n\",\"keccak256\":\"0xa3d940acf4e60a90c8ee5ee98d872898d3c71146065b33b791811eda2edd82c3\",\"license\":\"MIT\"},\"@chainlink/contracts/interfaces/feeds/AggregatorV3Interface.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity >=0.6.2 <0.9.0;\\n\\ninterface AggregatorV3Interface {\\n  function decimals() external view returns (uint8);\\n  function description() external view returns (string memory);\\n  function version() external view returns (uint256);\\n  function getRoundData(uint80 _roundId) external view returns (\\n    uint80 roundId,\\n    int256 answer,\\n    uint256 startedAt,\\n    uint256 updatedAt,\\n    uint80 answeredInRound\\n  );\\n  function latestRoundData() external view returns (\\n    uint80 roundId,\\n    int256 answer,\\n    uint256 startedAt,\\n    uint256 updatedAt,\\n    uint80 answeredInRound\\n  );\\n}\\n\",\"keccak256\":\"0x0361fb94a95f5bba799ca6f389dac25745a4333f730360c2aac0af475bd5dbd7\",\"license\":\"MIT\"},\"src/DerivedPriceFeedAdapter.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\n\\npragma solidity 0.8.30;\\n\\nimport {\\n    AggregatorInterface,\\n    AggregatorV3Interface,\\n    AggregatorV2V3Interface\\n} from \\\"@chainlink/contracts/interfaces/feeds/AggregatorV2V3Interface.sol\\\";\\n\\n/// @title DerivedPriceFeedAdapter\\n/// @notice Derives a base/quote price from two Chainlink feeds that share a common intermediate:\\n///         base/quote = (base/X) / (quote/X)\\n///         E.g. cbBTC/BTC from cbBTC/USD and BTC/USD, or hemiBTC/BTC from hemiBTC/USD and BTC/USD.\\n///         Feeds may have different decimal precisions; output decimals are set at deployment.\\n///         Historical round queries are not supported; only latest-price methods are meaningful\\n///         for a derived feed whose two sources update on independent schedules.\\ncontract DerivedPriceFeedAdapter is AggregatorV2V3Interface {\\n    error ZeroAddress();\\n    error InvalidPrice();\\n    error OutputDecimalsTooLow();\\n    error HistoricalRoundsNotSupported();\\n\\n    /// @notice Chainlink feed for the base asset (e.g. cbBTC/USD).\\n    AggregatorV2V3Interface public immutable baseFeed;\\n\\n    /// @notice Chainlink feed for the quote asset, sharing the same intermediate as baseFeed\\n    ///         (e.g. BTC/USD).\\n    AggregatorV2V3Interface public immutable quoteFeed;\\n\\n    uint8 private immutable _decimals;\\n\\n    /// @dev result = (basePrice * _numeratorScale) / (quotePrice * _denominatorScale)\\n    ///      _numeratorScale   = 10^(d_quote + d_out)\\n    ///      _denominatorScale = 10^d_base\\n    ///      Kept separate to avoid negative exponents when feed decimals differ.\\n    int256 private immutable _numeratorScale;\\n    int256 private immutable _denominatorScale;\\n\\n    /// @param baseFeed_   Chainlink feed for the base asset (e.g. cbBTC/USD, hemiBTC/USD).\\n    /// @param quoteFeed_  Chainlink feed for the quote asset (e.g. BTC/USD).\\n    /// @param decimals_   Decimal precision of the derived output feed (minimum 8).\\n    constructor(AggregatorV2V3Interface baseFeed_, AggregatorV2V3Interface quoteFeed_, uint8 decimals_) {\\n        if (address(baseFeed_) == address(0) || address(quoteFeed_) == address(0)) revert ZeroAddress();\\n        if (decimals_ < 8) revert OutputDecimalsTooLow();\\n        baseFeed = baseFeed_;\\n        quoteFeed = quoteFeed_;\\n        _decimals = decimals_;\\n        _numeratorScale = int256(10 ** uint256(quoteFeed_.decimals() + decimals_));\\n        _denominatorScale = int256(10 ** uint256(baseFeed_.decimals()));\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    function decimals() external view returns (uint8) {\\n        return _decimals;\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    function description() external view returns (string memory) {\\n        return string.concat(baseFeed.description(), \\\" / \\\", quoteFeed.description(), \\\" derived\\\");\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    function version() external pure returns (uint256) {\\n        return 1;\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    /// @dev roundId and answeredInRound are always 1 \\u2014 this feed has no real round system; the\\n    ///      constant 1 satisfies consumers that check answeredInRound > 0.\\n    ///      startedAt equals updatedAt (roundAge = 0) because derivation is instantaneous.\\n    ///      updatedAt is the minimum of both feeds' updatedAt to reflect the least-fresh source.\\n    function latestRoundData()\\n        external\\n        view\\n        returns (uint80 _roundId, int256 _answer, uint256 _startedAt, uint256 _updatedAt, uint80 _answeredInRound)\\n    {\\n        (, int256 _basePrice,, uint256 _baseUpdatedAt,) = baseFeed.latestRoundData();\\n        (, int256 _quotePrice,, uint256 _quoteUpdatedAt,) = quoteFeed.latestRoundData();\\n        uint256 _minUpdatedAt = _min(_baseUpdatedAt, _quoteUpdatedAt);\\n        return (1, _derive(_basePrice, _quotePrice), _minUpdatedAt, _minUpdatedAt, 1);\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    /// @dev Not supported: round IDs are independent across two feeds and cannot be correlated.\\n    function getRoundData(uint80) external pure returns (uint80, int256, uint256, uint256, uint80) {\\n        revert HistoricalRoundsNotSupported();\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    function latestAnswer() external view returns (int256) {\\n        (, int256 _basePrice,,,) = baseFeed.latestRoundData();\\n        (, int256 _quotePrice,,,) = quoteFeed.latestRoundData();\\n        return _derive(_basePrice, _quotePrice);\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    function latestTimestamp() external view returns (uint256) {\\n        (,,, uint256 _baseUpdatedAt,) = baseFeed.latestRoundData();\\n        (,,, uint256 _quoteUpdatedAt,) = quoteFeed.latestRoundData();\\n        return _min(_baseUpdatedAt, _quoteUpdatedAt);\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    /// @dev Always returns 1 \\u2014 consistent with the synthetic roundId returned by latestRoundData.\\n    function latestRound() external pure returns (uint256) {\\n        return 1;\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    /// @dev Not supported: round IDs are independent across two feeds and cannot be correlated.\\n    function getAnswer(uint256) external pure returns (int256) {\\n        revert HistoricalRoundsNotSupported();\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    /// @dev Not supported: round IDs are independent across two feeds and cannot be correlated.\\n    function getTimestamp(uint256) external pure returns (uint256) {\\n        revert HistoricalRoundsNotSupported();\\n    }\\n\\n    function _derive(int256 basePrice_, int256 quotePrice_) private view returns (int256 _result) {\\n        if (basePrice_ <= 0 || quotePrice_ <= 0) revert InvalidPrice();\\n        _result = (basePrice_ * _numeratorScale) / (quotePrice_ * _denominatorScale);\\n        if (_result <= 0) revert InvalidPrice();\\n    }\\n\\n    function _min(uint256 a, uint256 b) private pure returns (uint256) {\\n        return a < b ? a : b;\\n    }\\n}\\n\",\"keccak256\":\"0x20409463f8b3536dca9e453bc0a3d5d92613790dd769c044aab2950a1d6ca604\",\"license\":\"MIT\"}},\"version\":1}",
+  "bytecode": "0x610120604052348015610010575f5ffd5b50604051610dff380380610dff83398101604081905261002f916101cf565b6001600160a01b038316158061004c57506001600160a01b038216155b1561006a5760405163d92e233d60e01b815260040160405180910390fd5b60088160ff16101561008f57604051631dee115160e31b815260040160405180910390fd5b6001600160a01b03808416608052821660a081905260ff821660c0526040805163313ce56760e01b8152905183929163313ce5679160048083019260209291908290030181865afa1580156100e6573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061010a919061020f565b6101149190610243565b6101229060ff16600a610345565b60e08181525050826001600160a01b031663313ce5676040518163ffffffff1660e01b8152600401602060405180830381865afa158015610165573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610189919061020f565b6101979060ff16600a610345565b6101005250610350915050565b80516001600160a01b03811681146101ba575f5ffd5b919050565b805160ff811681146101ba575f5ffd5b5f5f5f606084860312156101e1575f5ffd5b6101ea846101a4565b92506101f8602085016101a4565b9150610206604085016101bf565b90509250925092565b5f6020828403121561021f575f5ffd5b610228826101bf565b9392505050565b634e487b7160e01b5f52601160045260245ffd5b60ff818116838216019081111561025c5761025c61022f565b92915050565b6001815b600184111561029d578085048111156102815761028161022f565b600184161561028f57908102905b60019390931c928002610266565b935093915050565b5f826102b35750600161025c565b816102bf57505f61025c565b81600181146102d557600281146102df576102fb565b600191505061025c565b60ff8411156102f0576102f061022f565b50506001821b61025c565b5060208310610133831016604e8410600b841016171561031e575081810a61025c565b61032a5f198484610262565b805f190482111561033d5761033d61022f565b029392505050565b5f61022883836102a5565b60805160a05160c05160e05161010051610a3b6103c45f395f61070501525f61072f01525f60bc01525f818161012a0152818161027b01528181610396015281816104c6015261061e01525f81816101ce015281816101f4015281816103140152818161043f01526105950152610a3b5ff3fe608060405234801561000f575f5ffd5b50600436106100b1575f3560e01c806389a71afe1161006e57806389a71afe146101255780639a6fc8f514610164578063b5ab58dc146101ae578063b633620c146101ae578063feaf968c146101c1578063fed0f855146101c9575f5ffd5b8063313ce567146100b557806350d25bcd146100eb57806354fd4d5014610101578063668a0f02146101015780637284e416146101085780638205bf6a1461011d575b5f5ffd5b60405160ff7f00000000000000000000000000000000000000000000000000000000000000001681526020015b60405180910390f35b6100f36101f0565b6040519081526020016100e2565b60016100f3565b610110610310565b6040516100e2919061079c565b6100f361043b565b61014c7f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b0390911681526020016100e2565b6101776101723660046107eb565b610554565b6040805169ffffffffffffffffffff968716815260208101959095528401929092526060830152909116608082015260a0016100e2565b6100f36101bc366004610806565b610572565b61017761058c565b61014c7f000000000000000000000000000000000000000000000000000000000000000081565b5f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa15801561024e573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610272919061081d565b5050509150505f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa1580156102d5573d5f5f3e3d5ffd5b505050506040513d601f19601f820116820180604052508101906102f9919061081d565b50505091505061030982826106d3565b9250505090565b60607f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316637284e4166040518163ffffffff1660e01b81526004015f60405180830381865afa15801561036d573d5f5f3e3d5ffd5b505050506040513d5f823e601f3d908101601f191682016040526103949190810190610885565b7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316637284e4166040518163ffffffff1660e01b81526004015f60405180830381865afa1580156103ef573d5f5f3e3d5ffd5b505050506040513d5f823e601f3d908101601f191682016040526104169190810190610885565b60405160200161042792919061094f565b604051602081830303815290604052905090565b5f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa158015610499573d5f5f3e3d5ffd5b505050506040513d601f19601f820116820180604052508101906104bd919061081d565b5093505050505f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa158015610520573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610544919061081d565b5093505050506103098282610785565b5f5f5f5f5f6040516315e2f73160e11b815260040160405180910390fd5b5f6040516315e2f73160e11b815260040160405180910390fd5b5f5f5f5f5f5f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa1580156105ef573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610613919061081d565b509350509250505f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa158015610678573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061069c919061081d565b509350509250505f6106ae8483610785565b905060016106bc86856106d3565b909b909a5090985088975060019650945050505050565b5f5f831315806106e357505f8213155b156107005760405162bfc92160e01b815260040160405180910390fd5b61072a7f00000000000000000000000000000000000000000000000000000000000000008361099e565b6107547f00000000000000000000000000000000000000000000000000000000000000008561099e565b61075e91906109cd565b90505f811361077f5760405162bfc92160e01b815260040160405180910390fd5b92915050565b5f8183106107935781610795565b825b9392505050565b602081525f82518060208401528060208501604085015e5f604082850101526040601f19601f83011684010191505092915050565b69ffffffffffffffffffff811681146107e8575f5ffd5b50565b5f602082840312156107fb575f5ffd5b8135610795816107d1565b5f60208284031215610816575f5ffd5b5035919050565b5f5f5f5f5f60a08688031215610831575f5ffd5b855161083c816107d1565b60208701516040880151606089015160808a015193985091965094509250610863816107d1565b809150509295509295909350565b634e487b7160e01b5f52604160045260245ffd5b5f60208284031215610895575f5ffd5b815167ffffffffffffffff8111156108ab575f5ffd5b8201601f810184136108bb575f5ffd5b805167ffffffffffffffff8111156108d5576108d5610871565b604051601f8201601f19908116603f0116810167ffffffffffffffff8111828210171561090457610904610871565b60405281815282820160200186101561091b575f5ffd5b8160208401602083015e5f91810160200191909152949350505050565b5f81518060208401855e5f93019283525090919050565b5f61095a8285610938565b6201017960ed1b81526109706003820185610938565b670819195c9a5d995960c21b815260080195945050505050565b634e487b7160e01b5f52601160045260245ffd5b8082025f8212600160ff1b841416156109b9576109b961098a565b818105831482151761077f5761077f61098a565b5f826109e757634e487b7160e01b5f52601260045260245ffd5b600160ff1b82145f1984141615610a0057610a0061098a565b50059056fea264697066735822122011c5262d02f2cad31dbd3e5d67f066ea5c593f365d9c083f4330f8d0fdedcc3a64736f6c634300081e0033",
+  "deployedBytecode": "0x608060405234801561000f575f5ffd5b50600436106100b1575f3560e01c806389a71afe1161006e57806389a71afe146101255780639a6fc8f514610164578063b5ab58dc146101ae578063b633620c146101ae578063feaf968c146101c1578063fed0f855146101c9575f5ffd5b8063313ce567146100b557806350d25bcd146100eb57806354fd4d5014610101578063668a0f02146101015780637284e416146101085780638205bf6a1461011d575b5f5ffd5b60405160ff7f00000000000000000000000000000000000000000000000000000000000000001681526020015b60405180910390f35b6100f36101f0565b6040519081526020016100e2565b60016100f3565b610110610310565b6040516100e2919061079c565b6100f361043b565b61014c7f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b0390911681526020016100e2565b6101776101723660046107eb565b610554565b6040805169ffffffffffffffffffff968716815260208101959095528401929092526060830152909116608082015260a0016100e2565b6100f36101bc366004610806565b610572565b61017761058c565b61014c7f000000000000000000000000000000000000000000000000000000000000000081565b5f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa15801561024e573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610272919061081d565b5050509150505f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa1580156102d5573d5f5f3e3d5ffd5b505050506040513d601f19601f820116820180604052508101906102f9919061081d565b50505091505061030982826106d3565b9250505090565b60607f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316637284e4166040518163ffffffff1660e01b81526004015f60405180830381865afa15801561036d573d5f5f3e3d5ffd5b505050506040513d5f823e601f3d908101601f191682016040526103949190810190610885565b7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316637284e4166040518163ffffffff1660e01b81526004015f60405180830381865afa1580156103ef573d5f5f3e3d5ffd5b505050506040513d5f823e601f3d908101601f191682016040526104169190810190610885565b60405160200161042792919061094f565b604051602081830303815290604052905090565b5f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa158015610499573d5f5f3e3d5ffd5b505050506040513d601f19601f820116820180604052508101906104bd919061081d565b5093505050505f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa158015610520573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610544919061081d565b5093505050506103098282610785565b5f5f5f5f5f6040516315e2f73160e11b815260040160405180910390fd5b5f6040516315e2f73160e11b815260040160405180910390fd5b5f5f5f5f5f5f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa1580156105ef573d5f5f3e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610613919061081d565b509350509250505f5f7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031663feaf968c6040518163ffffffff1660e01b815260040160a060405180830381865afa158015610678573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061069c919061081d565b509350509250505f6106ae8483610785565b905060016106bc86856106d3565b909b909a5090985088975060019650945050505050565b5f5f831315806106e357505f8213155b156107005760405162bfc92160e01b815260040160405180910390fd5b61072a7f00000000000000000000000000000000000000000000000000000000000000008361099e565b6107547f00000000000000000000000000000000000000000000000000000000000000008561099e565b61075e91906109cd565b90505f811361077f5760405162bfc92160e01b815260040160405180910390fd5b92915050565b5f8183106107935781610795565b825b9392505050565b602081525f82518060208401528060208501604085015e5f604082850101526040601f19601f83011684010191505092915050565b69ffffffffffffffffffff811681146107e8575f5ffd5b50565b5f602082840312156107fb575f5ffd5b8135610795816107d1565b5f60208284031215610816575f5ffd5b5035919050565b5f5f5f5f5f60a08688031215610831575f5ffd5b855161083c816107d1565b60208701516040880151606089015160808a015193985091965094509250610863816107d1565b809150509295509295909350565b634e487b7160e01b5f52604160045260245ffd5b5f60208284031215610895575f5ffd5b815167ffffffffffffffff8111156108ab575f5ffd5b8201601f810184136108bb575f5ffd5b805167ffffffffffffffff8111156108d5576108d5610871565b604051601f8201601f19908116603f0116810167ffffffffffffffff8111828210171561090457610904610871565b60405281815282820160200186101561091b575f5ffd5b8160208401602083015e5f91810160200191909152949350505050565b5f81518060208401855e5f93019283525090919050565b5f61095a8285610938565b6201017960ed1b81526109706003820185610938565b670819195c9a5d995960c21b815260080195945050505050565b634e487b7160e01b5f52601160045260245ffd5b8082025f8212600160ff1b841416156109b9576109b961098a565b818105831482151761077f5761077f61098a565b5f826109e757634e487b7160e01b5f52601260045260245ffd5b600160ff1b82145f1984141615610a0057610a0061098a565b50059056fea264697066735822122011c5262d02f2cad31dbd3e5d67f066ea5c593f365d9c083f4330f8d0fdedcc3a64736f6c634300081e0033",
+  "devdoc": {
+    "kind": "dev",
+    "methods": {
+      "constructor": {
+        "params": {
+          "baseFeed_": "Chainlink feed for the base asset (e.g. cbBTC/USD, hemiBTC/USD).",
+          "decimals_": "Decimal precision of the derived output feed (minimum 8).",
+          "quoteFeed_": "Chainlink feed for the quote asset (e.g. BTC/USD)."
+        }
+      },
+      "getAnswer(uint256)": {
+        "details": "Not supported: round IDs are independent across two feeds and cannot be correlated."
+      },
+      "getRoundData(uint80)": {
+        "details": "Not supported: round IDs are independent across two feeds and cannot be correlated."
+      },
+      "getTimestamp(uint256)": {
+        "details": "Not supported: round IDs are independent across two feeds and cannot be correlated."
+      },
+      "latestRound()": {
+        "details": "Always returns 1 — consistent with the synthetic roundId returned by latestRoundData."
+      },
+      "latestRoundData()": {
+        "details": "roundId and answeredInRound are always 1 — this feed has no real round system; the      constant 1 satisfies consumers that check answeredInRound > 0.      startedAt equals updatedAt (roundAge = 0) because derivation is instantaneous.      updatedAt is the minimum of both feeds' updatedAt to reflect the least-fresh source."
+      }
+    },
+    "stateVariables": {
+      "_numeratorScale": {
+        "details": "result = (basePrice * _numeratorScale) / (quotePrice * _denominatorScale)      _numeratorScale   = 10^(d_quote + d_out)      _denominatorScale = 10^d_base      Kept separate to avoid negative exponents when feed decimals differ."
+      }
+    },
+    "title": "DerivedPriceFeedAdapter",
+    "version": 1
+  },
+  "userdoc": {
+    "kind": "user",
+    "methods": {
+      "baseFeed()": {
+        "notice": "Chainlink feed for the base asset (e.g. cbBTC/USD)."
+      },
+      "quoteFeed()": {
+        "notice": "Chainlink feed for the quote asset, sharing the same intermediate as baseFeed         (e.g. BTC/USD)."
+      }
+    },
+    "notice": "Derives a base/quote price from two Chainlink feeds that share a common intermediate:         base/quote = (base/X) / (quote/X)         E.g. cbBTC/BTC from cbBTC/USD and BTC/USD, or hemiBTC/BTC from hemiBTC/USD and BTC/USD.         Feeds may have different decimal precisions; output decimals are set at deployment.         Historical round queries are not supported; only latest-price methods are meaningful         for a derived feed whose two sources update on independent schedules.",
+    "version": 1
+  },
+  "storageLayout": {
+    "storage": [],
+    "types": null
+  }
+}

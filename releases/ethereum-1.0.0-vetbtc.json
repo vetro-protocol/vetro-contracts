@@ -1,0 +1,53 @@
+{
+  "version": "2.0.0",
+  "network": "ethereum",
+  "chainId": 1,
+  "contracts": {
+    "VetBTC": {
+      "address": "0xf196C68233464A16CFDa319a47c21f4cECa62001",
+      "name": "Vetro BTC",
+      "symbol": "vetBTC"
+    },
+    "VetBTCTreasury": {
+      "address": "0xd25a7b0b817fD816d0995eC67fb70e75EE65Bd7F"
+    },
+    "VetBTCGateway": {
+      "address": "0xCBA2Ffa0AC52d7871a4221a871793Eb788013faB",
+      "implementation": "0xd1C374C6FDCdDF77923118dC15D66aB13289A5Cf",
+      "proxyAdmin": "0xb93D985Ad99b4a161C55AAe00d913e7c7C7324b3"
+    },
+    "SVetBTC": {
+      "address": "0x0cB9D84d4bcEc8d3D5B2d99a6F07f4605325987e",
+      "implementation": "0x378B5E71083B3D64E26bCb622748a0D3aBD1a9d3",
+      "proxyAdmin": "0x6b22df8Ec4d674e7B439833b7828b45A2aaAb25B"
+    },
+    "VetBTCYieldDistributor": {
+      "address": "0xd74bcf1299176E98899bA2e86dD2C9aE089F5276",
+      "implementation": "0x4a6e1AcA9fB0A5d428dFac5127C511a9d5723080",
+      "proxyAdmin": "0xe419724cd740E6033AE3f69f027dfFC70eEf6f5e"
+    },
+    "FixedPriceFeedAdapter": {
+      "address": "0x032A35daDA672B394525881f789a3B4E7734C76C"
+    },
+    "DerivedPriceFeedAdapter": {
+      "address": "0x33F1E44DB47400C9BD6221962712D882Adb8fFA6"
+    }
+  },
+  "whitelistedTokens": {
+    "WBTC": {
+      "token": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+      "vault": "0x30c410D92e54B2b492D725D6CEBed98891817C91",
+      "oracle": "0x032A35daDA672B394525881f789a3B4E7734C76C",
+      "stalePeriod": 86400
+    },
+    "cbBTC": {
+      "token": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+      "vault": "0xD954d72D885f8409bCBe3f15ad2fc3EcA4a5Ba33",
+      "oracle": "0x33F1E44DB47400C9BD6221962712D882Adb8fFA6",
+      "stalePeriod": 86400
+    }
+  },
+  "governance": {
+    "owner": "0x26D4333E2E5572A5609ddEDd65748F8F237042D9"
+  }
+}

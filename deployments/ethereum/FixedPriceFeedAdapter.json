@@ -1,0 +1,343 @@
+{
+  "address": "0x032A35daDA672B394525881f789a3B4E7734C76C",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "int256",
+          "name": "price_",
+          "type": "int256"
+        },
+        {
+          "internalType": "uint8",
+          "name": "decimals_",
+          "type": "uint8"
+        },
+        {
+          "internalType": "string",
+          "name": "description_",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidPrice",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "int256",
+          "name": "current",
+          "type": "int256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "roundId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "updatedAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "AnswerUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "roundId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "startedBy",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "startedAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "NewRound",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "decimals",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "description",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "getAnswer",
+      "outputs": [
+        {
+          "internalType": "int256",
+          "name": "",
+          "type": "int256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint80",
+          "name": "roundId_",
+          "type": "uint80"
+        }
+      ],
+      "name": "getRoundData",
+      "outputs": [
+        {
+          "internalType": "uint80",
+          "name": "_roundId",
+          "type": "uint80"
+        },
+        {
+          "internalType": "int256",
+          "name": "_answer",
+          "type": "int256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_startedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_updatedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint80",
+          "name": "_answeredInRound",
+          "type": "uint80"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "getTimestamp",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestAnswer",
+      "outputs": [
+        {
+          "internalType": "int256",
+          "name": "",
+          "type": "int256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestRound",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestRoundData",
+      "outputs": [
+        {
+          "internalType": "uint80",
+          "name": "_roundId",
+          "type": "uint80"
+        },
+        {
+          "internalType": "int256",
+          "name": "_answer",
+          "type": "int256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_startedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_updatedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint80",
+          "name": "_answeredInRound",
+          "type": "uint80"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestTimestamp",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "version",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    }
+  ],
+  "transactionHash": "0x54f75a43ca45036e98063437ddf056783ca2f3efbaf1e31881a00a2d1c6b52ed",
+  "receipt": {
+    "to": null,
+    "from": "0x26D4333E2E5572A5609ddEDd65748F8F237042D9",
+    "contractAddress": "0x032A35daDA672B394525881f789a3B4E7734C76C",
+    "transactionIndex": 84,
+    "gasUsed": "280144",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "blockHash": "0x39a83a8ffac644ff0e4f9075bf836d536b73bc1eaf20b97ad08df9bf6d609a0c",
+    "transactionHash": "0x54f75a43ca45036e98063437ddf056783ca2f3efbaf1e31881a00a2d1c6b52ed",
+    "logs": [],
+    "blockNumber": 24931135,
+    "cumulativeGasUsed": "13597998",
+    "status": 1,
+    "byzantium": true
+  },
+  "args": [
+    100000000,
+    8,
+    "WBTC / BTC"
+  ],
+  "numDeployments": 1,
+  "solcInputHash": "0506567e0c2fedf45fd3ce2a56eefd6b",
+  "metadata": "{\"compiler\":{\"version\":\"0.8.30+commit.73712a01\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"int256\",\"name\":\"price_\",\"type\":\"int256\"},{\"internalType\":\"uint8\",\"name\":\"decimals_\",\"type\":\"uint8\"},{\"internalType\":\"string\",\"name\":\"description_\",\"type\":\"string\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[],\"name\":\"InvalidPrice\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"int256\",\"name\":\"current\",\"type\":\"int256\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"}],\"name\":\"AnswerUpdated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"startedBy\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"}],\"name\":\"NewRound\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"decimals\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"description\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"getAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId_\",\"type\":\"uint80\"}],\"name\":\"getRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"_roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"_answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"_startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"_updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"_answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"getTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRound\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"_roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"_answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"_startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"_updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"_answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"version\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"}],\"devdoc\":{\"kind\":\"dev\",\"methods\":{\"constructor\":{\"params\":{\"decimals_\":\"Decimal precision matching the feed ecosystem (e.g. 8 for BTC feeds).\",\"description_\":\"Human-readable label (e.g. \\\"WBTC / BTC\\\").\",\"price_\":\"Fixed price value (e.g. 1e8 for 1.0 at 8-decimal precision).\"}},\"getRoundData(uint80)\":{\"details\":\"All historical rounds return the same fixed price; startedAt equals updatedAt.\"},\"latestRound()\":{\"details\":\"Always returns 1 \\u2014 consistent with the roundId returned by latestRoundData.\"},\"latestRoundData()\":{\"details\":\"roundId and answeredInRound are always 1 \\u2014 satisfies answeredInRound > 0.      startedAt equals updatedAt (roundAge = 0) \\u2014 the fixed price is always current by definition.\"}},\"title\":\"FixedPriceFeedAdapter\",\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"notice\":\"Returns a hardcoded price, implementing the full Chainlink AggregatorV2V3Interface.         Intended for assets whose on-chain price is fixed at a known ratio,         e.g. WBTC/BTC = 1.0 (WBTC is a 1:1 wrapped representation of BTC).         updatedAt always returns block.timestamp \\u2014 the price is current by definition.\",\"version\":1}},\"settings\":{\"compilationTarget\":{\"src/FixedPriceFeedAdapter.sol\":\"FixedPriceFeedAdapter\"},\"evmVersion\":\"cancun\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\",\"useLiteralContent\":true},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[]},\"sources\":{\"@chainlink/contracts/interfaces/feeds/AggregatorInterface.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity >=0.6.2 <0.9.0;\\n\\ninterface AggregatorInterface {\\n  function latestAnswer() external view returns (int256);\\n\\n  function latestTimestamp() external view returns (uint256);\\n\\n  function latestRound() external view returns (uint256);\\n\\n  function getAnswer(uint256 roundId) external view returns (int256);\\n\\n  function getTimestamp(uint256 roundId) external view returns (uint256);\\n\\n  event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt);\\n\\n  event NewRound(uint256 indexed roundId, address indexed startedBy, uint256 startedAt);\\n}\\n\",\"keccak256\":\"0x7136ab15edbae4d2826e8fb39d299642d7a2b54273bdcdbb1aa244bdde5c4b51\",\"license\":\"MIT\"},\"@chainlink/contracts/interfaces/feeds/AggregatorV2V3Interface.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity >=0.6.2 <0.9.0;\\n\\nimport \\\"./AggregatorInterface.sol\\\";\\nimport \\\"./AggregatorV3Interface.sol\\\";\\n\\ninterface AggregatorV2V3Interface is AggregatorInterface, AggregatorV3Interface {}\\n\",\"keccak256\":\"0xa3d940acf4e60a90c8ee5ee98d872898d3c71146065b33b791811eda2edd82c3\",\"license\":\"MIT\"},\"@chainlink/contracts/interfaces/feeds/AggregatorV3Interface.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity >=0.6.2 <0.9.0;\\n\\ninterface AggregatorV3Interface {\\n  function decimals() external view returns (uint8);\\n  function description() external view returns (string memory);\\n  function version() external view returns (uint256);\\n  function getRoundData(uint80 _roundId) external view returns (\\n    uint80 roundId,\\n    int256 answer,\\n    uint256 startedAt,\\n    uint256 updatedAt,\\n    uint80 answeredInRound\\n  );\\n  function latestRoundData() external view returns (\\n    uint80 roundId,\\n    int256 answer,\\n    uint256 startedAt,\\n    uint256 updatedAt,\\n    uint80 answeredInRound\\n  );\\n}\\n\",\"keccak256\":\"0x0361fb94a95f5bba799ca6f389dac25745a4333f730360c2aac0af475bd5dbd7\",\"license\":\"MIT\"},\"src/FixedPriceFeedAdapter.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity 0.8.30;\\n\\nimport {\\n    AggregatorInterface,\\n    AggregatorV3Interface,\\n    AggregatorV2V3Interface\\n} from \\\"@chainlink/contracts/interfaces/feeds/AggregatorV2V3Interface.sol\\\";\\n\\n/// @title FixedPriceFeedAdapter\\n/// @notice Returns a hardcoded price, implementing the full Chainlink AggregatorV2V3Interface.\\n///         Intended for assets whose on-chain price is fixed at a known ratio,\\n///         e.g. WBTC/BTC = 1.0 (WBTC is a 1:1 wrapped representation of BTC).\\n///         updatedAt always returns block.timestamp \\u2014 the price is current by definition.\\ncontract FixedPriceFeedAdapter is AggregatorV2V3Interface {\\n    error InvalidPrice();\\n\\n    int256 private immutable _price;\\n    uint8 private immutable _decimals;\\n    string private _description;\\n\\n    /// @param price_       Fixed price value (e.g. 1e8 for 1.0 at 8-decimal precision).\\n    /// @param decimals_    Decimal precision matching the feed ecosystem (e.g. 8 for BTC feeds).\\n    /// @param description_ Human-readable label (e.g. \\\"WBTC / BTC\\\").\\n    constructor(int256 price_, uint8 decimals_, string memory description_) {\\n        if (price_ <= 0) revert InvalidPrice();\\n        _price = price_;\\n        _decimals = decimals_;\\n        _description = description_;\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    function decimals() external view returns (uint8) {\\n        return _decimals;\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    function description() external view returns (string memory) {\\n        return _description;\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    function version() external pure returns (uint256) {\\n        return 1;\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    /// @dev roundId and answeredInRound are always 1 \\u2014 satisfies answeredInRound > 0.\\n    ///      startedAt equals updatedAt (roundAge = 0) \\u2014 the fixed price is always current by definition.\\n    function latestRoundData()\\n        external\\n        view\\n        returns (uint80 _roundId, int256 _answer, uint256 _startedAt, uint256 _updatedAt, uint80 _answeredInRound)\\n    {\\n        return (1, _price, block.timestamp, block.timestamp, 1);\\n    }\\n\\n    /// @inheritdoc AggregatorV3Interface\\n    /// @dev All historical rounds return the same fixed price; startedAt equals updatedAt.\\n    function getRoundData(uint80 roundId_)\\n        external\\n        view\\n        returns (uint80 _roundId, int256 _answer, uint256 _startedAt, uint256 _updatedAt, uint80 _answeredInRound)\\n    {\\n        return (roundId_, _price, block.timestamp, block.timestamp, roundId_);\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    function latestAnswer() external view returns (int256) {\\n        return _price;\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    function latestTimestamp() external view returns (uint256) {\\n        return block.timestamp;\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    /// @dev Always returns 1 \\u2014 consistent with the roundId returned by latestRoundData.\\n    function latestRound() external pure returns (uint256) {\\n        return 1;\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    function getAnswer(uint256) external view returns (int256) {\\n        return _price;\\n    }\\n\\n    /// @inheritdoc AggregatorInterface\\n    function getTimestamp(uint256) external view returns (uint256) {\\n        return block.timestamp;\\n    }\\n}\\n\",\"keccak256\":\"0x111221b25d56c384df000f7bae33648aa41a7780a08aefccd6e4e5a8ed516bd9\",\"license\":\"MIT\"}},\"version\":1}",
+  "bytecode": "0x60c060405234801561000f575f5ffd5b5060405161064538038061064583398101604081905261002e91610081565b5f831361004d5760405162bfc92160e01b815260040160405180910390fd5b608083905260ff821660a0525f61006482826101d6565b50505050610290565b634e487b7160e01b5f52604160045260245ffd5b5f5f5f60608486031215610093575f5ffd5b83519250602084015160ff811681146100aa575f5ffd5b60408501519092506001600160401b038111156100c5575f5ffd5b8401601f810186136100d5575f5ffd5b80516001600160401b038111156100ee576100ee61006d565b604051601f8201601f19908116603f011681016001600160401b038111828210171561011c5761011c61006d565b604052818152828201602001881015610133575f5ffd5b8160208401602083015e5f602083830101528093505050509250925092565b600181811c9082168061016657607f821691505b60208210810361018457634e487b7160e01b5f52602260045260245ffd5b50919050565b601f8211156101d157805f5260205f20601f840160051c810160208510156101af5750805b601f840160051c820191505b818110156101ce575f81556001016101bb565b50505b505050565b81516001600160401b038111156101ef576101ef61006d565b610203816101fd8454610152565b8461018a565b6020601f821160018114610235575f831561021e5750848201515b5f19600385901b1c1916600184901b1784556101ce565b5f84815260208120601f198516915b828110156102645787850151825560209485019460019092019101610244565b508482101561028157868401515f19600387901b60f8161c191681555b50505050600190811b01905550565b60805160a0516103816102c45f395f60a601525f818160d701528181610138015281816101a801526101e101526103815ff3fe608060405234801561000f575f5ffd5b506004361061009b575f3560e01c80638205bf6a116100635780638205bf6a146101215780639a6fc8f514610127578063b5ab58dc14610197578063b633620c146101ca578063feaf968c146101dd575f5ffd5b8063313ce5671461009f57806350d25bcd146100d557806354fd4d5014610105578063668a0f02146101055780637284e4161461010c575b5f5ffd5b60405160ff7f00000000000000000000000000000000000000000000000000000000000000001681526020015b60405180910390f35b7f00000000000000000000000000000000000000000000000000000000000000005b6040519081526020016100cc565b60016100f7565b610114610208565b6040516100cc9190610297565b426100f7565b6101606101353660046102cc565b907f000000000000000000000000000000000000000000000000000000000000000090429081908490565b6040805169ffffffffffffffffffff968716815260208101959095528401929092526060830152909116608082015260a0016100cc565b6100f76101a53660046102fc565b507f000000000000000000000000000000000000000000000000000000000000000090565b6100f76101d83660046102fc565b504290565b60017f0000000000000000000000000000000000000000000000000000000000000000428083610160565b60605f805461021690610313565b80601f016020809104026020016040519081016040528092919081815260200182805461024290610313565b801561028d5780601f106102645761010080835404028352916020019161028d565b820191905f5260205f20905b81548152906001019060200180831161027057829003601f168201915b5050505050905090565b602081525f82518060208401528060208501604085015e5f604082850101526040601f19601f83011684010191505092915050565b5f602082840312156102dc575f5ffd5b813569ffffffffffffffffffff811681146102f5575f5ffd5b9392505050565b5f6020828403121561030c575f5ffd5b5035919050565b600181811c9082168061032757607f821691505b60208210810361034557634e487b7160e01b5f52602260045260245ffd5b5091905056fea2646970667358221220acd3e4a0ff10cd423be1223c3b0055601d8487500a7320130bff65a83f077bfb64736f6c634300081e0033",
+  "deployedBytecode": "0x608060405234801561000f575f5ffd5b506004361061009b575f3560e01c80638205bf6a116100635780638205bf6a146101215780639a6fc8f514610127578063b5ab58dc14610197578063b633620c146101ca578063feaf968c146101dd575f5ffd5b8063313ce5671461009f57806350d25bcd146100d557806354fd4d5014610105578063668a0f02146101055780637284e4161461010c575b5f5ffd5b60405160ff7f00000000000000000000000000000000000000000000000000000000000000001681526020015b60405180910390f35b7f00000000000000000000000000000000000000000000000000000000000000005b6040519081526020016100cc565b60016100f7565b610114610208565b6040516100cc9190610297565b426100f7565b6101606101353660046102cc565b907f000000000000000000000000000000000000000000000000000000000000000090429081908490565b6040805169ffffffffffffffffffff968716815260208101959095528401929092526060830152909116608082015260a0016100cc565b6100f76101a53660046102fc565b507f000000000000000000000000000000000000000000000000000000000000000090565b6100f76101d83660046102fc565b504290565b60017f0000000000000000000000000000000000000000000000000000000000000000428083610160565b60605f805461021690610313565b80601f016020809104026020016040519081016040528092919081815260200182805461024290610313565b801561028d5780601f106102645761010080835404028352916020019161028d565b820191905f5260205f20905b81548152906001019060200180831161027057829003601f168201915b5050505050905090565b602081525f82518060208401528060208501604085015e5f604082850101526040601f19601f83011684010191505092915050565b5f602082840312156102dc575f5ffd5b813569ffffffffffffffffffff811681146102f5575f5ffd5b9392505050565b5f6020828403121561030c575f5ffd5b5035919050565b600181811c9082168061032757607f821691505b60208210810361034557634e487b7160e01b5f52602260045260245ffd5b5091905056fea2646970667358221220acd3e4a0ff10cd423be1223c3b0055601d8487500a7320130bff65a83f077bfb64736f6c634300081e0033",
+  "devdoc": {
+    "kind": "dev",
+    "methods": {
+      "constructor": {
+        "params": {
+          "decimals_": "Decimal precision matching the feed ecosystem (e.g. 8 for BTC feeds).",
+          "description_": "Human-readable label (e.g. \"WBTC / BTC\").",
+          "price_": "Fixed price value (e.g. 1e8 for 1.0 at 8-decimal precision)."
+        }
+      },
+      "getRoundData(uint80)": {
+        "details": "All historical rounds return the same fixed price; startedAt equals updatedAt."
+      },
+      "latestRound()": {
+        "details": "Always returns 1 — consistent with the roundId returned by latestRoundData."
+      },
+      "latestRoundData()": {
+        "details": "roundId and answeredInRound are always 1 — satisfies answeredInRound > 0.      startedAt equals updatedAt (roundAge = 0) — the fixed price is always current by definition."
+      }
+    },
+    "title": "FixedPriceFeedAdapter",
+    "version": 1
+  },
+  "userdoc": {
+    "kind": "user",
+    "methods": {},
+    "notice": "Returns a hardcoded price, implementing the full Chainlink AggregatorV2V3Interface.         Intended for assets whose on-chain price is fixed at a known ratio,         e.g. WBTC/BTC = 1.0 (WBTC is a 1:1 wrapped representation of BTC).         updatedAt always returns block.timestamp — the price is current by definition.",
+    "version": 1
+  },
+  "storageLayout": {
+    "storage": [
+      {
+        "astId": 19059,
+        "contract": "src/FixedPriceFeedAdapter.sol:FixedPriceFeedAdapter",
+        "label": "_description",
+        "offset": 0,
+        "slot": "0",
+        "type": "t_string_storage"
+      }
+    ],
+    "types": {
+      "t_string_storage": {
+        "encoding": "bytes",
+        "label": "string",
+        "numberOfBytes": "32"
+      }
+    }
+  }
+}
