@@ -21,6 +21,7 @@ build
 # Hard hat
 artifacts
 cache
+cache_hardhat
 typechain
 gas-report.txt
 

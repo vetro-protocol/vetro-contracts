@@ -340,8 +340,9 @@ export const updateParamIfNeeded = async (
  */
 export const deployNonUpgradeable = async (
   hre: HardhatRuntimeEnvironment,
-  contractName: string,
-  args: unknown[]
+  alias: string,
+  args: unknown[],
+  contractArtifact?: string,
 ): Promise<{address: string}> => {
   const {
     deployments: {deploy},
@@ -349,7 +350,8 @@ export const deployNonUpgradeable = async (
   } = hre
   const {deployer} = await getNamedAccounts()
 
-  const result = await deploy(contractName, {
+  const result = await deploy(alias, {
+    contract: contractArtifact ?? alias,
     from: deployer,
     args,
     log: true,
