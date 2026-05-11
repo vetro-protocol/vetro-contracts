@@ -4,12 +4,12 @@
 
 **Vetro is a fully collateralized, yield-generating protocol for creating pegged tokens built for DeFi.**
 
-Version 2.0 introduces a modular and robust architecture that separates user interactions, treasury management, and token logic into distinct, auditable contracts. The protocol can issue tokens pegged 1:1 to various assets including USD (VUSD), ETH (VETH), BTC (VBTC), and more. By integrating with premier yield protocols like **Aave, Compound, and Morpho**, the collateral is put to work, generating passive yield for the protocol.
+Version 2.0 introduces a modular and robust architecture that separates user interactions, treasury management, and token logic into distinct, auditable contracts. The protocol can issue tokens pegged 1:1 to various assets including USD (VUSD), BTC (vetBTC), and more. By integrating with premier yield protocols like **Aave, Compound, and Morpho**, the collateral is put to work, generating passive yield for the protocol.
 
 ## Key Features
 
 -   **Fully Collateralized**: Always backed 1:1 by high-quality collateral.
--   **Multi-Asset Support**: Issue pegged tokens for various assets - USD (VUSD), ETH (VETH), BTC (VBTC), and more.
+-   **Multi-Asset Support**: Issue pegged tokens for various assets - USD (VUSD), BTC (vetBTC), and more.
 -   **Yield-Generating**: Collateral is deposited into leading DeFi protocols (e.g., Aave, Compound,) to generate yield.
 -   **Automated Liquidity Provisioning**: A portion of the generated yield can be used to deepen liquidity on decentralized exchanges.
 -   **Modular & Secure Architecture**: Core logic is split into `Gateway`, `Treasury`, and `PeggedToken` contracts for clarity and security.
@@ -48,7 +48,7 @@ graph TD
 
 1.  **`Gateway.sol`**: The single entry and exit point for all users. It handles the logic for the four primary user actions (`deposit`, `mint`, `redeem`, `withdraw`) as well as the withdrawal delay system for enhanced security. To execute all calculations securely, the Gateway queries the `Treasury` for real-time asset prices and uses this data along with fees, price tolerance, and mint limits.
 2.  **`Treasury.sol`**: The custodian of all collateral. It manages the whitelist of supported assets, interfaces with yield-generating protocols, and integrates with Chainlink oracles. It serves as the single source of truth for asset prices and risk parameters.
-3.  **`PeggedToken.sol`**: The ERC20 pegged token contract (e.g., VUSD, VETH, VBTC). It includes `ERC20Permit` for gasless approvals and ensures that only the `Gateway` contract can mint new tokens.
+3.  **`PeggedToken.sol`**: The ERC20 pegged token contract (e.g., VUSD, vetBTC). It includes `ERC20Permit` for gasless approvals and ensures that only the `Gateway` contract can mint new tokens.
 
 ## Withdrawal Delay & Redeem Request System
 

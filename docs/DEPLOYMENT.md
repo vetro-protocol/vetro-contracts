@@ -187,10 +187,16 @@ npx hardhat etherscan-verify --network mainnet
 All deployment parameters are centralized in `deploy/config.ts`:
 
 ```typescript
-// Example configuration
+// VUSD example (see deploy/config.ts for the canonical values)
 export const GatewayConfig = {
   mintLimit: parseEther('100000000'), // 100M VUSD
-  withdrawalDelay: 7 * 24 * 60 * 60,  // 7 days
+  withdrawalDelay: 2 * 60,            // 120 seconds (mainnet live value)
+}
+
+// vetBTC example
+export const VetBTCGatewayConfig = {
+  mintLimit: parseEther('1320'),      // 1320 vetBTC (~$100M)
+  withdrawalDelay: 2 * 60,
 }
 
 export const StakingVaultConfig = {
@@ -198,6 +204,11 @@ export const StakingVaultConfig = {
   symbol: 'sVUSD',
 }
 ```
+
+The contract enforces `withdrawalDelay` between 1 second and 30 days. The current production
+value is 120 seconds — short enough to be unobtrusive in normal usage but long enough to gate
+unwhitelisted instant redeems behind a single-block-build window. See
+[OPERATIONS.md](OPERATIONS.md) for the live per-token configuration.
 
 ### Network-Specific Addresses
 

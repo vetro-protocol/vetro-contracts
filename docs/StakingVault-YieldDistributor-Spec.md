@@ -9,7 +9,7 @@ A secure staking system that allows users to stake tokens and earn yield, with b
 ## Staking Vault
 
 ### What It Does
-Users deposit tokens (e.g., VUSD, VcETH, vcWBTC) and receive vault shares representing their stake. As yield is distributed, the value of each share increases, allowing users to withdraw more than they deposited.
+Users deposit tokens (e.g., VUSD, vetBTC) and receive vault shares representing their stake. As yield is distributed, the value of each share increases, allowing users to withdraw more than they deposited.
 
 ### Key Features
 
@@ -164,11 +164,10 @@ Day 3: Another 70 tokens distributed → Combines with remaining 40 tokens
 
 ## Use Cases
 
-| Token | Vault Name | Share Token | Description |
-|-------|------------|-------------|-------------|
-| VUSD | Staked VUSD | sVUSD | Stablecoin yield vault |
-| VcETH | Staked VcETH | sVcETH | ETH yield vault |
-| vcWBTC | Staked vcWBTC | sVcWBTC | BTC yield vault |
+| Token  | Vault Name      | Share Token | Description            |
+|--------|-----------------|-------------|------------------------|
+| VUSD   | Staked VUSD     | sVUSD       | Stablecoin yield vault |
+| vetBTC | Staked vetBTC   | svetBTC     | BTC yield vault        |
 
 ---
 
