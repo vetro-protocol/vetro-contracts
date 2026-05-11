@@ -2,28 +2,89 @@
 
 Manual operations guide for the devops team until automation bots are ready.
 
-## Deployed Contracts (Ethereum Mainnet)
+Vetro currently operates two parallel deployments on Ethereum mainnet: the USD-pegged stablecoin
+(**VUSD**) and the BTC-pegged token (**vetBTC**). Each has its own Gateway, Treasury,
+StakingVault, and YieldDistributor. All contract APIs are identical — operators perform the
+same actions on either system; the only differences are addresses and per-token settings.
 
-| Contract          | Address                                      | Type        |
-|-------------------|----------------------------------------------|-------------|
-| VUSD       | `0xB94724aa74A0296447D13a63A35B050b7F137C6d` | Non-upgradeable |
-| Treasury          | `0x2bC90279d0f776c915A235791F8B1180B1ecBF86` | Non-upgradeable |
-| Gateway           | `0x3B677f95A3B340A655Cd39a13FC056F625bB9492` | UUPS Proxy  |
-| StakingVault      | `0x4a16B99f23c5511f0A23EF9770Bf4ab28f37D830` | UUPS Proxy  |
-| YieldDistributor  | `0x2AD3e2853910De6B9c12300951e233A764121Dc2` | UUPS Proxy  |
+Canonical addresses live in [`releases/ethereum-1.0.0.json`](../releases/ethereum-1.0.0.json)
+(VUSD) and [`releases/ethereum-1.0.0-vetbtc.json`](../releases/ethereum-1.0.0-vetbtc.json)
+(vetBTC). The tables below mirror those files.
 
-### Whitelisted Collateral Tokens
+## VUSD - Ethereum Mainnet
 
-| Token | Address | Yield Vault | Oracle (Chainlink) | Stale Period |
-|-------|---------|-------------|--------------------|----|
-| USDC  | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | `0x8C78D34176C971114151a9d5Dd2DBad1e6F30811` | `0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6` | 24h |
-| USDT  | `0xdAC17F958D2ee523a2206206994597C13D831ec7` | `0x3D58BcCFDb150ad4689b04b9Dfdfb149038C1377` | `0x3E7d1eAB13ad0104d2750B8863b489D65364e32D` | 24h |
+| Contract            | Address                                      | Type            |
+|---------------------|----------------------------------------------|-----------------|
+| VUSD (PeggedToken)  | `0xCa83DDE9c22254f58e771bE5E157773212AcBAc3` | Non-upgradeable |
+| Treasury            | `0xC8317A10385BE07901A4c9ee3d06E1D83AE378c9` | Non-upgradeable |
+| Gateway             | `0xDaD503f8B9d42bb7af3AfC588358D30163e4416F` | TUP Proxy       |
+| Gateway impl        | `0x7AFcFcC9619272B4610dDB1E98e6f0cF8E765C81` | -               |
+| StakingVault (sVUSD)| `0x476310E34D2810f7d79C43A74E4D79405bd7a925` | TUP Proxy       |
+| YieldDistributor    | `0x55745265Ba172378cf45d224F09F0673cB470cef` | TUP Proxy       |
 
-### Governance
+### VUSD Whitelisted Collateral
+
+| Token | Address | Yield Vault | Oracle (Chainlink) | Stale | pegBand |
+|-------|---------|-------------|--------------------|-------|---------|
+| USDC  | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | `0xe3DA4B83C9dd4c4D185ecE42077462b3F35c454a` | `0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6` | 24h | 3 bps |
+| USDT  | `0xdAC17F958D2ee523a2206206994597C13D831ec7` | `0x6d134cAAD0CA29Cd6ea145f6C0DC766076690547` | `0x3E7d1eAB13ad0104d2750B8863b489D65364e32D` | 24h | 3 bps |
+
+### VUSD Live Settings
+
+| Parameter | Value |
+|-----------|-------|
+| `mintLimit` | 100,000,000 VUSD |
+| `withdrawalDelay` | 120 seconds (2 min) |
+| `priceTolerance` | 100 bps (1%) |
+| `mintFee` / `redeemFee` | 0 bps on all tokens |
+| `pegBand` | 3 bps on USDC and USDT |
+
+---
+
+## vetBTC - Ethereum Mainnet
+
+| Contract               | Address                                      | Type            |
+|------------------------|----------------------------------------------|-----------------|
+| vetBTC (PeggedToken)   | `0xf196C68233464A16CFDa319a47c21f4cECa62001` | Non-upgradeable |
+| VetBTCTreasury         | `0xd25a7b0b817fD816d0995eC67fb70e75EE65Bd7F` | Non-upgradeable |
+| VetBTCGateway          | `0xCBA2Ffa0AC52d7871a4221a871793Eb788013faB` | TUP Proxy       |
+| VetBTCGateway impl     | `0xd1C374C6FDCdDF77923118dC15D66aB13289A5Cf` | -               |
+| StakingVault (svetBTC) | `0x0cB9D84d4bcEc8d3D5B2d99a6F07f4605325987e` | TUP Proxy       |
+| VetBTCYieldDistributor | `0xd74bcf1299176E98899bA2e86dD2C9aE089F5276` | TUP Proxy       |
+| FixedPriceFeedAdapter (WBTC/BTC) | `0x032A35daDA672B394525881f789a3B4E7734C76C` | Adapter |
+| DerivedPriceFeedAdapter (cbBTC/BTC) | `0x33F1E44DB47400C9BD6221962712D882Adb8fFA6` | Adapter |
+
+### vetBTC Whitelisted Collateral
+
+| Token   | Address                                      | Yield Vault                                  | Oracle (BTC denom)                           | Oracle dec. | Stale | pegBand |
+|---------|----------------------------------------------|----------------------------------------------|----------------------------------------------|---|-------|---------|
+| WBTC    | `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599` | `0x30c410D92e54B2b492D725D6CEBed98891817C91` | `0x032A35daDA672B394525881f789a3B4E7734C76C` (Fixed 1.0) | 8  | 24h | 0 bps |
+| cbBTC   | `0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf` | `0xD954d72D885f8409bCBe3f15ad2fc3EcA4a5Ba33` | `0x33F1E44DB47400C9BD6221962712D882Adb8fFA6` (Derived cbBTC/USD÷BTC/USD) | 8  | 24h | 0 bps |
+| hemiBTC | `0x06ea695B91700071B161A434fED42D1DcbAD9f00` | `0x54b8a87c9f85Dd2515CaAE1fad2dd85199900076` | `0x7Ff41654D1551F01E622e2b1050EA027a3A6C9dc` (Chainlink HEMIBTC/BTC) | 18 | 24h | 0 bps |
+
+Note: the hemiBTC yield vault is a `WhitelistedYieldVault`. Before the Treasury can deposit
+hemiBTC into the vault, the vault owner must call `addToWhitelist(VetBTCTreasury)` on the
+vault. Without this, every deposit reverts with `CallerIsNotWhitelisted`.
+
+### vetBTC Live Settings
+
+| Parameter | Value |
+|-----------|-------|
+| `mintLimit` | 1,320 vetBTC (~$100M at $75k/BTC) |
+| `withdrawalDelay` | 120 seconds (2 min) |
+| `priceTolerance` | 200 bps (2%) |
+| `mintFee` / `redeemFee` | 0 bps on all tokens |
+| `pegBand` | 0 bps on WBTC, cbBTC, hemiBTC |
+
+---
+
+### Governance (both deployments)
 
 | Role | Address |
 |------|---------|
-| Owner / DEFAULT_ADMIN | `0xE173b056eF552c7322040703dDfC1e0638A575d3` |
+| Owner / DEFAULT_ADMIN (VetBTCTreasury, on-chain today) | `0xE173b056eF552c7322040703dDfC1e0638A575d3` |
+| Owner / DEFAULT_ADMIN (VUSD Treasury, on-chain today)  | `0x6649Ddb5c7e52348b73c8bBdD2A1cbA630b7AaEA` |
+| hemiBTC Vault owner (controls vault caller-whitelist)   | `0x26D4333E2E5572A5609ddEDd65748F8F237042D9` |
 
 ---
 
@@ -195,7 +256,7 @@ Gateway.updateWithdrawalDelay(uint256 newDelay_)
 ```
 
 - Must be > 0 and <= 30 days
-- Current setting: 7 days
+- Current setting: 120 seconds (both VUSD and vetBTC)
 
 #### 4.6 Update Oracle
 
@@ -252,8 +313,8 @@ Treasury.removeFromWhitelist(address token_)
 Gateway.updateMintLimit(uint256 newMintLimit_)
 ```
 
-- Maximum total VUSD that can be minted via user deposits
-- Current: 100M
+- Maximum total PeggedToken that can be minted via user deposits
+- Current: VUSD = 100M; vetBTC = 1,320 (~$100M)
 
 #### 5.4 Update AMO Mint Limit
 
