@@ -49,6 +49,13 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
       oracle: cbBtcOracleAddress,
       stalePeriod: TWENTY_FOUR_HOURS,
     },
+    {
+      name: 'hemiBTC',
+      token: Address.HEMIBTC,
+      vault: Address.VETRO_VAULT_HemiBTC,
+      oracle: Address.HEMIBTC_BTC_ORACLE,
+      stalePeriod: TWENTY_FOUR_HOURS,
+    },
   ]
 
   for (const tokenConfig of WHITELIST_TOKENS) {
