@@ -2,6 +2,11 @@
 
 Manual operations guide for the devops team until automation bots are ready.
 
+> **Curators:** for the end-to-end view of how treasury collateral flows into Vesper Yield
+> vaults and Lagoon vaults — including how to update valuations, perform Lagoon settlement,
+> assign strategy weights, and keep a redemption buffer ready in the Safe — see the
+> [**Curator Handbook**](./CURATOR_HANDBOOK.md).
+
 Vetro currently operates two parallel deployments on Ethereum mainnet: the USD-pegged stablecoin
 (**VUSD**) and the BTC-pegged token (**vetBTC**). Each has its own Gateway, Treasury,
 StakingVault, and YieldDistributor. All contract APIs are identical — operators perform the
