@@ -39,9 +39,15 @@
       "vault": "0x6d134cAAD0CA29Cd6ea145f6C0DC766076690547",
       "oracle": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
       "stalePeriod": 86400
+    },
+    "frxUSD": {
+      "token": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
+      "vault": "0xBd44B65cE2b7c736724E0AE7e008CE3Fb00697d8",
+      "oracle": "0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83",
+      "stalePeriod": 90000
     }
   },
   "governance": {
-    "owner": "0xE173b056eF552c7322040703dDfC1e0638A575d3"
+    "owner": "0x6649Ddb5c7e52348b73c8bBdD2A1cbA630b7AaEA"
   }
 }
