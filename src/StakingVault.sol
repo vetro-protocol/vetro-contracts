@@ -438,9 +438,31 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     function totalAssets() public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
         StakingVaultStorage storage $ = _getStakingVaultStorage();
         uint256 _balance = IERC20(asset()).balanceOf(address(this));
+        // Include accrued but un-pulled yield so views functions match execution functions.
+        // After a pull pendingYield() is 0, so this never double-counts.
+        address _yieldDistributor = $.yieldDistributor;
+        if (_yieldDistributor != address(0) && totalSupply() > 0) {
+            _balance += IYieldDistributor(_yieldDistributor).pendingYield();
+        }
         uint256 _inCooldown = $.totalAssetsInCooldown;
         // Prevent underflow if somehow _inCooldown > _balance
         return _balance > _inCooldown ? _balance - _inCooldown : 0;
+    }
+
+    /// @notice Max shares redeemable via instant redeem() without reverting.
+    /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted).
+    /// @param owner_ The share owner
+    function maxRedeem(address owner_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
+        if (!_canInstantWithdraw(owner_)) return 0;
+        return super.maxRedeem(owner_);
+    }
+
+    /// @notice Max assets withdrawable via instant withdraw() without reverting.
+    /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted).
+    /// @param owner_ The share owner
+    function maxWithdraw(address owner_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
+        if (!_canInstantWithdraw(owner_)) return 0;
+        return super.maxWithdraw(owner_);
     }
 
     /*//////////////////////////////////////////////////////////////

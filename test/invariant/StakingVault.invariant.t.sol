@@ -186,20 +186,27 @@ contract StakingVaultInvariantTest is Test {
         excludeContract(address(vusd));
     }
 
-    /// @notice Invariant: totalAssets + totalAssetsInCooldown <= vault VUSD balance
+    /// @notice Invariant: reported assets are backed by physically-held VUSD across the system.
+    /// @dev totalAssets() includes accrued-but-unpulled yield, which physically sits in the
+    ///      YieldDistributor until the next interaction pulls it. So the backing is the combined
+    ///      vault + distributor balance. Since pendingYield() <= the distributor's balance, this
+    ///      still fires if the distributor ever over-reports pending yield.
     function invariant_assetsAccountingConsistency() public view {
-        uint256 vaultBalance = vusd.balanceOf(address(vault));
         uint256 totalAssets = vault.totalAssets();
         uint256 inCooldown = vault.totalAssetsInCooldown();
+        uint256 systemBalance = vusd.balanceOf(address(vault)) + vusd.balanceOf(address(yieldDistributor));
 
-        assertLe(totalAssets + inCooldown, vaultBalance, "Assets accounting inconsistent");
+        assertLe(totalAssets + inCooldown, systemBalance, "Assets accounting inconsistent");
     }
 
-    /// @notice Invariant: totalAssets should equal vault balance minus cooldown assets
+    /// @notice Invariant: totalAssets == (vault balance + accrued-but-unpulled yield) - cooldown assets
+    /// @dev Mirrors StakingVault.totalAssets(), which includes pending yield when supply > 0.
     function invariant_totalAssetsCalculation() public view {
         uint256 vaultBalance = vusd.balanceOf(address(vault));
         uint256 inCooldown = vault.totalAssetsInCooldown();
-        uint256 expectedTotalAssets = vaultBalance > inCooldown ? vaultBalance - inCooldown : 0;
+        uint256 pending = vault.totalSupply() > 0 ? yieldDistributor.pendingYield() : 0;
+        uint256 base = vaultBalance + pending;
+        uint256 expectedTotalAssets = base > inCooldown ? base - inCooldown : 0;
 
         assertEq(vault.totalAssets(), expectedTotalAssets, "totalAssets calculation incorrect");
     }
