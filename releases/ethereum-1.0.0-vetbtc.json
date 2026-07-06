@@ -45,6 +45,12 @@
       "vault": "0xD954d72D885f8409bCBe3f15ad2fc3EcA4a5Ba33",
       "oracle": "0x33F1E44DB47400C9BD6221962712D882Adb8fFA6",
       "stalePeriod": 86400
+    },
+    "hemiBTC": {
+      "token": "0x06ea695B91700071B161A434fED42D1DcbAD9f00",
+      "vault": "0x54b8a87c9f85Dd2515CaAE1fad2dd85199900076",
+      "oracle": "0x7Ff41654D1551F01E622e2b1050EA027a3A6C9dc",
+      "stalePeriod": 86400
     }
   },
   "governance": {

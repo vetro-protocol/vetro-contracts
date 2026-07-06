@@ -8,22 +8,31 @@ const {Treasury} = ContractAliases
 
 // 24 hours in seconds
 const TWENTY_FOUR_HOURS = 24 * 60 * 60
+// 25 hours in seconds — used for feeds with a 24h Chainlink heartbeat to leave a 1h buffer
+const TWENTY_FIVE_HOURS = 25 * 60 * 60
 
 // Whitelisted tokens configuration
 const WHITELIST_TOKENS = [
   {
     name: 'USDC',
     token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    vault: '0x8C78D34176C971114151a9d5Dd2DBad1e6F30811',
+    vault: '0xe3DA4B83C9dd4c4D185ecE42077462b3F35c454a', // Vetro Vault USDC (vvUSDC)
     oracle: '0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6',
     stalePeriod: TWENTY_FOUR_HOURS,
   },
   {
     name: 'USDT',
     token: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    vault: '0x3D58BcCFDb150ad4689b04b9Dfdfb149038C1377',
+    vault: '0x6d134cAAD0CA29Cd6ea145f6C0DC766076690547', // Vetro Vault USDT
     oracle: '0x3E7d1eAB13ad0104d2750B8863b489D65364e32D',
     stalePeriod: TWENTY_FOUR_HOURS,
+  },
+  {
+    name: 'frxUSD',
+    token: '0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29',
+    vault: '0xBd44B65cE2b7c736724E0AE7e008CE3Fb00697d8', // Vetro Vault frxUSD (vvfrxUSD)
+    oracle: '0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83', // frxUSD/USD, 24h heartbeat
+    stalePeriod: TWENTY_FIVE_HOURS,
   },
 ]
 
