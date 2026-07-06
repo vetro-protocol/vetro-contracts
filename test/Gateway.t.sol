@@ -1034,6 +1034,92 @@ contract GatewayTest is Test {
         assertEq(IERC20(token).balanceOf(alice), expectedTokens);
     }
 
+    // --- peg band exceeding price tolerance falls back to oracle pricing ---
+
+    function test_effectivePegBand_clampsWhileRawGetterStaysConfigured() public {
+        // Configured band 50 BPS is set while tolerance is the default 100 BPS.
+        vm.prank(admin);
+        gateway.updatePegBand(token, 50);
+        // pegBand() always reports the raw configured value regardless of tolerance.
+        assertEq(gateway.pegBand(token), 50, "raw configured band");
+        assertEq(gateway.effectivePegBand(token), 50, "effective == configured while below tolerance");
+
+        // Tolerance still strictly above the band → effective unchanged.
+        treasury.updatePriceTolerance(60); // owner holds MAINTAINER_ROLE
+        assertEq(gateway.pegBand(token), 50, "raw unchanged");
+        assertEq(gateway.effectivePegBand(token), 50, "effective still == configured");
+
+        // Tolerance equal to the band → effective clamps to 0 (invariant requires band strictly below tolerance).
+        treasury.updatePriceTolerance(50);
+        assertEq(gateway.pegBand(token), 50, "raw still 50");
+        assertEq(gateway.effectivePegBand(token), 0, "band == tolerance clamps effective to 0");
+
+        // Tolerance below the band → effective clamps to 0, raw is preserved.
+        treasury.updatePriceTolerance(40);
+        assertEq(gateway.pegBand(token), 50, "raw preserved");
+        assertEq(gateway.effectivePegBand(token), 0, "band > tolerance clamps effective to 0");
+
+        // Raising tolerance back above the band restores the effective value from the retained raw.
+        treasury.updatePriceTolerance(100);
+        assertEq(gateway.pegBand(token), 50, "raw unchanged throughout");
+        assertEq(gateway.effectivePegBand(token), 50, "effective restored once tolerance is above it again");
+    }
+
+    function test_deposit_pegBandAboveTolerance_mintsAtDiscount() public {
+        // updatePegBand enforces pegBand < priceTolerance, but lowering priceTolerance afterwards
+        // has no reverse check, so pegBand can end up >= tolerance. It must then be ignored, or a
+        // sub-peg deposit inside tolerance would mint at par instead of the oracle price.
+        treasury.updatePriceTolerance(500); // 5%
+        vm.prank(admin);
+        gateway.updatePegBand(token, 300); // 3% < 5%
+        treasury.updatePriceTolerance(200); // 2% < pegBand 3% → pegBand now exceeds tolerance
+
+        // Price = 0.99 (1% below peg, inside the 2% tolerance)
+        mockOracle.updatePrice(0.99e8);
+
+        uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
+        deal(token, alice, depositAmount);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), depositAmount);
+        uint256 peggedTokenOut = gateway.previewDeposit(token, depositAmount);
+        gateway.deposit(token, depositAmount, peggedTokenOut, alice);
+        vm.stopPrank();
+
+        // Discounted at the oracle price: 1000 * 0.99 = 990 VUSD, not par
+        assertEq(VUSD.balanceOf(alice), 990e18);
+    }
+
+    function test_redeem_pegBandAboveTolerance_redeemsAtDiscount() public {
+        gateway.setWithdrawalDelayEnabled(false);
+
+        // Mint at peg first
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(alice, 1000e18);
+
+        // Same setter-ordering gap on the redeem side: pegBand left above tolerance must be ignored
+        treasury.updatePriceTolerance(500);
+        vm.prank(admin);
+        gateway.updatePegBand(token, 300);
+        treasury.updatePriceTolerance(200);
+
+        // Price = 1.01 (1% above peg, inside the 2% tolerance)
+        mockOracle.updatePrice(1.01e8);
+
+        uint256 redeemAmount = 1000e18;
+        uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), redeemAmount);
+        gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
+        vm.stopPrank();
+
+        // Band ignored → discounted at the oracle price (no redeem fee set)
+        uint256 discounted = redeemAmount * 1e8 / 1.01e8;
+        uint256 expected = discounted / 10 ** (18 - MockERC20(token).decimals());
+        assertApproxEqAbs(IERC20(token).balanceOf(alice), expected, 1);
+    }
+
     function test_maxDeposit() public view {
         assertEq(gateway.maxDeposit(), type(uint256).max);
     }
