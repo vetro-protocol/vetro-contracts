@@ -962,4 +962,98 @@ contract StakingVaultTest is Test {
         assertEq(claimableIds.length, 2, "Claimable array should have 2 items after claim");
         assertEq(claimableAssets.length, 2, "Claimable assets array should have 2 items after claim");
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        ERC4626 VIEW CONFORMANCE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Distribute `yieldAmount` and warp a full duration so it is fully accrued
+    ///      but NOT yet pulled into the vault (pullYield only runs on a vault interaction).
+    function _distributeAndAccrue(uint256 yieldAmount) internal {
+        deal(address(vusd), owner, yieldAmount);
+        vm.startPrank(owner);
+        vusd.approve(address(yieldDistributor), yieldAmount);
+        yieldDistributor.distribute(yieldAmount);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 7 days);
+    }
+
+    // With yield accrued but not yet pulled, a view quote must agree with what the executing
+    // redeem() actually pays; a stale (pre-pull) share price would mislead integrators.
+    function test_previewRedeem_matchesActualRedeem_withPendingYield() public {
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vault.deposit(100 * UNIT, alice);
+        vm.stopPrank();
+
+        // Allow instant redeem so redeem() is callable.
+        vm.prank(owner);
+        vault.updateCooldownEnabled(false);
+
+        _distributeAndAccrue(10 * UNIT); // 10 pending, not yet pulled
+
+        uint256 shares = vault.balanceOf(alice);
+        uint256 previewed = vault.previewRedeem(shares);
+
+        vm.prank(alice);
+        uint256 actual = vault.redeem(shares, alice, alice);
+
+        assertEq(previewed, actual, "previewRedeem must match actual redeem");
+    }
+
+    // Same divergence in the ERC4626-violating direction: a stale quote over-reports the shares
+    // an actual deposit mints.
+    function test_previewDeposit_matchesActualDeposit_withPendingYield() public {
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vault.deposit(100 * UNIT, alice);
+        vm.stopPrank();
+
+        _distributeAndAccrue(10 * UNIT); // pending yield present, totalSupply > 0
+
+        uint256 previewed = vault.previewDeposit(100 * UNIT);
+
+        vm.startPrank(bob);
+        vusd.approve(address(vault), 100 * UNIT);
+        uint256 actual = vault.deposit(100 * UNIT, bob);
+        vm.stopPrank();
+
+        assertEq(previewed, actual, "previewDeposit must match actual deposit");
+    }
+
+    // Under cooldown a non-whitelisted owner cannot instant-withdraw, so max* must report 0
+    // rather than a balance whose redeem()/withdraw() would revert.
+    function test_maxRedeem_maxWithdraw_zero_whenCooldownBlocksInstant() public {
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vault.deposit(100 * UNIT, alice);
+        vm.stopPrank();
+
+        assertTrue(vault.cooldownEnabled());
+        assertFalse(vault.instantWithdrawWhitelist(alice));
+
+        // The op actually reverts...
+        uint256 shares = vault.balanceOf(alice);
+        vm.prank(alice);
+        vm.expectRevert(StakingVault.CooldownEnabled.selector);
+        vault.redeem(shares, alice, alice);
+
+        // ...so max* must report 0, not a value that would revert.
+        assertEq(vault.maxRedeem(alice), 0, "maxRedeem must be 0 when instant redeem reverts");
+        assertEq(vault.maxWithdraw(alice), 0, "maxWithdraw must be 0 when instant withdraw reverts");
+    }
+
+    // Once instant withdrawal is allowed, max* report real capacity.
+    function test_maxRedeem_maxWithdraw_nonzero_whenWhitelisted() public {
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vault.deposit(100 * UNIT, alice);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        vault.updateInstantWithdrawWhitelist(alice, true);
+
+        assertEq(vault.maxRedeem(alice), vault.balanceOf(alice), "maxRedeem should equal balance when whitelisted");
+        assertGt(vault.maxWithdraw(alice), 0, "maxWithdraw should be nonzero when whitelisted");
+    }
 }
