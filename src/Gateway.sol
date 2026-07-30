@@ -387,6 +387,13 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().amoSupply;
     }
 
+    /// @notice Get the effective peg band actually applied in pricing for a token
+    /// @param token_ The token address
+    /// @return The effective peg band in BPS
+    function effectivePegBand(address token_) external view returns (uint256) {
+        return _effectivePegBand(token_);
+    }
+
     /// @notice Get all whitelisted addresses
     /// @return Array of whitelisted addresses
     function getInstantRedeemWhitelist() external view returns (address[] memory) {
@@ -429,9 +436,9 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().mintLimit;
     }
 
-    /// @notice Get the peg tolerance for a specific token
+    /// @notice Get the raw configured peg band for a token (as set by {updatePegBand})
     /// @param token_ The token address
-    /// @return The peg tolerance in BPS
+    /// @return The configured peg band in BPS
     function pegBand(address token_) external view returns (uint256) {
         return _getGatewayStorage().pegBand[token_];
     }
@@ -667,7 +674,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         (uint256 _latestPrice, uint256 _unitPrice) = ITreasury($.peggedToken.treasury()).getPrice(tokenIn_);
         uint256 _mintFee = $.mintFee[tokenIn_];
         uint256 _amountInAfterFee = _mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - _mintFee), MAX_BPS) : amountIn_;
-        uint256 _pegFloor = _unitPrice - (_unitPrice * $.pegBand[tokenIn_] / MAX_BPS);
+        uint256 _pegFloor = _unitPrice - (_unitPrice * _effectivePegBand(tokenIn_) / MAX_BPS);
         uint256 _rawPeggedTokenAmount =
             _latestPrice >= _pegFloor ? _amountInAfterFee : _amountInAfterFee.mulDiv(_latestPrice, _unitPrice);
         // convert _rawPeggedTokenAmount into peggedToken decimal
@@ -689,7 +696,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 _redeemFee = $.redeemFee[tokenOut_];
         uint256 _peggedTokenInAfterFee =
             _redeemFee > 0 ? peggedTokenIn_.mulDiv((MAX_BPS - _redeemFee), MAX_BPS) : peggedTokenIn_;
-        uint256 _pegCeiling = _unitPrice + (_unitPrice * $.pegBand[tokenOut_] / MAX_BPS);
+        uint256 _pegCeiling = _unitPrice + (_unitPrice * _effectivePegBand(tokenOut_) / MAX_BPS);
         uint256 _rawTokenAmount = _latestPrice <= _pegCeiling
             ? _peggedTokenInAfterFee
             : _peggedTokenInAfterFee.mulDiv(_unitPrice, _latestPrice);
@@ -707,6 +714,14 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         if ($.withdrawalDelayEnabled && !$.instantRedeemWhitelist.contains(msg.sender)) {
             revert CallerNotWhitelisted(msg.sender);
         }
+    }
+
+    /// @dev A pegBand at or above priceTolerance would par-price the entire accepted band, so a
+    ///      band left wider than tolerance (e.g. after tolerance was lowered) is treated as no band,
+    ///      falling back to oracle pricing instead of a maximal par subsidy.
+    function _effectivePegBand(address token_) private view returns (uint256) {
+        uint256 _pegBand = _getGatewayStorage().pegBand[token_];
+        return _pegBand < ITreasury(treasury()).priceTolerance() ? _pegBand : 0;
     }
 
     /// @dev Helper function to get peggedToken from storage
