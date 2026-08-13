@@ -147,6 +147,7 @@ export const ContractAliases = {
   Gateway: 'Gateway',
   StakingVault: 'StakingVault',
   YieldDistributor: 'YieldDistributor',
+  YieldManager: 'YieldManager',
   ChainlinkFeedAdapter: 'ChainlinkFeedAdapter',
   DerivedPriceFeedAdapter: 'DerivedPriceFeedAdapter',
 
@@ -156,6 +157,7 @@ export const ContractAliases = {
   VetBTCGateway: 'VetBTCGateway',
   SVetBTC: 'SVetBTC',
   VetBTCYieldDistributor: 'VetBTCYieldDistributor',
+  VetBTCYieldManager: 'VetBTCYieldManager',
   FixedPriceFeedAdapter: 'FixedPriceFeedAdapter',
 } as const
 
