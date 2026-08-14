@@ -105,10 +105,9 @@ const proposeSafeTransaction = async (hre: HardhatRuntimeEnvironment, txs: MetaT
     log(chalk.blue('Because it is a test deployment, the transactions were executed by impersonated multi-sig.'))
   } else {
     const {deployer: delegateAddress} = await hre.getNamedAccounts()
-    const chainName = (await hre.ethers.provider.getNetwork()).name
-
-    const config = hre.config.networks[chainName] as HttpNetworkConfig
-    const provider = config.url
+    // Read url off the current network config; ethers getNetwork().name ("homestead") is not the
+    // hardhat network key ("ethereum"), so looking it up in hre.config.networks misses.
+    const provider = (hre.network.config as HttpNetworkConfig).url
 
     if (!process.env.DEPLOYER_PRIVATE_KEY) {
       throw Error('DEPLOYER_PRIVATE_KEY environment variable is required for Safe transaction proposals')
