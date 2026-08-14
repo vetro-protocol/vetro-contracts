@@ -13,12 +13,12 @@
     },
     "Gateway": {
       "address": "0xDaD503f8B9d42bb7af3AfC588358D30163e4416F",
-      "implementation": "0x7AFcFcC9619272B4610dDB1E98e6f0cF8E765C81",
+      "implementation": "0x07Ee70DFd5a74d4a038Ff6AAE1d31Ca2C71F4DF1",
       "proxyAdmin": "0x83B2435d9A30b7463B3Ba997ba47a14B73149e2A"
     },
     "StakingVault": {
       "address": "0x476310E34D2810f7d79C43A74E4D79405bd7a925",
-      "implementation": "0xFBe09b404E50193237D7c9777585a27eB927fF25",
+      "implementation": "0x91EDc1F7b0ab6357A85b4D228A00CA68fd2B0661",
       "proxyAdmin": "0x3912505880b9b8F0Ac2531cde9428994a7728aa3"
     },
     "YieldDistributor": {

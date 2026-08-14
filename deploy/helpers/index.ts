@@ -366,6 +366,9 @@ export const deployNonUpgradeable = async (
     from: deployer,
     args,
     log: true,
+    // Immutable core is never redeployed on bytecode drift (e.g. an OZ bump); already-deployed
+    // wins over bytecode equality. New contracts (no prior record) still deploy.
+    skipIfAlreadyDeployed: true,
   })
 
   return {address: result.address}
