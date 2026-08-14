@@ -13,12 +13,12 @@
     },
     "VetBTCGateway": {
       "address": "0xCBA2Ffa0AC52d7871a4221a871793Eb788013faB",
-      "implementation": "0xd1C374C6FDCdDF77923118dC15D66aB13289A5Cf",
+      "implementation": "0x07Ee70DFd5a74d4a038Ff6AAE1d31Ca2C71F4DF1",
       "proxyAdmin": "0xb93D985Ad99b4a161C55AAe00d913e7c7C7324b3"
     },
     "SVetBTC": {
       "address": "0x0cB9D84d4bcEc8d3D5B2d99a6F07f4605325987e",
-      "implementation": "0x378B5E71083B3D64E26bCb622748a0D3aBD1a9d3",
+      "implementation": "0x91EDc1F7b0ab6357A85b4D228A00CA68fd2B0661",
       "proxyAdmin": "0x6b22df8Ec4d674e7B439833b7828b45A2aaAb25B"
     },
     "VetBTCYieldDistributor": {
