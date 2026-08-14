@@ -18,9 +18,9 @@ type NetworkAddresses = Record<string, string>
 export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
   // Ethereum Mainnet
   1: {
-    // Governance - holds DEFAULT_ADMIN_ROLE on VetBTCTreasury
-    GOVERNOR: '0xE173b056eF552c7322040703dDfC1e0638A575d3',
-    GNOSIS_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
+    // Governance Safe
+    GOVERNOR: '0x6649Ddb5c7e52348b73c8bBdD2A1cbA630b7AaEA',
+    GNOSIS_SAFE_ADDRESS: '0x6649Ddb5c7e52348b73c8bBdD2A1cbA630b7AaEA',
 
     // Chainlink feeds
     CHAINLINK_BTC_USD_FEED: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
