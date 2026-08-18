@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "network": "ethereum",
   "chainId": 1,
   "contracts": {
@@ -25,6 +25,9 @@
       "address": "0x55745265Ba172378cf45d224F09F0673cB470cef",
       "implementation": "0xe8Ac98555f8815F4c125C871F803DFCaD2101886",
       "proxyAdmin": "0xDd751f2B4FA3445C7befa39cf981b6bEc1FeB1B1"
+    },
+    "YieldManager": {
+      "address": "0x964d0E0C1fc7eCB2061A4e7e011e3F2406daC33e"
     }
   },
   "whitelistedTokens": {

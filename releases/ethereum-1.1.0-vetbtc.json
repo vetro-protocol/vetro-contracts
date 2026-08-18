@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0",
+  "version": "1.1.0",
   "network": "ethereum",
   "chainId": 1,
   "contracts": {
@@ -31,6 +31,9 @@
     },
     "DerivedPriceFeedAdapter": {
       "address": "0x33F1E44DB47400C9BD6221962712D882Adb8fFA6"
+    },
+    "VetBTCYieldManager": {
+      "address": "0x7E8Ca0594457C944C7b07dF7b9ba1C06360994ba"
     }
   },
   "whitelistedTokens": {

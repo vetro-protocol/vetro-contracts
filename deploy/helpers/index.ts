@@ -89,7 +89,7 @@ export const deployUpgradable = async ({
   implementationAddress?: string | undefined
 }> => {
   const {
-    deployments: {deploy, save, getOrNull, catchUnknownSigner},
+    deployments: {deploy, save, getOrNull, catchUnknownSigner, execute},
     getNamedAccounts,
     ethers,
   } = hre
@@ -124,8 +124,7 @@ export const deployUpgradable = async ({
     // Constructor: (address _logic, address initialOwner, bytes memory _data)
     // initialOwner becomes the owner of auto-created ProxyAdmin
     const proxyDeployResult = await deploy(proxyAlias, {
-      contract:
-        '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy',
+      contract: '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy',
       args: [implDeployment.address, owner, encodedInitializeCall],
       from: deployer,
       log: true,
@@ -178,24 +177,36 @@ export const deployUpgradable = async ({
     const proxyAdmin = await getProxyAdmin(hre, proxyDeployment.address)
     log(chalk.yellow(`  ProxyAdmin: ${proxyAdmin}`))
 
-    // Upgrade via ProxyAdmin.upgradeAndCall
-    const doUpgrade = async () => {
-      const proxyAdminContract = await ethers.getContractAt(
-        '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol:ProxyAdmin',
-        proxyAdmin
+    // Upgrade via ProxyAdmin.upgradeAndCall, sent BY the ProxyAdmin owner. Use hardhat-deploy's
+    // `execute` (it honors the named `owner`, unlike raw ethers which would default to account[0]
+    // and revert OwnableUnauthorizedAccount against a Safe-owned ProxyAdmin).
+    const executeFn = () =>
+      execute(
+        proxyAdminAlias,
+        {from: owner, log: true},
+        'upgradeAndCall',
+        proxyDeployment!.address,
+        newImplAddress,
+        '0x'
       )
-      const tx = await proxyAdminContract.upgradeAndCall(proxyDeployment!.address, newImplAddress, '0x')
-      return tx.wait()
-    }
 
-    const multiSigTx = await catchUnknownSigner(doUpgrade, {log: true})
+    const multiSigTx = await catchUnknownSigner(executeFn, {log: true})
 
     if (multiSigTx) {
       if (force) {
         await executeForcedTxUsingMultiSig(hre, multiSigTx)
+        log(chalk.green(`  ✓ Upgraded ${alias} via multisig → ${newImplAddress}`))
       } else {
         await saveForMultiSigBatchExecution(multiSigTx)
+        log(
+          chalk.yellow(
+            `  ⧗ ${alias} upgrade QUEUED for the Safe batch — owner ${owner} can't sign here. ` +
+              `Confirm & execute the batch in the Safe to apply the upgrade on-chain, then re-run the deploy.`
+          )
+        )
       }
+    } else {
+      log(chalk.green(`  ✓ Upgraded ${alias} → ${newImplAddress}`))
     }
 
     // Update deployment files
@@ -342,7 +353,7 @@ export const deployNonUpgradeable = async (
   hre: HardhatRuntimeEnvironment,
   alias: string,
   args: unknown[],
-  contractArtifact?: string,
+  contractArtifact?: string
 ): Promise<{address: string}> => {
   const {
     deployments: {deploy},
@@ -355,6 +366,9 @@ export const deployNonUpgradeable = async (
     from: deployer,
     args,
     log: true,
+    // Immutable core is never redeployed on bytecode drift (e.g. an OZ bump); already-deployed
+    // wins over bytecode equality. New contracts (no prior record) still deploy.
+    skipIfAlreadyDeployed: true,
   })
 
   return {address: result.address}

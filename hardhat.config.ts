@@ -19,8 +19,8 @@ dotenv.config()
 const accounts = process.env.PRIVATE_KEY
   ? [process.env.PRIVATE_KEY]
   : process.env.MNEMONIC
-    ? {mnemonic: process.env.MNEMONIC}
-    : undefined
+  ? {mnemonic: process.env.MNEMONIC}
+  : undefined
 const deployer = process.env.DEPLOYER || 0
 
 // Hardhat do not support adding chainId at runtime. Only way to set it in hardhat-config.js
@@ -85,7 +85,7 @@ const config: HardhatUserConfig = {
   },
   namedAccounts: {
     deployer: {
-      default: 0, // First account from accounts array
+      default: deployer,
     },
   },
   contractSizer: {
@@ -128,7 +128,11 @@ const config: HardhatUserConfig = {
       },
     ],
   },
+  sourcify: {
+    enabled: false,
+  },
   etherscan: {
+    enabled: true,
     apiKey: process.env.ETHERSCAN_API_KEY || 'noApiKeyNeeded',
   },
   spdxLicenseIdentifier: {
