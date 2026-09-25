@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {YieldDistributor} from "src/YieldDistributor.sol";
-import {IYieldDistributor} from "src/interfaces/IYieldDistributor.sol";
 import {StakingVault} from "src/StakingVault.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 
@@ -16,9 +15,11 @@ contract YieldDistributorTest is Test {
     address owner = makeAddr("owner");
     address distributor = makeAddr("distributor");
     address alice = makeAddr("alice");
+    address seeder = makeAddr("seeder");
 
     uint256 constant UNIT = 1e6;
     uint256 constant PRECISION = 1e18;
+    uint256 constant SEED = 1 * UNIT;
 
     function setUp() public {
         vusd = new MockERC20();
@@ -53,6 +54,13 @@ contract YieldDistributorTest is Test {
 
         // Give distributor some VUSD
         deal(address(vusd), distributor, 1000 * UNIT);
+
+        // Seed the vault with shares: yield is only paid while the vault has shares
+        deal(address(vusd), seeder, SEED);
+        vm.startPrank(seeder);
+        vusd.approve(address(vault), SEED);
+        vault.deposit(SEED, seeder);
+        vm.stopPrank();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -148,6 +156,54 @@ contract YieldDistributorTest is Test {
         assertEq(yieldDistributor.periodFinish(), block.timestamp + 7 days);
     }
 
+    function test_distribute_paysAccruedToVaultBeforeRescheduling() public {
+        deal(address(vusd), alice, 100 * UNIT);
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vault.deposit(100 * UNIT, alice);
+        vm.stopPrank();
+
+        vm.startPrank(distributor);
+        vusd.approve(address(yieldDistributor), 150 * UNIT);
+        yieldDistributor.distribute(100 * UNIT);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 3.5 days);
+        uint256 accrued = yieldDistributor.pendingYield();
+
+        vm.expectEmit(address(yieldDistributor));
+        emit YieldDistributor.YieldPulled(accrued);
+        vm.prank(distributor);
+        yieldDistributor.distribute(50 * UNIT);
+
+        assertEq(vusd.balanceOf(address(vault)), SEED + 100 * UNIT + accrued, "accrued yield sent to vault");
+        assertEq(yieldDistributor.pendingYield(), 0);
+        assertEq(yieldDistributor.lastUpdateTime(), block.timestamp);
+        // Only the undistributed ~50 plus the new 50 are rescheduled
+        assertApproxEqAbs(yieldDistributor.rewardRate() * 7 days / PRECISION, 100 * UNIT, 10);
+    }
+
+    function test_pendingYield_zeroWhenVaultHasNoShares() public {
+        // Seeder exits to cooldown, leaving the vault with no shares
+        vm.prank(seeder);
+        vault.requestRedeem(SEED, seeder);
+        assertEq(vault.totalSupply(), 0);
+        uint256 vaultBalance = vusd.balanceOf(address(vault));
+
+        vm.startPrank(distributor);
+        vusd.approve(address(yieldDistributor), 140 * UNIT);
+        yieldDistributor.distribute(70 * UNIT);
+        vm.warp(block.timestamp + 3.5 days);
+        assertEq(yieldDistributor.pendingYield(), 0, "nothing pending for an empty vault");
+
+        yieldDistributor.distribute(70 * UNIT);
+        vm.stopPrank();
+
+        // Nothing sent to the empty vault; the full first amount is rescheduled with the new one
+        assertEq(vusd.balanceOf(address(vault)), vaultBalance, "no orphan yield sent to vault");
+        assertApproxEqAbs(yieldDistributor.rewardRate() * 7 days / PRECISION, 140 * UNIT, 10);
+    }
+
     /*//////////////////////////////////////////////////////////////
                               PULL YIELD
     //////////////////////////////////////////////////////////////*/
@@ -170,7 +226,7 @@ contract YieldDistributorTest is Test {
         uint256 pulled = yieldDistributor.pullYield();
 
         assertEq(pulled, pendingBefore);
-        assertEq(vusd.balanceOf(address(vault)), pulled);
+        assertEq(vusd.balanceOf(address(vault)), SEED + pulled);
         assertEq(yieldDistributor.pendingYield(), 0);
     }
 
@@ -401,7 +457,7 @@ contract YieldDistributorTest is Test {
         assertEq(yieldDistributor.periodFinish(), block.timestamp + 7 days);
     }
 
-    /// @notice HV-1 edge case: distribute() after period ends without pullYield() orphans tokens
+    /// @notice HV-1 edge case: distribute() after period ends without pullYield() must not orphan tokens
     function test_distribute_afterPeriodEnds_orphansUnpulledYield() public {
         // Step 1: distribute 70 tokens over 7 days
         vm.startPrank(distributor);
@@ -419,23 +475,24 @@ contract YieldDistributorTest is Test {
         vm.prank(distributor);
         yieldDistributor.distribute(70 * UNIT);
 
-        // The new schedule should account for the 70 unpulled tokens + 70 new = 140 total
-        // Contract balance is 140 (70 old + 70 new)
-        assertEq(vusd.balanceOf(address(yieldDistributor)), 140 * UNIT, "contract should hold 140 tokens");
+        // The 70 unpulled tokens are paid to the vault; only the new 70 are scheduled
+        assertApproxEqAbs(vusd.balanceOf(address(vault)), SEED + 70 * UNIT, 10, "unpulled yield paid to vault");
+        assertApproxEqAbs(vusd.balanceOf(address(yieldDistributor)), 70 * UNIT, 10, "contract should hold 70 tokens");
 
         // Wait for the new period to fully elapse
         vm.warp(block.timestamp + 7 days);
 
-        // Pull all yield - should get all 140 tokens (70 unpulled from first + 70 from second)
+        // Pull the second distribution - vault ends with all 140 tokens
         vm.prank(address(vault));
         uint256 pulled = yieldDistributor.pullYield();
 
-        assertApproxEqAbs(pulled, 140 * UNIT, 10, "should pull all 140 tokens, none orphaned");
+        assertApproxEqAbs(pulled, 70 * UNIT, 10, "should pull the new 70 tokens");
+        assertApproxEqAbs(
+            vusd.balanceOf(address(vault)), SEED + 140 * UNIT, 10, "vault received all 140 tokens, none orphaned"
+        );
 
         // Contract should be empty (no orphaned tokens)
-        assertApproxEqAbs(
-            vusd.balanceOf(address(yieldDistributor)), 0, 10, "no tokens should be orphaned in contract"
-        );
+        assertApproxEqAbs(vusd.balanceOf(address(yieldDistributor)), 0, 10, "no tokens should be orphaned in contract");
     }
 
     function test_pullYieldAfterPeriodEnds() public {
@@ -480,7 +537,7 @@ contract YieldDistributorTest is Test {
         assertEq(secondPull, 0);
     }
 
-    /// @notice Unpulled accrued yield must be included in subsequent distribute() calls.
+    /// @notice Unpulled accrued yield must be paid to the vault by subsequent distribute() calls.
     function test_accruedYieldOrphanedOnRedistribute() public {
         uint256 firstAmount = 70 * UNIT;
         uint256 secondAmount = 70 * UNIT;
@@ -503,16 +560,14 @@ contract YieldDistributorTest is Test {
         uint256 accruedBeforeRedistribute = yieldDistributor.pendingYield();
         assertApproxEqAbs(accruedBeforeRedistribute, 30 * UNIT, 10, "accrued should be ~30");
 
-        uint256 remainingRewards = (7 days - block.timestamp) * yieldDistributor.rewardRate() / PRECISION;
-
         // Step 3: distribute(70) at day 3 WITHOUT pulling first
         vm.prank(distributor);
         yieldDistributor.distribute(secondAmount);
 
-        uint256 newRewardRate = yieldDistributor.rewardRate();
-
-        uint256 totalRemaining = newRewardRate * 7 days / PRECISION;
-        assertApproxEqAbs(totalRemaining, firstAmount + secondAmount, 10, "total remaining should be correct");
+        // Accrued 30 is paid to the vault; remaining 40 + new 70 = 110 rescheduled
+        assertEq(vusd.balanceOf(address(vault)), SEED + accruedBeforeRedistribute, "accrued paid to vault");
+        uint256 totalRemaining = yieldDistributor.rewardRate() * 7 days / PRECISION;
+        assertApproxEqAbs(totalRemaining, 110 * UNIT, 10, "total remaining should be correct");
 
         // Step 4: Let the full new period complete and pull everything
         vm.warp(block.timestamp + 7 days);
@@ -530,8 +585,14 @@ contract YieldDistributorTest is Test {
 
         assertApproxEqAbs(contractBalance, 0, 5, "contract should have no remaining balance after full distribution");
 
-        // Equivalently: total pulled should equal total deposited (140)
-        assertApproxEqAbs(totalPulled, firstAmount + secondAmount, 10, "all distributed tokens should be pullable");
+        // Equivalently: vault received everything distributed (140)
+        assertApproxEqAbs(totalPulled, totalRemaining, 10, "rescheduled yield should be pullable");
+        assertApproxEqAbs(
+            vusd.balanceOf(address(vault)),
+            SEED + firstAmount + secondAmount,
+            10,
+            "all distributed tokens reach the vault"
+        );
     }
 
     /// @notice Pending yield should be included when computing asset value on requestRedeem.
@@ -557,8 +618,9 @@ contract YieldDistributorTest is Test {
         vm.prank(alice);
         (, uint256 lockedAssets) = vault.requestRedeem(100 * UNIT, alice);
 
-        // expected: 110 VUSD (100 original + 10 yield)
-        assertApproxEqAbs(lockedAssets, 110 * UNIT, 10, "locked assets should be 110 VUSD");
+        // expected: 100 original + pro-rata share of 10 yield (seeder holds the other SEED shares)
+        uint256 expected = 100 * UNIT + (10 * UNIT * 100 * UNIT) / (100 * UNIT + SEED);
+        assertApproxEqAbs(lockedAssets, expected, 10, "locked assets should include pending yield");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -597,8 +659,8 @@ contract YieldDistributorTest is Test {
         uint256 pending = yieldDistributor.pendingYield();
         uint256 expectedPending = (amount * timeElapsed) / 7 days;
 
-        // Allow 1% tolerance for rounding
-        assertApproxEqRel(pending, expectedPending, 0.01e18);
+        // Allow a few wei for rounding (a relative tolerance fails for tiny amounts)
+        assertApproxEqAbs(pending, expectedPending, 2);
     }
 
     function testFuzz_pullYield(uint256 amount, uint256 timeElapsed) public {
@@ -621,7 +683,7 @@ contract YieldDistributorTest is Test {
 
         assertEq(pulled, pendingBefore);
         assertEq(yieldDistributor.pendingYield(), 0);
-        assertEq(vusd.balanceOf(address(vault)), pulled);
+        assertEq(vusd.balanceOf(address(vault)), SEED + pulled);
     }
 
     function testFuzz_pullYield_fullPeriod(uint256 amount, uint256 timeElapsed) public {
@@ -657,16 +719,16 @@ contract YieldDistributorTest is Test {
 
         vm.warp(block.timestamp + timeBetween);
 
+        uint256 accrued = yieldDistributor.pendingYield();
         yieldDistributor.distribute(amount2);
         vm.stopPrank();
 
         // Period should be extended
         assertEq(yieldDistributor.periodFinish(), block.timestamp + 7 days);
 
-        // _remaining includes accrued + future (from lastUpdateTime to periodFinish),
-        // which equals the full amount1. So the new schedule total = amount1 + amount2.
-        uint256 expectedRate = ((amount1 + amount2) * PRECISION) / 7 days;
-        assertApproxEqRel(yieldDistributor.rewardRate(), expectedRate, 0.01e18);
+        // Accrued yield is paid to the vault; only the undistributed part of amount1 is rescheduled
+        assertEq(vusd.balanceOf(address(vault)), SEED + accrued);
+        assertApproxEqAbs(yieldDistributor.rewardRate() * 7 days / PRECISION, amount1 - accrued + amount2, 10);
     }
 
     function testFuzz_yieldDuration(uint256 duration, uint256 amount) public {

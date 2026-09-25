@@ -440,8 +440,9 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         uint256 _balance = IERC20(asset()).balanceOf(address(this));
         // Include accrued but un-pulled yield so views functions match execution functions.
         // After a pull pendingYield() is 0, so this never double-counts.
+        // pendingYield() is also 0 while there are no shares, matching what a pull would transfer.
         address _yieldDistributor = $.yieldDistributor;
-        if (_yieldDistributor != address(0) && totalSupply() > 0) {
+        if (_yieldDistributor != address(0)) {
             _balance += IYieldDistributor(_yieldDistributor).pendingYield();
         }
         uint256 _inCooldown = $.totalAssetsInCooldown;
@@ -536,11 +537,10 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
 
     /// @notice Pull pending yield from the yield distributor
     /// @dev Called before deposit/mint/withdraw/redeem to update share price.
-    ///      Skips pulling when totalSupply is 0 to prevent orphan yield that would
-    ///      unfairly dilute users canceling withdrawals.
+    ///      The yield distributor transfers nothing while totalSupply is 0 to prevent orphan yield.
     function _pullYield() internal {
         StakingVaultStorage storage $ = _getStakingVaultStorage();
-        if ($.yieldDistributor != address(0) && totalSupply() > 0) {
+        if ($.yieldDistributor != address(0)) {
             IYieldDistributor($.yieldDistributor).pullYield();
         }
     }

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {AccessControlDefaultAdminRulesUpgradeable} from
-    "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
+import {
+    AccessControlDefaultAdminRulesUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IYieldDistributor} from "./interfaces/IYieldDistributor.sol";
 
@@ -98,7 +99,8 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Distribute yield to be dripped to the vault
-    /// @dev Combines remaining undistributed yield with new amount and extends period.
+    /// @dev Pays accrued yield to the vault, then combines remaining undistributed yield
+    ///      with the new amount and extends period.
     ///      Only callable by addresses with DISTRIBUTOR_ROLE.
     /// @param amount_ The amount of yield to distribute
     function distribute(uint256 amount_) external onlyRole(DISTRIBUTOR_ROLE) {
@@ -107,6 +109,9 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
         YieldDistributorStorage storage $ = _getYieldDistributorStorage();
 
         $.asset.safeTransferFrom(msg.sender, address(this), amount_);
+
+        // Pay out yield already accrued to the vault before rescheduling.
+        _pullYield($);
 
         uint256 _remaining;
         if ($.lastUpdateTime < $.periodFinish && $.rewardRate != 0 && $.lastUpdateTime != 0) {
@@ -124,19 +129,13 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     /// @notice Pull accrued yield to the vault
     /// @dev Only callable by the vault contract. Transfers all pending yield
     ///      that has accrued since the last pull based on the linear drip rate.
-    ///      Updates lastUpdateTime to current timestamp.
+    ///      Updates lastUpdateTime to current timestamp. Transfers nothing while the vault has no shares.
     /// @return amount_ The amount of yield transferred to the vault
     function pullYield() external returns (uint256 amount_) {
         YieldDistributorStorage storage $ = _getYieldDistributorStorage();
         if (msg.sender != $.vault) revert OnlyVault();
 
-        amount_ = _pendingYield($);
-
-        if (amount_ > 0) {
-            $.lastUpdateTime = block.timestamp;
-            $.asset.safeTransfer(msg.sender, amount_);
-            emit YieldPulled(amount_);
-        }
+        amount_ = _pullYield($);
     }
 
     /// @notice Rescue tokens accidentally sent to this contract
@@ -212,10 +211,28 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
 
     /// @notice Calculate pending yield available to pull
     /// @dev Calculates based on time elapsed since last pull multiplied by reward rate.
-    ///      Returns 0 if no distribution is active or period has not started.
+    ///      Returns 0 if no distribution is active, period has not started or the vault has no shares.
     /// @return The amount of yield tokens available to pull
     function pendingYield() public view returns (uint256) {
         return _pendingYield(_getYieldDistributorStorage());
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                  INTERNAL STATE-CHANGING FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Transfer all accrued yield to the vault
+    /// @dev Updates lastUpdateTime to current timestamp when there is yield to transfer.
+    /// @param $ The storage pointer
+    /// @return amount_ The amount of yield transferred to the vault
+    function _pullYield(YieldDistributorStorage storage $) internal returns (uint256 amount_) {
+        amount_ = _pendingYield($);
+
+        if (amount_ > 0) {
+            $.lastUpdateTime = block.timestamp;
+            $.asset.safeTransfer($.vault, amount_);
+            emit YieldPulled(amount_);
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -223,10 +240,12 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Calculate pending yield from storage
+    /// @dev Returns 0 while the vault has no shares so yield is never sent to an empty vault.
     /// @param $ The storage pointer
     /// @return The amount of yield tokens available to pull
     function _pendingYield(YieldDistributorStorage storage $) internal view returns (uint256) {
         if ($.lastUpdateTime == 0 || $.rewardRate == 0) return 0;
+        if (IERC20($.vault).totalSupply() == 0) return 0;
 
         uint256 _endTime = block.timestamp < $.periodFinish ? block.timestamp : $.periodFinish;
         if (_endTime <= $.lastUpdateTime) return 0;

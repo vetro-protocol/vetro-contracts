@@ -1056,4 +1056,59 @@ contract StakingVaultTest is Test {
         assertEq(vault.maxRedeem(alice), vault.balanceOf(alice), "maxRedeem should equal balance when whitelisted");
         assertGt(vault.maxWithdraw(alice), 0, "maxWithdraw should be nonzero when whitelisted");
     }
+
+    /*//////////////////////////////////////////////////////////////
+                    YIELD DISTRIBUTION SHARE PRICE
+    //////////////////////////////////////////////////////////////*/
+
+    function _distribute(uint256 amount_) internal {
+        deal(address(vusd), owner, amount_);
+        vm.startPrank(owner);
+        vusd.approve(address(yieldDistributor), amount_);
+        yieldDistributor.distribute(amount_);
+        vm.stopPrank();
+    }
+
+    function _deposit(address user_, uint256 assets_) internal returns (uint256 shares_) {
+        vm.startPrank(user_);
+        vusd.approve(address(vault), assets_);
+        shares_ = vault.deposit(assets_, user_);
+        vm.stopPrank();
+    }
+
+    // A distribute() must never lower the share price, whether or not the previous schedule
+    // has accrued un-pulled yield, and a deposit right after it must be priced fairly.
+    // Without stakers, no yield may be sent to the empty vault to be captured or lost by the next depositor.
+    function testFuzz_distribute_sharePriceNeverDips(
+        uint256 stake,
+        uint256 amount1,
+        uint256 amount2,
+        uint256 elapsed,
+        bool withStaker
+    ) public {
+        stake = bound(stake, UNIT, 1000 * UNIT);
+        amount1 = bound(amount1, 1, 1000 * UNIT);
+        amount2 = bound(amount2, 1, 1000 * UNIT);
+        elapsed = bound(elapsed, 0, 10 days);
+
+        if (withStaker) _deposit(alice, stake);
+
+        _distribute(amount1);
+        vm.warp(block.timestamp + elapsed);
+
+        uint256 _ppsBefore = vault.convertToAssets(1e18);
+        uint256 _totalAssetsBefore = vault.totalAssets();
+        uint256 _fairShares = vault.previewDeposit(100 * UNIT);
+
+        _distribute(amount2);
+
+        assertGe(vault.convertToAssets(1e18), _ppsBefore, "share price dipped");
+        assertGe(vault.totalAssets(), _totalAssetsBefore, "totalAssets dropped");
+
+        uint256 _bobShares = _deposit(bob, 100 * UNIT);
+        assertGe(_bobShares, _fairShares, "deposit priced below fair share price");
+        uint256 _bobAssets = vault.convertToAssets(_bobShares);
+        assertLe(_bobAssets, 100 * UNIT, "depositor captured existing yield");
+        assertApproxEqRel(_bobAssets, 100 * UNIT, 0.0001e18, "depositor lost value on entry");
+    }
 }

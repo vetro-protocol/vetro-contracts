@@ -41,11 +41,15 @@ contract YieldDistributorHandler is Test {
 
         deal(address(vusd), distributor, amount);
 
+        // distribute() also pays accrued yield to the vault
+        uint256 vaultBalanceBefore = vusd.balanceOf(address(vault));
+
         vm.startPrank(distributor);
         vusd.approve(address(yieldDistributor), amount);
         yieldDistributor.distribute(amount);
         vm.stopPrank();
 
+        ghost_totalPulled += vusd.balanceOf(address(vault)) - vaultBalanceBefore;
         ghost_totalDistributed += amount;
         ghost_distributeCount++;
     }
@@ -117,6 +121,14 @@ contract YieldDistributorInvariantTest is Test {
         vm.startPrank(owner);
         vault.updateYieldDistributor(address(yieldDistributor));
         yieldDistributor.grantRole(yieldDistributor.DISTRIBUTOR_ROLE(), distributor);
+        vm.stopPrank();
+
+        // Seed the vault with shares: yield is only paid while the vault has shares
+        address seeder = makeAddr("seeder");
+        deal(address(vusd), seeder, UNIT);
+        vm.startPrank(seeder);
+        vusd.approve(address(vault), UNIT);
+        vault.deposit(UNIT, seeder);
         vm.stopPrank();
 
         handler = new YieldDistributorHandler(yieldDistributor, vault, vusd, owner, distributor);
