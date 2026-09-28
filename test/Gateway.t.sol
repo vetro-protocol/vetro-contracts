@@ -274,6 +274,137 @@ contract GatewayTest is Test {
         gateway.burnFromAMO(burnAmount);
     }
 
+    // --- amoSupply <= totalSupply enforcement ---
+
+    /// @dev bob mints 100, AMO mints 10 to alice (stand-in for a Morpho borrower), 10 collateral of
+    ///      unharvested yield lands in the treasury, alice redeems her 10. Supply 100, amoSupply 10.
+    function _setupAmoFloatRedeemed() internal {
+        mockOracle.updatePrice(1e8);
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(10e18);
+        mintPeggedToken(bob, 100e18);
+        gateway.mintToAMO(10e18, alice);
+        deal(token, address(treasury), IERC20(token).balanceOf(address(treasury)) + 10e6);
+
+        gateway.setWithdrawalDelayEnabled(false);
+        vm.prank(alice);
+        gateway.redeem(token, 10e18, 0, alice);
+    }
+
+    function test_redeem_revertIfBurnBelowAmoSupply() public {
+        _setupAmoFloatRedeemed();
+        assertEq(VUSD.totalSupply(), 100e18);
+        assertEq(gateway.amoSupply(), 10e18);
+
+        // Treasury holds 100 collateral, but the last 10 VUSD may only be retired via burnFromAMO
+        uint256 _cap = gateway.previewRedeem(token, 90e18);
+        uint256 _out = gateway.previewRedeem(token, 100e18);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.ExceededMaxWithdraw.selector, _out, _cap));
+        gateway.redeem(token, 100e18, 0, bob);
+
+        vm.prank(bob);
+        gateway.redeem(token, 90e18, 0, bob);
+
+        assertEq(VUSD.totalSupply(), gateway.amoSupply(), "supply should stop at amoSupply");
+        assertEq(gateway.maxRedeem(bob), 0, "nothing redeemable at the boundary");
+        assertEq(gateway.maxWithdraw(token), 0, "nothing withdrawable at the boundary");
+        assertEq(gateway.maxMint(), type(uint256).max, "maxMint must not underflow");
+        assertEq(treasury.harvest(token, address(this)), 10e6, "unharvested yield stays harvestable");
+    }
+
+    function test_withdraw_revertIfBurnBelowAmoSupply() public {
+        _setupAmoFloatRedeemed();
+
+        uint256 _cap = gateway.previewRedeem(token, 90e18);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.ExceededMaxWithdraw.selector, 100e6, _cap));
+        gateway.withdraw(token, 100e6, 100e18, bob);
+    }
+
+    function test_maxWithdraw_cappedAtSupplyAboveAmoSupply() public {
+        _setupAmoFloatRedeemed();
+
+        // Treasury holds 100 collateral, but only 90 VUSD of supply sits above amoSupply
+        assertEq(treasury.withdrawable(token), 100e6);
+        uint256 _cap = gateway.previewRedeem(token, 90e18);
+        assertEq(gateway.maxWithdraw(token), _cap, "capped at previewRedeem(totalSupply - amoSupply)");
+
+        // Withdrawing exactly the cap succeeds and lands supply on amoSupply
+        vm.prank(bob);
+        gateway.withdraw(token, _cap, 90e18, bob);
+        assertEq(VUSD.totalSupply(), gateway.amoSupply());
+    }
+
+    function test_redeem_afterRequest_revertIfBurnBelowAmoSupply() public {
+        _setupAmoFloatRedeemed();
+        gateway.setWithdrawalDelayEnabled(true);
+
+        vm.startPrank(bob);
+        VUSD.approve(address(gateway), 100e18);
+        gateway.requestRedeem(100e18);
+        vm.stopPrank();
+        vm.warp(block.timestamp + gateway.withdrawalDelay());
+        mockOracle.updatePrice(1e8); // refresh after warp
+
+        uint256 _cap = gateway.previewRedeem(token, 90e18);
+        uint256 _out = gateway.previewRedeem(token, 100e18);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.ExceededMaxWithdraw.selector, _out, _cap));
+        gateway.redeem(token, 100e18, 0, bob);
+    }
+
+    /// @dev burnFromAMO lowers totalSupply and amoSupply equally, so it never frees redemption headroom:
+    ///      at the boundary the remaining float exits by being bought back and retired by the AMO.
+    function test_burnFromAMO_retiresFloatAtBoundary() public {
+        _setupAmoFloatRedeemed();
+        vm.prank(bob);
+        gateway.redeem(token, 90e18, 0, bob);
+        assertEq(gateway.maxRedeem(bob), 0);
+
+        // AMO buys back bob's 10 VUSD (existing float, no new supply) and retires its debt
+        vm.prank(bob);
+        VUSD.transfer(address(this), 10e18);
+        assertEq(gateway.maxWithdraw(token), 0, "acquiring float frees no headroom");
+
+        gateway.burnFromAMO(10e18);
+        assertEq(gateway.amoSupply(), 0);
+        assertEq(VUSD.totalSupply(), 0);
+        assertEq(gateway.maxWithdraw(token), 0, "burnFromAMO frees no headroom");
+    }
+
+    function test_redeem_unblockedByNewDeposit() public {
+        _setupAmoFloatRedeemed();
+        vm.prank(bob);
+        gateway.redeem(token, 90e18, 0, bob);
+        assertEq(gateway.maxRedeem(bob), 0);
+
+        // New collateral-backed supply lifts totalSupply above amoSupply again
+        mintPeggedToken(alice, 10e18);
+        assertEq(gateway.maxRedeem(bob), 10e18);
+        vm.prank(bob);
+        gateway.redeem(token, 10e18, 0, bob);
+        assertEq(VUSD.totalSupply(), gateway.amoSupply());
+    }
+
+    function test_maxRedeem_cappedAtSupplyAboveAmoSupply() public {
+        mockOracle.updatePrice(1e8);
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(10e18);
+        mintPeggedToken(bob, 100e18);
+        gateway.mintToAMO(10e18, alice);
+
+        assertEq(gateway.maxRedeem(bob), 100e18, "balance is the binding limit");
+        assertEq(gateway.maxRedeem(alice), 10e18, "balance is the binding limit");
+
+        deal(token, address(treasury), IERC20(token).balanceOf(address(treasury)) + 10e6);
+        gateway.setWithdrawalDelayEnabled(false);
+        vm.prank(alice);
+        gateway.redeem(token, 10e18, 0, alice);
+
+        assertEq(gateway.maxRedeem(bob), 90e18, "capped at totalSupply - amoSupply");
+    }
+
     // --- mint ---
     function testFuzz_mint(int256 price, uint256 mintFee, uint256 VUSDAmount) public {
         // Bound inputs
@@ -1151,8 +1282,14 @@ contract GatewayTest is Test {
     function test_maxWithdraw() public {
         assertEq(gateway.maxWithdraw(token), 0);
 
+        // Treasury liquidity alone is not withdrawable: there is no supply to redeem
         deal(address(token), address(treasury), 50e18);
-        assertEq(gateway.maxWithdraw(token), 50e18);
+        assertEq(gateway.maxWithdraw(token), 0);
+
+        // With supply, the redeemable supply is the binding limit
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(bob, 100e18);
+        assertEq(gateway.maxWithdraw(token), gateway.previewRedeem(token, 100e18));
     }
 
     function test_owner_and_treasury_views() public view {
