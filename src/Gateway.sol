@@ -96,6 +96,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AddressIsZero();
     error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error AmountIsZero();
+    error BurnBelowAmoSupply(uint256 totalSupply, uint256 amoSupply);
     error CallerNotWhitelisted(address caller);
     error ExceededMaxMint(uint256 requested, uint256 available);
     error ExceededMaxWithdraw(uint256 requested, uint256 available);
@@ -422,8 +423,14 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
+    /// @dev Capped at `totalSupply - amoSupply`: redemptions may not burn supply below outstanding AMO debt.
+    ///      amoSupply is governed to stay a small fraction of totalSupply, so in practice this equals the balance.
     function maxRedeem(address owner_) external view returns (uint256) {
-        return _peggedToken().balanceOf(owner_);
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _amoSupply = $.amoSupply;
+        uint256 _redeemable = _totalSupply > _amoSupply ? _totalSupply - _amoSupply : 0;
+        return Math.min($.peggedToken.balanceOf(owner_), _redeemable);
     }
 
     /// @inheritdoc IGateway
@@ -479,13 +486,14 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /**
      * @inheritdoc IGateway
      * @dev Returns remaining mint capacity (excludes AMO supply from calculation)
-     * @dev Invariant: amoSupply <= totalSupply always holds, so subtraction is safe
+     * @dev amoSupply <= totalSupply is enforced on every redemption burn (see _checkAmoBacking);
+     *      the guard below is defensive only
      */
     function maxMint() public view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
         uint256 _totalSupply = $.peggedToken.totalSupply();
         uint256 _amoSupply = $.amoSupply;
-        uint256 _userSupply = _totalSupply - _amoSupply;
+        uint256 _userSupply = _totalSupply > _amoSupply ? _totalSupply - _amoSupply : 0;
         uint256 _mintLimit = $.mintLimit;
         if (_mintLimit <= _userSupply) return 0;
         unchecked {
@@ -494,8 +502,15 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
+    /// @dev Capped at `previewRedeem(tokenOut_, totalSupply - amoSupply)`, the token-denominated equivalent of the
+    ///      maxRedeem cap: redemptions may not burn supply below outstanding AMO debt.
     function maxWithdraw(address tokenOut_) public view returns (uint256) {
-        return ITreasury(treasury()).withdrawable(tokenOut_);
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _amoSupply = $.amoSupply;
+        if (_totalSupply <= _amoSupply) return 0;
+        uint256 _withdrawable = ITreasury(treasury()).withdrawable(tokenOut_);
+        return Math.min(_withdrawable, previewRedeem(tokenOut_, _totalSupply - _amoSupply));
     }
 
     /// @inheritdoc IGateway
@@ -571,6 +586,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         if (amountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(amountOut_, _maxWithdraw);
         IPeggedToken _token = _peggedToken();
         _token.burnFrom(msg.sender, peggedTokenIn_);
+        _checkAmoBacking();
         ITreasury(treasury()).withdraw(tokenOut_, amountOut_, receiver_);
 
         emit Withdraw(tokenOut_, amountOut_, peggedTokenIn_, receiver_);
@@ -654,6 +670,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
             _token.burnFrom(address(this), _lockedAmount);
             _token.burnFrom(msg.sender, _excessAmount);
         }
+        _checkAmoBacking();
 
         // Withdraw tokens from treasury
         ITreasury(treasury()).withdraw(tokenOut_, tokenAmountOut_, receiver_);
@@ -703,6 +720,22 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         // convert _rawTokenAmount to token_ decimal
         uint8 _decimals = $.peggedTokenDecimals;
         return _rawTokenAmount / 10 ** (_decimals - IERC20Metadata(tokenOut_).decimals());
+    }
+
+    /**
+     * @dev Reverts if a redemption burn left totalSupply below amoSupply. AMO-minted tokens are backed by the
+     * AMO position, not the reserve, and are retired via burnFromAMO. Only the Gateway burns PeggedToken, so
+     * checking every redemption keeps amoSupply <= totalSupply, which maxMint, Treasury and YieldManager rely on.
+     * Note: amoSupply is meant to stay a very small fraction of totalSupply, and governance sizes amoMintLimit
+     * (and unwinds the AMO via burnFromAMO) as totalSupply changes. Reaching this revert is therefore unlikely;
+     * it guards the edge case where redemptions paid from unharvested yield would push supply below amoSupply.
+     * Governor is supposed to react quickly as totalSupply approaches amoSupply.
+     */
+    function _checkAmoBacking() private view {
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _amoSupply = $.amoSupply;
+        if (_totalSupply < _amoSupply) revert BurnBelowAmoSupply(_totalSupply, _amoSupply);
     }
 
     /**

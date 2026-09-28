@@ -11,10 +11,9 @@ import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockYieldVaultRealistic} from "test/mocks/MockYieldVaultRealistic.sol";
 
 /// @notice Drives random mint / redeem / AMO / yield / harvest sequences against the full system.
-/// @dev AMO-minted tokens stay with the handler and are only unwound via burnFromAMO — matching the
-///      trusted-operator model. Users only ever redeem their own (collateral-backed) balance, so a
-///      redeem can never draw down AMO float. That keeps the invariants meaningful rather than
-///      trivially breakable via the already-accepted AMO-float path.
+/// @dev AMO-minted tokens are held by the handler. Besides burnFromAMO, `amoFloatRedeem` hands AMO float
+///      to an actor who redeems it at the Gateway (the Morpho-borrower path), so redemptions can burn
+///      AMO-origin supply. Combined with vault yield, that is what used to push totalSupply below amoSupply.
 contract TreasurySolvencyHandler is Test {
     Gateway public gateway;
     Treasury public treasury;
@@ -30,6 +29,7 @@ contract TreasurySolvencyHandler is Test {
     uint256 public ghost_amoMinted;
     uint256 public ghost_amoBurned;
     uint256 public ghost_yield;
+    uint256 public ghost_amoFloatRedeemed;
 
     modifier useActor(uint256 seed) {
         currentActor = actors[bound(seed, 0, actors.length - 1)];
@@ -69,6 +69,16 @@ contract TreasurySolvencyHandler is Test {
         vm.prank(currentActor);
         gateway.redeem(address(collateral), amount, 0, currentActor);
         ghost_redeemed += amount;
+    }
+
+    function amoFloatRedeem(uint256 seed, uint256 amount) external useActor(seed) {
+        uint256 _held = vusd.balanceOf(address(this));
+        if (_held == 0) return;
+        amount = bound(amount, 1, _held);
+        vusd.transfer(currentActor, amount);
+        vm.prank(currentActor);
+        gateway.redeem(address(collateral), amount, 0, currentActor);
+        ghost_amoFloatRedeemed += amount;
     }
 
     function amoMint(uint256 amount) external {
@@ -160,6 +170,7 @@ contract TreasurySolvencyInvariantTest is Test {
     /// @notice AMO supply is always a subset of total supply (so maxMint's subtraction can't underflow).
     function invariant_amoSupplyWithinTotalSupply() public view {
         assertLe(gateway.amoSupply(), vusd.totalSupply(), "amoSupply exceeds totalSupply");
+        gateway.maxMint(); // must not revert, or deposit()/mint() are bricked
     }
 
     function invariant_callSummary() public view {
@@ -168,6 +179,7 @@ contract TreasurySolvencyInvariantTest is Test {
         console.log("amoMinted:", handler.ghost_amoMinted());
         console.log("amoBurned:", handler.ghost_amoBurned());
         console.log("yield:    ", handler.ghost_yield());
+        console.log("amoFloatRedeemed:", handler.ghost_amoFloatRedeemed());
         console.log("reserve:  ", treasury.reserve());
         console.log("supply:   ", vusd.totalSupply());
         console.log("amoSupply:", gateway.amoSupply());
