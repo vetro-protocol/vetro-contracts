@@ -73,7 +73,6 @@ contract YieldManager is ReentrancyGuardTransient {
     error AmountIsZero();
     error AssetMismatch();
     error DripExceedsCap(uint256 drip, uint256 cap);
-    error InsufficientBuffer(uint256 amount, uint256 buffer);
     error MaxAprTooHigh(uint256 aprBps, uint256 maxAprBps);
 
     /*/////////////////////////////////////////////////////////////
@@ -115,14 +114,16 @@ contract YieldManager is ReentrancyGuardTransient {
     /////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice KEEPER_ROLE: Send `amount_` from the buffer to the YieldDistributor.
-     * @dev A fixed amount can't be inflated by a deposit front-running this call; see `amountForApr`. Each call
-     * re-spreads the remaining drip over a fresh `yieldDuration`, so an amount short of the target lowers the
-     * current rate, and a keeper can delay payouts but not raise them past the caps.
-     * @param amount_ Pegged tokens to send
+     * @notice KEEPER_ROLE: Send up to `amount_` from the buffer to the YieldDistributor, clamped to `maxDistribute`.
+     * @dev A fixed amount can't be inflated by a deposit front-running this call; see `amountForApr`. Clamping keeps
+     * a stale amount from reverting when `totalAssets` drops before inclusion. Each call re-spreads the remaining
+     * drip over a fresh `yieldDuration`, so an amount short of the target lowers the current rate, and a keeper can
+     * delay payouts but not raise them past the caps.
+     * @param amount_ Max pegged tokens to send, nonzero
+     * @return _distributed Pegged tokens sent to the YieldDistributor
      */
-    function distribute(uint256 amount_) external nonReentrant onlyRole(KEEPER_ROLE) {
-        _distribute(amount_);
+    function distribute(uint256 amount_) external nonReentrant onlyRole(KEEPER_ROLE) returns (uint256 _distributed) {
+        return _distribute(amount_);
     }
 
     /**
@@ -146,17 +147,18 @@ contract YieldManager is ReentrancyGuardTransient {
      * @notice KEEPER_ROLE: `harvest` then `distribute` in one call.
      * @param token_ Whitelisted collateral token to harvest the excess in
      * @param minPeggedTokenOut_ Minimum pegged tokens the Gateway mint must produce
-     * @param amount_ Pegged tokens to send to the YieldDistributor
+     * @param amount_ Max pegged tokens to send to the YieldDistributor, nonzero
      * @return _minted Pegged tokens added to the buffer
+     * @return _distributed Pegged tokens sent to the YieldDistributor
      */
     function harvestAndDistribute(address token_, uint256 minPeggedTokenOut_, uint256 amount_)
         external
         nonReentrant
         onlyRole(KEEPER_ROLE)
-        returns (uint256 _minted)
+        returns (uint256 _minted, uint256 _distributed)
     {
         _minted = _harvest(token_, minPeggedTokenOut_);
-        _distribute(amount_);
+        _distributed = _distribute(amount_);
     }
 
     /**
@@ -203,7 +205,7 @@ contract YieldManager is ReentrancyGuardTransient {
 
     /**
      * @notice Pegged tokens to `distribute` now so the drip runs at `aprBps_`, limited by the buffer
-     * @dev Not capped: above `maxDistribute`, `distribute` reverts instead.
+     * @dev Not capped: above `maxDistribute`, `distribute` clamps instead.
      */
     function amountForApr(uint256 aprBps_) public view returns (uint256) {
         return _previewDistribute(_dripPerPeriod(aprBps_));
@@ -245,7 +247,7 @@ contract YieldManager is ReentrancyGuardTransient {
         return _reserve > _backedSupply ? _reserve - _backedSupply : 0;
     }
 
-    /// @notice Most `distribute` accepts now: the headroom under both caps, limited by the buffer
+    /// @notice Most `distribute` sends now: the headroom under both caps, limited by the buffer
     function maxDistribute() public view returns (uint256) {
         return _previewDistribute(_maxDripPerPeriod());
     }
@@ -275,22 +277,24 @@ contract YieldManager is ReentrancyGuardTransient {
                         PRIVATE FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
-    /// @dev Checks the resulting drip, not `amount_`, so repeat calls cannot stack past the caps. Also reverts on a
-    /// distributor that does not pull accrued yield before rescheduling, as it rolls over more than predicted.
-    function _distribute(uint256 amount_) private {
+    /// @dev A clamped zero is a no-op, not a revert, so `harvestAndDistribute` keeps its harvest when the caps are
+    /// full. The drip check reverts on a distributor that does not pull accrued yield before rescheduling, as it rolls
+    /// over more than `undistributed()` predicts.
+    function _distribute(uint256 amount_) private returns (uint256 _distributed) {
         if (amount_ == 0) revert AmountIsZero();
-        uint256 _buffer = buffer();
-        if (amount_ > _buffer) revert InsufficientBuffer(amount_, _buffer);
+
+        uint256 _cap = _maxDripPerPeriod();
+        _distributed = Math.min(amount_, _previewDistribute(_cap));
+        if (_distributed == 0) return 0;
 
         IYieldDistributor _distributor = YIELD_DISTRIBUTOR;
-        uint256 _cap = _maxDripPerPeriod();
-        PEGGED_TOKEN.forceApprove(address(_distributor), amount_);
-        _distributor.distribute(amount_);
+        PEGGED_TOKEN.forceApprove(address(_distributor), _distributed);
+        _distributor.distribute(_distributed);
 
         uint256 _drip = ((_distributor.periodFinish() - block.timestamp) * _distributor.rewardRate()) / RATE_PRECISION;
         if (_drip > _cap) revert DripExceedsCap(_drip, _cap);
 
-        emit Distributed(msg.sender, amount_, _buffer - amount_);
+        emit Distributed(msg.sender, _distributed, buffer());
     }
 
     function _harvest(address token_, uint256 minPeggedTokenOut_) private returns (uint256 _minted) {

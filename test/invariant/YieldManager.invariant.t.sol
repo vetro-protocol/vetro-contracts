@@ -38,8 +38,8 @@ contract YieldManagerHandler is Test {
     uint256 public ghost_capAtLastDistribution;
     uint256 public ghost_distributeCount;
     bool public ghost_dripAboveCap;
-    bool public ghost_maxDistributeRejected;
-    bool public ghost_aboveMaxDistributeAccepted;
+    bool public ghost_distributeReverted;
+    bool public ghost_clampMismatch;
 
     uint256 constant YEAR = 365 days;
 
@@ -104,15 +104,9 @@ contract YieldManagerHandler is Test {
         _distribute(_amount);
     }
 
-    /// @dev Anything above the headroom by more than the mirror's rounding must be rejected
+    /// @dev Anything above the headroom must be clamped to it
     function distributeAboveMax(uint256 excess_) external {
-        uint256 _amount = yieldManager.maxDistribute() + bound(excess_, 3, 1_000e18);
-        if (_amount > yieldManager.buffer()) return;
-
-        vm.prank(keeper);
-        try yieldManager.distribute(_amount) {
-            ghost_aboveMaxDistributeAccepted = true;
-        } catch {}
+        _distribute(yieldManager.maxDistribute() + bound(excess_, 1, 1_000e18));
     }
 
     function setMaxApr(uint256 maxAprBps_) external {
@@ -139,14 +133,17 @@ contract YieldManagerHandler is Test {
 
     function _distribute(uint256 amount_) private {
         uint256 _cap = _expectedCap();
+        uint256 _expected = _min(amount_, yieldManager.maxDistribute());
         vm.prank(keeper);
-        try yieldManager.distribute(amount_) {
-            ghost_distributed += amount_;
+        try yieldManager.distribute(amount_) returns (uint256 _sent) {
+            if (_sent != _expected) ghost_clampMismatch = true;
+            if (_sent == 0) return;
+            ghost_distributed += _sent;
             ghost_capAtLastDistribution = _cap;
             ghost_distributeCount++;
             if (dripLeft() > _cap) ghost_dripAboveCap = true;
         } catch {
-            ghost_maxDistributeRejected = true;
+            ghost_distributeReverted = true;
         }
     }
 
@@ -256,9 +253,9 @@ contract YieldManagerInvariantTest is Test {
 
     /// forge-config: default.invariant.runs = 256
     /// forge-config: default.invariant.depth = 50
-    function invariant_maxDistributeIsExact() public view {
-        assertFalse(handler.ghost_maxDistributeRejected(), "maxDistribute rejected");
-        assertFalse(handler.ghost_aboveMaxDistributeAccepted(), "more than maxDistribute accepted");
+    function invariant_distributeClampsToMaxDistribute() public view {
+        assertFalse(handler.ghost_distributeReverted(), "nonzero distribute reverted");
+        assertFalse(handler.ghost_clampMismatch(), "sent differs from min(amount, maxDistribute)");
     }
 
     /// forge-config: default.invariant.runs = 256

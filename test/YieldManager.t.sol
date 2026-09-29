@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -204,27 +204,49 @@ contract YieldManagerTest is Test {
         yieldManager.setAbsoluteCap(20e18);
         assertEq(yieldManager.maxDistribute(), 20e18, "cap should bind the headroom");
 
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(21e18);
-
-        yieldManager.distribute(20e18);
+        assertEq(yieldManager.distribute(21e18), 20e18, "clamped to the cap");
         assertApproxEqAbs(dripLeft(), 20e18, 2, "drip at the cap");
     }
 
-    function test_distribute_revertIfAboveMaxApr() public {
+    function test_distribute_clampsToMaxApr() public {
         fillBuffer(1_000e6);
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(MAX_PER_PERIOD + 1e18);
+
+        vm.expectEmit();
+        emit Distributed(keeper, MAX_PER_PERIOD, 1_000e18 - MAX_PER_PERIOD);
+        vm.prank(keeper);
+        assertEq(yieldManager.distribute(MAX_PER_PERIOD + 1e18), MAX_PER_PERIOD, "clamped to the max APR");
     }
 
-    function test_distribute_revertIfInsufficientBuffer() public {
+    function test_distribute_emptyBufferIsNoop() public {
+        assertEq(yieldManager.buffer(), 0, "empty buffer with the caps open");
+        vm.recordLogs();
+        assertEq(yieldManager.distribute(1e18), 0, "nothing to send");
+        assertEq(vm.getRecordedLogs().length, 0, "no-op must not emit");
+        assertEq(distributor.periodFinish(), 0, "distributor untouched");
+    }
+
+    function test_distribute_clampsToBuffer() public {
         fillBuffer(5e6);
         assertEq(yieldManager.amountForApr(APR_BPS), 5e18, "preview limited by the buffer");
-        vm.expectRevert(abi.encodeWithSelector(YieldManager.InsufficientBuffer.selector, 5e18 + 1, 5e18));
-        yieldManager.distribute(5e18 + 1);
+        assertEq(yieldManager.distribute(5e18 + 1), 5e18, "clamped to the buffer");
+        assertEq(yieldManager.buffer(), 0, "buffer drained");
     }
 
-    function test_distribute_revertIfEmptyVault() public {
+    function test_distribute_staleAmountClampedAfterExit() public {
+        fillBuffer(1_000e6);
+        uint256 simulated = yieldManager.maxDistribute();
+
+        // A staker leaves between the keeper's simulation and inclusion, lowering the cap
+        uint256 shares = stakingVault.balanceOf(alice);
+        vm.prank(alice);
+        stakingVault.requestRedeem(shares / 2, alice);
+
+        uint256 sent = yieldManager.distribute(simulated);
+        assertLt(sent, simulated, "stale amount clamped, not reverted");
+        assertApproxEqAbs(sent, MAX_PER_PERIOD / 2, 2, "sends the lowered cap");
+    }
+
+    function test_distribute_emptyVaultIsNoop() public {
         fillBuffer(1_000e6);
         uint256 shares = stakingVault.balanceOf(alice);
         vm.prank(alice);
@@ -232,11 +254,12 @@ contract YieldManagerTest is Test {
         assertEq(stakingVault.totalAssets(), 0, "no assets earning");
 
         assertEq(yieldManager.amountForApr(APR_BPS), 0, "no stakers, no yield");
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(1e18);
+        vm.recordLogs();
+        assertEq(yieldManager.distribute(1e18), 0, "nothing sent");
+        assertEq(vm.getRecordedLogs().length, 0, "no-op must not emit");
     }
 
-    function test_distribute_revertIfNoSharesWithAssets() public {
+    function test_distribute_noSharesWithAssetsIsNoop() public {
         fillBuffer(1_000e6);
         uint256 shares = stakingVault.balanceOf(alice);
         vm.prank(alice);
@@ -247,26 +270,23 @@ contract YieldManagerTest is Test {
         assertGt(stakingVault.totalAssets(), 0, "assets without shares");
 
         assertEq(yieldManager.maxDistribute(), 0, "must not feed a drip nobody earns");
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(1e18);
+        assertEq(yieldManager.distribute(1e18), 0, "nothing sent");
     }
 
-    function test_distribute_revertIfMaxAprIsZero() public {
+    function test_distribute_maxAprZeroIsNoop() public {
         fillBuffer(1_000e6);
         vm.prank(admin);
         yieldManager.setMaxApr(0);
 
         assertEq(yieldManager.maxDistribute(), 0, "zero max APR pauses distribution");
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(1e18);
+        assertEq(yieldManager.distribute(1e18), 0, "nothing sent");
     }
 
     function test_distribute_repeatCallsCannotStackPastCap() public {
         fillBuffer(1_000e6);
         yieldManager.distribute(MAX_PER_PERIOD);
 
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(1e18);
+        assertLe(yieldManager.distribute(1e18), 1, "repeat call sends nothing past the cap");
 
         skip(1 days);
         uint256 topUp = yieldManager.maxDistribute();
@@ -287,8 +307,7 @@ contract YieldManagerTest is Test {
         vm.stopPrank();
         assertEq(yieldManager.maxDistribute(), 150e18, "cap binds the inflated APR headroom");
 
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(2 * MAX_PER_PERIOD);
+        assertEq(yieldManager.distribute(2 * MAX_PER_PERIOD), 150e18, "clamped to the absolute cap");
     }
 
     function test_distribute_lateKeeperNoCatchUp() public {
@@ -354,8 +373,7 @@ contract YieldManagerTest is Test {
 
         // 70/week scales to 10/day, under the 15/day the max APR allows
         assertEq(yieldManager.maxDistribute(), 10e18, "cap scaled to the 1-day period");
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.distribute(11e18);
+        assertEq(yieldManager.distribute(11e18), 10e18, "clamped to the scaled cap");
     }
 
     function test_distribute_maxAprIsDurationInvariant() public {
@@ -413,12 +431,6 @@ contract YieldManagerTest is Test {
         // Stretching the last day of drip plus a small amount over a fresh period lowers the rate
         yieldManager.distribute(1e18);
         assertLt(yieldManager.currentAprBps(), APR_BPS / 2, "short amount lowers the current APR");
-    }
-
-    function test_distribute_revertIfInsufficientBufferBeforeCap() public {
-        fillBuffer(5e6);
-        vm.expectRevert(abi.encodeWithSelector(YieldManager.InsufficientBuffer.selector, 1_000e18, 5e18));
-        yieldManager.distribute(1_000e18);
     }
 
     function test_distribute_donationCountsAsBuffer() public {
@@ -479,12 +491,9 @@ contract YieldManagerTest is Test {
             uint256 headroom = yieldManager.maxDistribute();
             uint256 cap = stakingVault.totalAssets() * MAX_APR_BPS * PERIOD / (10_000 * 365 days);
             uint256 amount = bound(amounts_[i], 1, 2 * MAX_PER_PERIOD);
-            try yieldManager.distribute(amount) {
-                assertLe(amount, headroom + 2, "accepted more than the headroom");
-                assertLe(dripLeft(), cap, "drip must not exceed one period at max APR");
-            } catch {
-                assertGt(amount, headroom, "rejected an amount within the headroom");
-            }
+            uint256 sent = yieldManager.distribute(amount);
+            assertEq(sent, amount < headroom ? amount : headroom, "sends min(amount, maxDistribute)");
+            assertLe(dripLeft(), cap, "drip must not exceed one period at max APR");
         }
     }
 
@@ -601,9 +610,10 @@ contract YieldManagerTest is Test {
         createExcess(1_000e6);
 
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvestAndDistribute(token, 1_000e18, TARGET_PER_PERIOD);
+        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(token, 1_000e18, TARGET_PER_PERIOD);
 
         assertEq(minted, 1_000e18, "minted mismatch");
+        assertEq(distributed, TARGET_PER_PERIOD, "distributed mismatch");
         assertEq(yieldManager.buffer(), 1_000e18 - TARGET_PER_PERIOD, "rest stays buffered");
         assertBackingInvariant();
     }
@@ -612,21 +622,42 @@ contract YieldManagerTest is Test {
         fillBuffer(1_000e6);
 
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvestAndDistribute(token, 0, TARGET_PER_PERIOD);
+        (uint256 minted,) = yieldManager.harvestAndDistribute(token, 0, TARGET_PER_PERIOD);
 
         assertEq(minted, 0, "nothing to harvest");
         assertEq(yieldManager.buffer(), 1_000e18 - TARGET_PER_PERIOD, "buffer still pays out");
     }
 
-    function test_harvestAndDistribute_revertIfAboveCapRollsBackHarvest() public {
+    function test_harvestAndDistribute_clampsAboveCapAndKeepsHarvest() public {
         createExcess(1_000e6);
 
+        vm.expectEmit();
+        emit Distributed(keeper, MAX_PER_PERIOD, 1_000e18 - MAX_PER_PERIOD);
         vm.prank(keeper);
-        vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
-        yieldManager.harvestAndDistribute(token, 0, MAX_PER_PERIOD + 1e18);
+        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(token, 0, MAX_PER_PERIOD + 1e18);
 
-        assertEq(yieldManager.buffer(), 0, "harvest rolled back");
-        assertEq(yieldManager.harvestable(), 1_000e18, "excess still in the treasury");
+        assertEq(minted, 1_000e18, "harvest kept");
+        assertEq(distributed, MAX_PER_PERIOD, "clamped to the cap");
+    }
+
+    function test_harvestAndDistribute_keepsHarvestWhenCapsFull() public {
+        fillBuffer(1_000e6);
+        yieldManager.distribute(MAX_PER_PERIOD);
+        createExcess(1_000e6);
+
+        vm.recordLogs();
+        vm.prank(keeper);
+        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(token, 0, 1e18);
+
+        assertEq(minted, 1_000e18, "harvest kept");
+        assertEq(distributed, 0, "no headroom left");
+        uint256 harvestedEvents;
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != Distributed.selector, "no-op must not emit Distributed");
+            if (logs[i].topics[0] == Harvested.selector) ++harvestedEvents;
+        }
+        assertEq(harvestedEvents, 1, "harvest still emitted");
     }
 
     function test_harvestAndDistribute_emitsBufferLeftAfterHarvest() public {
