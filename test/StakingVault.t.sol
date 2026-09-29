@@ -1111,4 +1111,65 @@ contract StakingVaultTest is Test {
         assertLe(_bobAssets, 100 * UNIT, "depositor captured existing yield");
         assertApproxEqRel(_bobAssets, 100 * UNIT, 0.0001e18, "depositor lost value on entry");
     }
+
+    /*//////////////////////////////////////////////////////////////
+                            ZERO SUPPLY
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Alice stakes, 700 drips over 7 days, and she exits after 1 day leaving the vault empty
+    function _emptyVaultMidPeriod() internal returns (uint256 requestId_) {
+        _deposit(alice, 1000 * UNIT);
+        _distribute(700 * UNIT);
+        skip(1 days);
+        uint256 _shares = vault.balanceOf(alice);
+        vm.prank(alice);
+        (requestId_,) = vault.requestRedeem(_shares, alice);
+        assertEq(vault.totalSupply(), 0, "vault should be empty");
+    }
+
+    function test_zeroSupply_depositDoesNotCaptureBacklog() public {
+        _emptyVaultMidPeriod();
+        uint256 _periodFinish = yieldDistributor.periodFinish();
+        skip(3 days);
+
+        uint256 _bobShares = _deposit(bob, 1000 * UNIT);
+
+        assertApproxEqAbs(vault.convertToAssets(_bobShares), 1000 * UNIT, 1, "depositor captured the empty window");
+        assertEq(yieldDistributor.periodFinish(), _periodFinish + 3 days, "schedule should slide by the empty window");
+
+        skip(7 days);
+        assertApproxEqAbs(vault.convertToAssets(_bobShares), 1600 * UNIT, 10, "remaining 6 days of drip still paid");
+    }
+
+    function test_zeroSupply_cancelWithdrawDoesNotCaptureBacklog() public {
+        uint256 _requestId = _emptyVaultMidPeriod();
+        skip(3 days);
+
+        vm.prank(alice);
+        uint256 _shares = vault.cancelWithdraw(_requestId);
+
+        assertApproxEqAbs(vault.convertToAssets(_shares), 1100 * UNIT, 2, "cooldown assets earned the empty window");
+    }
+
+    function test_deposit_revertIfZeroShares() public {
+        _deposit(alice, 1000 * UNIT);
+        deal(address(vusd), address(vault), 2000 * UNIT);
+
+        vm.startPrank(bob);
+        vusd.approve(address(vault), 1);
+        vm.expectRevert(StakingVault.ZeroAmount.selector);
+        vault.deposit(1, bob);
+        vm.stopPrank();
+    }
+
+    function test_cancelWithdraw_revertIfZeroShares() public {
+        _deposit(alice, 1000 * UNIT);
+        vm.prank(alice);
+        (uint256 _requestId,) = vault.requestWithdraw(1, alice);
+        deal(address(vusd), address(vault), vusd.balanceOf(address(vault)) + 1000 * UNIT);
+
+        vm.prank(alice);
+        vm.expectRevert(StakingVault.ZeroAmount.selector);
+        vault.cancelWithdraw(_requestId);
+    }
 }
