@@ -14,8 +14,8 @@ import {IGateway} from "./interfaces/IGateway.sol";
 import {IYieldDistributor} from "./interfaces/IYieldDistributor.sol";
 
 /// @title YieldManager: Buffered, rate-targeted staker yield
-/// @notice Harvests treasury excess into a pegged token buffer and pays stakers from it at a target APR,
-/// capped per distribution period.
+/// @notice Harvests treasury excess into a pegged token buffer; the keeper pays stakers from it, capped by an
+/// admin-set APR and a weekly token amount.
 /// @dev Harvesting re-deposits through the Gateway, so the collateral stays in the treasury earning while
 /// the buffer waits. Needs UMM_ROLE (Treasury) and DISTRIBUTOR_ROLE (YieldDistributor).
 contract YieldManager is ReentrancyGuardTransient {
@@ -32,9 +32,11 @@ contract YieldManager is ReentrancyGuardTransient {
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
+    /// @notice Guards against a mistyped `maxApyBps`
+    uint256 public constant MAX_APY_BPS = 5_000;
     uint256 public constant MAX_BPS = 10_000;
-    /// @notice Guards against a mistyped `targetApyBps`
-    uint256 public constant MAX_TARGET_APY_BPS = 5_000;
+    /// @dev Window `absoluteCap` is expressed in, independent of the distributor's `yieldDuration`
+    uint256 private constant CAP_WINDOW = 7 days;
     /// @dev YieldDistributor's `rewardRate` scale
     uint256 private constant RATE_PRECISION = 1e18;
     uint256 private constant YEAR = 365 days;
@@ -45,11 +47,11 @@ contract YieldManager is ReentrancyGuardTransient {
     /// @notice Yield distributor
     IYieldDistributor public immutable YIELD_DISTRIBUTOR;
 
-    /// @notice Max pegged tokens dripped per distributor `yieldDuration`; a shorter duration raises its weekly rate
+    /// @notice Max pegged tokens dripped per 7 days, whatever `totalAssets` or `yieldDuration` do
     uint256 public absoluteCap;
 
-    /// @notice Target staker APR in BPS (simple) on the staking vault's `totalAssets`
-    uint256 public targetApyBps;
+    /// @notice Max staker APR in BPS (simple) on the staking vault's `totalAssets` the drip may run at
+    uint256 public maxApyBps;
 
     /*/////////////////////////////////////////////////////////////
                             EVENTS
@@ -58,8 +60,8 @@ contract YieldManager is ReentrancyGuardTransient {
     event AbsoluteCapUpdated(uint256 previousCap, uint256 newCap);
     event Distributed(address indexed caller, uint256 amount, uint256 bufferLeft);
     event Harvested(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount);
+    event MaxApyUpdated(uint256 previousApyBps, uint256 newApyBps);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
-    event TargetApyUpdated(uint256 previousApyBps, uint256 newApyBps);
 
     /*/////////////////////////////////////////////////////////////
                             ERRORS
@@ -68,9 +70,11 @@ contract YieldManager is ReentrancyGuardTransient {
     error AbsoluteCapIsZero();
     error AccessControlUnauthorizedAccount(address account, bytes32 role);
     error AddressIsZero();
+    error AmountIsZero();
     error AssetMismatch();
-    error DripExceedsTarget(uint256 drip, uint256 target);
-    error TargetApyTooHigh(uint256 apyBps, uint256 maxApyBps);
+    error DripExceedsCap(uint256 drip, uint256 cap);
+    error InsufficientBuffer(uint256 amount, uint256 buffer);
+    error MaxApyTooHigh(uint256 apyBps, uint256 maxApyBps);
 
     /*/////////////////////////////////////////////////////////////
                             MODIFIERS
@@ -87,12 +91,12 @@ contract YieldManager is ReentrancyGuardTransient {
 
     /// @param peggedToken_ Pegged token
     /// @param yieldDistributor_ Yield distributor (its asset must be `peggedToken_`)
-    /// @param targetApyBps_ Initial target APR in BPS
-    /// @param absoluteCap_ Initial max pegged tokens per distribution period
+    /// @param maxApyBps_ Initial max APR in BPS
+    /// @param absoluteCap_ Initial max pegged tokens dripped per 7 days
     constructor(
         IPeggedToken peggedToken_,
         IYieldDistributor yieldDistributor_,
-        uint256 targetApyBps_,
+        uint256 maxApyBps_,
         uint256 absoluteCap_
     ) {
         if (address(peggedToken_) == address(0) || address(yieldDistributor_) == address(0)) {
@@ -102,7 +106,7 @@ contract YieldManager is ReentrancyGuardTransient {
 
         PEGGED_TOKEN = peggedToken_;
         YIELD_DISTRIBUTOR = yieldDistributor_;
-        _updateTargetApy(targetApyBps_);
+        _updateMaxApy(maxApyBps_);
         _updateAbsoluteCap(absoluteCap_);
     }
 
@@ -111,12 +115,14 @@ contract YieldManager is ReentrancyGuardTransient {
     /////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice KEEPER_ROLE: Top up the YieldDistributor from the buffer so it drips at the target rate.
-     * @dev Keeper-gated: the target reads spot `totalAssets`, which a flash deposit can inflate.
-     * @return _distributed Pegged tokens sent to the YieldDistributor
+     * @notice KEEPER_ROLE: Send `amount_` from the buffer to the YieldDistributor.
+     * @dev A fixed amount can't be inflated by a deposit front-running this call; see `amountForApy`. Each call
+     * re-spreads the remaining drip over a fresh `yieldDuration`, so an amount short of the target lowers the
+     * current rate, and a keeper can delay payouts but not raise them past the caps.
+     * @param amount_ Pegged tokens to send
      */
-    function distribute() external nonReentrant onlyRole(KEEPER_ROLE) returns (uint256 _distributed) {
-        return _distribute();
+    function distribute(uint256 amount_) external nonReentrant onlyRole(KEEPER_ROLE) {
+        _distribute(amount_);
     }
 
     /**
@@ -140,21 +146,21 @@ contract YieldManager is ReentrancyGuardTransient {
      * @notice KEEPER_ROLE: `harvest` then `distribute` in one call.
      * @param token_ Whitelisted collateral token to harvest the excess in
      * @param minPeggedTokenOut_ Minimum pegged tokens the Gateway mint must produce
+     * @param amount_ Pegged tokens to send to the YieldDistributor
      * @return _minted Pegged tokens added to the buffer
-     * @return _distributed Pegged tokens sent to the YieldDistributor
      */
-    function harvestAndDistribute(address token_, uint256 minPeggedTokenOut_)
+    function harvestAndDistribute(address token_, uint256 minPeggedTokenOut_, uint256 amount_)
         external
         nonReentrant
         onlyRole(KEEPER_ROLE)
-        returns (uint256 _minted, uint256 _distributed)
+        returns (uint256 _minted)
     {
         _minted = _harvest(token_, minPeggedTokenOut_);
-        _distributed = _distribute();
+        _distribute(amount_);
     }
 
     /**
-     * @notice DEFAULT_ADMIN_ROLE: Update the max pegged tokens dripped per distribution period.
+     * @notice DEFAULT_ADMIN_ROLE: Update the max pegged tokens dripped per 7 days.
      * @param absoluteCap_ New cap, nonzero
      */
     function setAbsoluteCap(uint256 absoluteCap_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -162,12 +168,12 @@ contract YieldManager is ReentrancyGuardTransient {
     }
 
     /**
-     * @notice DEFAULT_ADMIN_ROLE: Update the target staker APR.
-     * @dev Lowering it does not claw back what is already dripping; top-ups resume once the drip falls under it.
-     * @param targetApyBps_ New target APR in BPS, at most `MAX_TARGET_APY_BPS`; 0 pauses distribution
+     * @notice DEFAULT_ADMIN_ROLE: Update the max staker APR.
+     * @dev Lowering it does not claw back what is already dripping.
+     * @param maxApyBps_ New max APR in BPS, at most `MAX_APY_BPS`; 0 pauses distribution
      */
-    function setTargetApy(uint256 targetApyBps_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _updateTargetApy(targetApyBps_);
+    function setMaxApy(uint256 maxApyBps_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _updateMaxApy(maxApyBps_);
     }
 
     /**
@@ -195,9 +201,31 @@ contract YieldManager is ReentrancyGuardTransient {
                         PUBLIC VIEW FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Pegged tokens to `distribute` now so the drip runs at `apyBps_`, limited by the buffer
+     * @dev Not capped: above `maxDistribute`, `distribute` reverts instead.
+     */
+    function amountForApy(uint256 apyBps_) public view returns (uint256) {
+        return _previewDistribute(_dripPerPeriod(apyBps_));
+    }
+
     /// @notice Pegged tokens held for future distributions
     function buffer() public view returns (uint256) {
         return PEGGED_TOKEN.balanceOf(address(this));
+    }
+
+    /**
+     * @notice APR in BPS the YieldDistributor drips at now, on the staking vault's `totalAssets`
+     * @dev Unbounded at dust share supply, where a small `totalAssets` still receives the whole drip.
+     */
+    function currentApyBps() public view returns (uint256) {
+        IYieldDistributor _distributor = YIELD_DISTRIBUTOR;
+        if (block.timestamp >= _distributor.periodFinish()) return 0;
+        IERC4626 _vault = IERC4626(_distributor.vault());
+        if (_vault.totalSupply() == 0) return 0;
+        uint256 _totalAssets = _vault.totalAssets();
+        if (_totalAssets == 0) return 0;
+        return Math.mulDiv(_distributor.rewardRate(), YEAR * MAX_BPS, RATE_PRECISION * _totalAssets);
     }
 
     /// @notice Returns the gateway
@@ -217,26 +245,9 @@ contract YieldManager is ReentrancyGuardTransient {
         return _reserve > _backedSupply ? _reserve - _backedSupply : 0;
     }
 
-    /**
-     * @notice Pegged tokens the next `distribute` would send
-     */
-    function previewDistribute() public view returns (uint256) {
-        return _previewDistribute(targetPerPeriod());
-    }
-
-    /**
-     * @notice Pegged tokens the YieldDistributor should drip over one period
-     * @dev 0 without shares, else a top-up would pile up for the next depositor. Spot `totalAssets` makes the
-     * realized APR drift between top-ups: deposits dilute it until the next call, exits raise it until the drip
-     * runs out (never clawed back), bounded by `absoluteCap`.
-     */
-    function targetPerPeriod() public view returns (uint256) {
-        IYieldDistributor _distributor = YIELD_DISTRIBUTOR;
-        IERC4626 _vault = IERC4626(_distributor.vault());
-        if (_vault.totalSupply() == 0) return 0;
-        uint256 _totalAssets = _vault.totalAssets();
-        uint256 _target = Math.mulDiv(_totalAssets, targetApyBps * _distributor.yieldDuration(), MAX_BPS * YEAR);
-        return Math.min(_target, absoluteCap);
+    /// @notice Most `distribute` accepts now: the headroom under both caps, limited by the buffer
+    function maxDistribute() public view returns (uint256) {
+        return _previewDistribute(_maxDripPerPeriod());
     }
 
     /// @notice Returns the treasury
@@ -264,21 +275,22 @@ contract YieldManager is ReentrancyGuardTransient {
                         PRIVATE FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
-    /// @dev Reverts if the distributor rolls over more than `undistributed()` predicts, e.g. one that does not
-    /// pull accrued yield before rescheduling.
-    function _distribute() private returns (uint256 _distributed) {
-        IYieldDistributor _distributor = YIELD_DISTRIBUTOR;
-        uint256 _target = targetPerPeriod();
-        _distributed = _previewDistribute(_target);
-        if (_distributed == 0) return 0;
+    /// @dev Checks the resulting drip, not `amount_`, so repeat calls cannot stack past the caps. Also reverts on a
+    /// distributor that does not pull accrued yield before rescheduling, as it rolls over more than predicted.
+    function _distribute(uint256 amount_) private {
+        if (amount_ == 0) revert AmountIsZero();
+        uint256 _buffer = buffer();
+        if (amount_ > _buffer) revert InsufficientBuffer(amount_, _buffer);
 
-        PEGGED_TOKEN.forceApprove(address(_distributor), _distributed);
-        _distributor.distribute(_distributed);
+        IYieldDistributor _distributor = YIELD_DISTRIBUTOR;
+        uint256 _cap = _maxDripPerPeriod();
+        PEGGED_TOKEN.forceApprove(address(_distributor), amount_);
+        _distributor.distribute(amount_);
 
         uint256 _drip = ((_distributor.periodFinish() - block.timestamp) * _distributor.rewardRate()) / RATE_PRECISION;
-        if (_drip > _target) revert DripExceedsTarget(_drip, _target);
+        if (_drip > _cap) revert DripExceedsCap(_drip, _cap);
 
-        emit Distributed(msg.sender, _distributed, buffer());
+        emit Distributed(msg.sender, amount_, _buffer - amount_);
     }
 
     function _harvest(address token_, uint256 minPeggedTokenOut_) private returns (uint256 _minted) {
@@ -298,10 +310,27 @@ contract YieldManager is ReentrancyGuardTransient {
         absoluteCap = absoluteCap_;
     }
 
-    function _updateTargetApy(uint256 targetApyBps_) private {
-        if (targetApyBps_ > MAX_TARGET_APY_BPS) revert TargetApyTooHigh(targetApyBps_, MAX_TARGET_APY_BPS);
-        emit TargetApyUpdated(targetApyBps, targetApyBps_);
-        targetApyBps = targetApyBps_;
+    function _updateMaxApy(uint256 maxApyBps_) private {
+        if (maxApyBps_ > MAX_APY_BPS) revert MaxApyTooHigh(maxApyBps_, MAX_APY_BPS);
+        emit MaxApyUpdated(maxApyBps, maxApyBps_);
+        maxApyBps = maxApyBps_;
+    }
+
+    /// @dev Pegged tokens dripped over one period at `apyBps_`; 0 without shares, else a distribution would pile
+    /// up for the next depositor. Spot `totalAssets` makes the realized APR drift between top-ups: deposits dilute
+    /// it, exits raise it until the drip runs out (never clawed back).
+    function _dripPerPeriod(uint256 apyBps_) private view returns (uint256) {
+        IYieldDistributor _distributor = YIELD_DISTRIBUTOR;
+        IERC4626 _vault = IERC4626(_distributor.vault());
+        if (_vault.totalSupply() == 0) return 0;
+        return Math.mulDiv(_vault.totalAssets(), apyBps_ * _distributor.yieldDuration(), MAX_BPS * YEAR);
+    }
+
+    /// @dev `absoluteCap` bounds what a keeper-timed deposit can add to spot `totalAssets` before a distribution.
+    /// It caps the drip outstanding, so a buffer can pre-fund up to one more period on top of what it pays.
+    function _maxDripPerPeriod() private view returns (uint256) {
+        uint256 _cap = Math.mulDiv(absoluteCap, YIELD_DISTRIBUTOR.yieldDuration(), CAP_WINDOW);
+        return Math.min(_dripPerPeriod(maxApyBps), _cap);
     }
 
     function _previewDistribute(uint256 target_) private view returns (uint256) {
