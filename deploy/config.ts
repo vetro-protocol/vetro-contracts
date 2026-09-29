@@ -140,14 +140,14 @@ export const YieldDistributorConfig = {
 // YIELD MANAGER CONFIGURATION
 // =============================================================================
 
-// The keeper picks each distribution amount (see YieldManager.amountForApy). The resulting drip is capped by
-// maxApyBps on staked assets and by absoluteCap in tokens per 7 days, which bounds a keeper-timed deposit
-// inflating staked assets. Both are adjustable by DEFAULT_ADMIN_ROLE via setMaxApy / setAbsoluteCap.
+// The keeper picks each distribution amount (see YieldManager.amountForApr). The resulting drip is capped by
+// maxAprBps on staked assets and by absoluteCap in tokens per 7 days, which bounds a keeper-timed deposit
+// inflating staked assets. Both are adjustable by DEFAULT_ADMIN_ROLE via setMaxApr / setAbsoluteCap.
 export const YieldManagerConfig = {
   // sVUSD: target 10% APR (~138/week on ~72k staked); cap ~3x that, raise as TVL grows
-  vusd: {maxApyBps: 1_500, absoluteCap: parseEther('415')},
+  vusd: {maxAprBps: 1_500, absoluteCap: parseEther('415')},
   // svetBTC: target 5% APR (~0.00005/week on ~0.052 staked); cap ~3x that, raise as TVL grows
-  vetBTC: {maxApyBps: 1_000, absoluteCap: parseEther('0.00015')},
+  vetBTC: {maxAprBps: 1_000, absoluteCap: parseEther('0.00015')},
 }
 
 // =============================================================================

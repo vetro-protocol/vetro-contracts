@@ -18,7 +18,7 @@ const {VetBTC, VetBTCTreasury, VetBTCYieldDistributor, VetBTCYieldManager, Yield
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {deployments} = hre
   const {get, getOrNull, read} = deployments
-  const {maxApyBps, absoluteCap} = YieldManagerConfig.vetBTC
+  const {maxAprBps, absoluteCap} = YieldManagerConfig.vetBTC
 
   const {address: vetBTCAddress} = await get(VetBTC)
   const {address: yieldDistributorAddress} = await get(VetBTCYieldDistributor)
@@ -28,7 +28,7 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {address: yieldManagerAddress} = await deployNonUpgradeable(
     hre,
     VetBTCYieldManager,
-    [vetBTCAddress, yieldDistributorAddress, maxApyBps, absoluteCap],
+    [vetBTCAddress, yieldDistributorAddress, maxAprBps, absoluteCap],
     YieldManager
   )
 

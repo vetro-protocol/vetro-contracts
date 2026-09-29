@@ -18,7 +18,7 @@ const {PeggedToken, Treasury, YieldDistributor, YieldManager} = ContractAliases
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {deployments} = hre
   const {get, getOrNull, read} = deployments
-  const {maxApyBps, absoluteCap} = YieldManagerConfig.vusd
+  const {maxAprBps, absoluteCap} = YieldManagerConfig.vusd
 
   const {address: peggedTokenAddress} = await get(PeggedToken)
   const {address: yieldDistributorAddress} = await get(YieldDistributor)
@@ -27,7 +27,7 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {address: yieldManagerAddress} = await deployNonUpgradeable(hre, YieldManager, [
     peggedTokenAddress,
     yieldDistributorAddress,
-    maxApyBps,
+    maxAprBps,
     absoluteCap,
   ])
 

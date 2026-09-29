@@ -39,8 +39,8 @@ contract YieldManagerTest is Test {
     uint256 constant INITIAL_DEPOSIT = 100_000e6; // 6-decimals collateral
     // 36_500 staked at 10% APR over a 7-day period => exactly 70 per period
     uint256 constant STAKED = 36_500e18;
-    uint256 constant MAX_APY_BPS = 1_500;
-    uint256 constant APY_BPS = 1_000;
+    uint256 constant MAX_APR_BPS = 1_500;
+    uint256 constant APR_BPS = 1_000;
     uint256 constant TARGET_PER_PERIOD = 70e18;
     uint256 constant MAX_PER_PERIOD = 105e18;
     uint256 constant ABSOLUTE_CAP = 1_000e18;
@@ -49,7 +49,7 @@ contract YieldManagerTest is Test {
     event AbsoluteCapUpdated(uint256 previousCap, uint256 newCap);
     event Distributed(address indexed caller, uint256 amount, uint256 bufferLeft);
     event Harvested(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount);
-    event MaxApyUpdated(uint256 previousApyBps, uint256 newApyBps);
+    event MaxAprUpdated(uint256 previousAprBps, uint256 newAprBps);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
 
     function setUp() public {
@@ -82,7 +82,7 @@ contract YieldManagerTest is Test {
         stakingVault.updateYieldDistributor(address(distributor));
 
         yieldManager = new YieldManager(
-            IPeggedToken(address(peggedToken)), IYieldDistributor(address(distributor)), MAX_APY_BPS, ABSOLUTE_CAP
+            IPeggedToken(address(peggedToken)), IYieldDistributor(address(distributor)), MAX_APR_BPS, ABSOLUTE_CAP
         );
 
         token = address(new MockERC20());
@@ -118,8 +118,8 @@ contract YieldManagerTest is Test {
         yieldManager.harvest(token, 0);
     }
 
-    function distributeAt(uint256 apyBps) internal returns (uint256 amount) {
-        amount = yieldManager.amountForApy(apyBps);
+    function distributeAt(uint256 aprBps) internal returns (uint256 amount) {
+        amount = yieldManager.amountForApr(aprBps);
         if (amount > 0) yieldManager.distribute(amount);
     }
 
@@ -140,7 +140,7 @@ contract YieldManagerTest is Test {
     function test_constructor() public view {
         assertEq(address(yieldManager.PEGGED_TOKEN()), address(peggedToken), "pegged token mismatch");
         assertEq(address(yieldManager.YIELD_DISTRIBUTOR()), address(distributor), "distributor mismatch");
-        assertEq(yieldManager.maxApyBps(), MAX_APY_BPS, "max apy mismatch");
+        assertEq(yieldManager.maxAprBps(), MAX_APR_BPS, "max apr mismatch");
         assertEq(yieldManager.absoluteCap(), ABSOLUTE_CAP, "cap mismatch");
     }
 
@@ -162,8 +162,8 @@ contract YieldManagerTest is Test {
         new YieldManager(IPeggedToken(address(peggedToken)), IYieldDistributor(address(otherDistributor)), 0, 1);
     }
 
-    function test_constructor_revertIfMaxApyTooHigh() public {
-        vm.expectRevert(abi.encodeWithSelector(YieldManager.MaxApyTooHigh.selector, 5_001, 5_000));
+    function test_constructor_revertIfMaxAprTooHigh() public {
+        vm.expectRevert(abi.encodeWithSelector(YieldManager.MaxAprTooHigh.selector, 5_001, 5_000));
         new YieldManager(IPeggedToken(address(peggedToken)), IYieldDistributor(address(distributor)), 5_001, 1);
     }
 
@@ -176,7 +176,7 @@ contract YieldManagerTest is Test {
 
     function test_distribute() public {
         fillBuffer(1_000e6);
-        assertEq(yieldManager.amountForApy(APY_BPS), TARGET_PER_PERIOD, "preview mismatch");
+        assertEq(yieldManager.amountForApr(APR_BPS), TARGET_PER_PERIOD, "preview mismatch");
 
         vm.expectEmit();
         emit Distributed(keeper, TARGET_PER_PERIOD, 1_000e18 - TARGET_PER_PERIOD);
@@ -186,10 +186,10 @@ contract YieldManagerTest is Test {
         assertEq(yieldManager.buffer(), 1_000e18 - TARGET_PER_PERIOD, "rest stays buffered");
         assertEq(peggedToken.balanceOf(address(distributor)), TARGET_PER_PERIOD, "distributor funded");
         assertApproxEqAbs(dripLeft(), TARGET_PER_PERIOD, 2, "distributor drips the amount over the period");
-        assertApproxEqAbs(yieldManager.currentApyBps(), APY_BPS, 1, "drips at the target APR");
+        assertApproxEqAbs(yieldManager.currentAprBps(), APR_BPS, 1, "drips at the target APR");
     }
 
-    function test_distribute_upToMaxApy() public {
+    function test_distribute_upToMaxApr() public {
         fillBuffer(1_000e6);
         assertEq(yieldManager.maxDistribute(), MAX_PER_PERIOD, "headroom is one period at max APR");
 
@@ -211,7 +211,7 @@ contract YieldManagerTest is Test {
         assertApproxEqAbs(dripLeft(), 20e18, 2, "drip at the cap");
     }
 
-    function test_distribute_revertIfAboveMaxApy() public {
+    function test_distribute_revertIfAboveMaxApr() public {
         fillBuffer(1_000e6);
         vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
         yieldManager.distribute(MAX_PER_PERIOD + 1e18);
@@ -219,7 +219,7 @@ contract YieldManagerTest is Test {
 
     function test_distribute_revertIfInsufficientBuffer() public {
         fillBuffer(5e6);
-        assertEq(yieldManager.amountForApy(APY_BPS), 5e18, "preview limited by the buffer");
+        assertEq(yieldManager.amountForApr(APR_BPS), 5e18, "preview limited by the buffer");
         vm.expectRevert(abi.encodeWithSelector(YieldManager.InsufficientBuffer.selector, 5e18 + 1, 5e18));
         yieldManager.distribute(5e18 + 1);
     }
@@ -231,7 +231,7 @@ contract YieldManagerTest is Test {
         stakingVault.requestRedeem(shares, alice);
         assertEq(stakingVault.totalAssets(), 0, "no assets earning");
 
-        assertEq(yieldManager.amountForApy(APY_BPS), 0, "no stakers, no yield");
+        assertEq(yieldManager.amountForApr(APR_BPS), 0, "no stakers, no yield");
         vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
         yieldManager.distribute(1e18);
     }
@@ -251,10 +251,10 @@ contract YieldManagerTest is Test {
         yieldManager.distribute(1e18);
     }
 
-    function test_distribute_revertIfMaxApyIsZero() public {
+    function test_distribute_revertIfMaxAprIsZero() public {
         fillBuffer(1_000e6);
         vm.prank(admin);
-        yieldManager.setMaxApy(0);
+        yieldManager.setMaxApr(0);
 
         assertEq(yieldManager.maxDistribute(), 0, "zero max APR pauses distribution");
         vm.expectPartialRevert(YieldManager.DripExceedsCap.selector);
@@ -293,10 +293,10 @@ contract YieldManagerTest is Test {
 
     function test_distribute_lateKeeperNoCatchUp() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
 
         skip(3 * PERIOD);
-        uint256 topUp = distributeAt(APY_BPS);
+        uint256 topUp = distributeAt(APR_BPS);
 
         assertApproxEqRel(topUp, TARGET_PER_PERIOD, 0.01e18, "no catch-up for missed periods");
         assertApproxEqAbs(dripLeft(), topUp, 2, "drip equals one period of target");
@@ -304,7 +304,7 @@ contract YieldManagerTest is Test {
 
     function test_distribute_followsTvl() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
 
         vm.startPrank(alice);
         IERC20(address(peggedToken)).safeTransfer(bob, STAKED);
@@ -313,20 +313,20 @@ contract YieldManagerTest is Test {
         IERC20(address(peggedToken)).forceApprove(address(stakingVault), STAKED);
         stakingVault.deposit(STAKED, bob);
         vm.stopPrank();
-        assertApproxEqAbs(yieldManager.currentApyBps(), APY_BPS / 2, 1, "deposit dilutes the APR");
+        assertApproxEqAbs(yieldManager.currentAprBps(), APR_BPS / 2, 1, "deposit dilutes the APR");
 
-        uint256 topUp = distributeAt(APY_BPS);
+        uint256 topUp = distributeAt(APR_BPS);
 
         assertApproxEqAbs(topUp, TARGET_PER_PERIOD, 1e6, "doubled TVL doubles the target");
         assertApproxEqAbs(dripLeft(), 2 * TARGET_PER_PERIOD, 1e6, "drip at the doubled target");
     }
 
-    function test_distribute_loweredMaxApyBlocksUntilDripFalls() public {
+    function test_distribute_loweredMaxAprBlocksUntilDripFalls() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
 
         vm.prank(admin);
-        yieldManager.setMaxApy(APY_BPS / 2);
+        yieldManager.setMaxApr(APR_BPS / 2);
 
         skip(1 days);
         assertEq(yieldManager.maxDistribute(), 0, "drip still above the lowered cap");
@@ -337,11 +337,11 @@ contract YieldManagerTest is Test {
 
     function test_distribute_matchesDistributorRollover() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
         skip(2 days);
 
         uint256 rolled = yieldManager.undistributed();
-        uint256 topUp = distributeAt(APY_BPS);
+        uint256 topUp = distributeAt(APR_BPS);
         assertApproxEqAbs(dripLeft(), rolled + topUp, 2, "distributor rolled over undistributed + top-up");
     }
 
@@ -358,7 +358,7 @@ contract YieldManagerTest is Test {
         yieldManager.distribute(11e18);
     }
 
-    function test_distribute_maxApyIsDurationInvariant() public {
+    function test_distribute_maxAprIsDurationInvariant() public {
         fillBuffer(1_000e6);
         vm.prank(admin);
         distributor.updateYieldDuration(1 days);
@@ -390,7 +390,7 @@ contract YieldManagerTest is Test {
         yieldManager.distribute(0);
     }
 
-    function test_distribute_exitsRaiseApyAboveMaxUntilDripFalls() public {
+    function test_distribute_exitsRaiseAprAboveMaxUntilDripFalls() public {
         fillBuffer(1_000e6);
         yieldManager.distribute(MAX_PER_PERIOD);
 
@@ -398,21 +398,21 @@ contract YieldManagerTest is Test {
         uint256 shares = stakingVault.balanceOf(alice);
         vm.prank(alice);
         stakingVault.requestRedeem(shares / 2, alice);
-        assertApproxEqAbs(yieldManager.currentApyBps(), 2 * MAX_APY_BPS, 2, "exit raises the APR");
+        assertApproxEqAbs(yieldManager.currentAprBps(), 2 * MAX_APR_BPS, 2, "exit raises the APR");
         assertEq(yieldManager.maxDistribute(), 0, "no top-up while above the cap");
 
         skip(4 days); // remaining drip ~45 < new cap ~52.5
         assertGt(yieldManager.maxDistribute(), 0, "headroom once the drip falls under the cap");
     }
 
-    function test_distribute_shortAmountLowersCurrentApy() public {
+    function test_distribute_shortAmountLowersCurrentApr() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
         skip(6 days);
 
         // Stretching the last day of drip plus a small amount over a fresh period lowers the rate
         yieldManager.distribute(1e18);
-        assertLt(yieldManager.currentApyBps(), APY_BPS / 2, "short amount lowers the current APR");
+        assertLt(yieldManager.currentAprBps(), APR_BPS / 2, "short amount lowers the current APR");
     }
 
     function test_distribute_revertIfInsufficientBufferBeforeCap() public {
@@ -453,7 +453,7 @@ contract YieldManagerTest is Test {
         );
         stakingVault.updateYieldDistributor(address(legacy));
         YieldManager legacyManager = new YieldManager(
-            IPeggedToken(address(peggedToken)), IYieldDistributor(address(legacy)), MAX_APY_BPS, ABSOLUTE_CAP
+            IPeggedToken(address(peggedToken)), IYieldDistributor(address(legacy)), MAX_APR_BPS, ABSOLUTE_CAP
         );
         vm.startPrank(admin);
         treasury.grantRole(treasury.UMM_ROLE(), address(legacyManager));
@@ -477,7 +477,7 @@ contract YieldManagerTest is Test {
         for (uint256 i; i < gaps_.length; ++i) {
             skip(bound(gaps_[i], 0, 2 * PERIOD));
             uint256 headroom = yieldManager.maxDistribute();
-            uint256 cap = stakingVault.totalAssets() * MAX_APY_BPS * PERIOD / (10_000 * 365 days);
+            uint256 cap = stakingVault.totalAssets() * MAX_APR_BPS * PERIOD / (10_000 * 365 days);
             uint256 amount = bound(amounts_[i], 1, 2 * MAX_PER_PERIOD);
             try yieldManager.distribute(amount) {
                 assertLe(amount, headroom + 2, "accepted more than the headroom");
@@ -489,14 +489,14 @@ contract YieldManagerTest is Test {
     }
 
     /// forge-config: default.fuzz.runs = 256
-    function testFuzz_distribute_amountForApyHitsTarget(uint32[5] memory gaps_, uint16[5] memory apys_) public {
+    function testFuzz_distribute_amountForAprHitsTarget(uint32[5] memory gaps_, uint16[5] memory aprs_) public {
         fillBuffer(10_000e6);
         for (uint256 i; i < gaps_.length; ++i) {
             skip(bound(gaps_[i], 0, 2 * PERIOD));
-            uint256 apyBps = bound(apys_[i], 1, MAX_APY_BPS);
-            if (distributeAt(apyBps) > 0) {
-                assertLe(yieldManager.currentApyBps(), apyBps, "drip must not exceed the target");
-                assertApproxEqAbs(yieldManager.currentApyBps(), apyBps, 1, "drip must sit at target");
+            uint256 aprBps = bound(aprs_[i], 1, MAX_APR_BPS);
+            if (distributeAt(aprBps) > 0) {
+                assertLe(yieldManager.currentAprBps(), aprBps, "drip must not exceed the target");
+                assertApproxEqAbs(yieldManager.currentAprBps(), aprBps, 1, "drip must sit at target");
             }
         }
     }
@@ -681,46 +681,46 @@ contract YieldManagerTest is Test {
         yieldManager.setAbsoluteCap(1);
     }
 
-    function test_setMaxApy() public {
+    function test_setMaxApr() public {
         vm.expectEmit();
-        emit MaxApyUpdated(MAX_APY_BPS, 500);
+        emit MaxAprUpdated(MAX_APR_BPS, 500);
         vm.prank(admin);
-        yieldManager.setMaxApy(500);
+        yieldManager.setMaxApr(500);
 
-        assertEq(yieldManager.maxApyBps(), 500, "apy not updated");
+        assertEq(yieldManager.maxAprBps(), 500, "apr not updated");
         assertEq(yieldManager.maxDistribute(), 0, "no headroom above 5%");
     }
 
-    function test_setMaxApy_atBound() public {
-        uint256 bound = yieldManager.MAX_APY_BPS();
+    function test_setMaxApr_atBound() public {
+        uint256 bound = yieldManager.MAX_APR_BPS();
         vm.prank(admin);
-        yieldManager.setMaxApy(bound);
-        assertEq(yieldManager.maxApyBps(), bound, "bound accepted");
+        yieldManager.setMaxApr(bound);
+        assertEq(yieldManager.maxAprBps(), bound, "bound accepted");
     }
 
-    function test_setMaxApy_raiseAfterLowering() public {
+    function test_setMaxApr_raiseAfterLowering() public {
         fillBuffer(1_000e6);
         vm.startPrank(admin);
-        yieldManager.setMaxApy(0);
-        yieldManager.setMaxApy(MAX_APY_BPS);
+        yieldManager.setMaxApr(0);
+        yieldManager.setMaxApr(MAX_APR_BPS);
         vm.stopPrank();
 
         assertEq(yieldManager.maxDistribute(), MAX_PER_PERIOD, "headroom restored");
     }
 
-    function test_setMaxApy_revertIfTooHigh() public {
+    function test_setMaxApr_revertIfTooHigh() public {
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(YieldManager.MaxApyTooHigh.selector, 5_001, 5_000));
-        yieldManager.setMaxApy(5_001);
+        vm.expectRevert(abi.encodeWithSelector(YieldManager.MaxAprTooHigh.selector, 5_001, 5_000));
+        yieldManager.setMaxApr(5_001);
     }
 
-    function test_setMaxApy_revertIfNotAdmin() public {
+    function test_setMaxApr_revertIfNotAdmin() public {
         bytes32 adminRole = yieldManager.DEFAULT_ADMIN_ROLE();
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(YieldManager.AccessControlUnauthorizedAccount.selector, keeper, adminRole)
         );
-        yieldManager.setMaxApy(500);
+        yieldManager.setMaxApr(500);
     }
 
     // --- sweep ---
@@ -765,35 +765,35 @@ contract YieldManagerTest is Test {
 
     // --- views ---
 
-    function test_amountForApy() public {
-        assertEq(yieldManager.amountForApy(APY_BPS), 0, "empty buffer");
+    function test_amountForApr() public {
+        assertEq(yieldManager.amountForApr(APR_BPS), 0, "empty buffer");
         fillBuffer(1_000e6);
-        assertEq(yieldManager.amountForApy(APY_BPS), TARGET_PER_PERIOD, "10% APR on 36_500 over 7 days");
-        assertEq(yieldManager.amountForApy(5_000), 350e18, "not capped by maxApyBps");
+        assertEq(yieldManager.amountForApr(APR_BPS), TARGET_PER_PERIOD, "10% APR on 36_500 over 7 days");
+        assertEq(yieldManager.amountForApr(5_000), 350e18, "not capped by maxAprBps");
         vm.prank(admin);
         yieldManager.setAbsoluteCap(20e18);
-        assertEq(yieldManager.amountForApy(APY_BPS), TARGET_PER_PERIOD, "not capped by absoluteCap");
+        assertEq(yieldManager.amountForApr(APR_BPS), TARGET_PER_PERIOD, "not capped by absoluteCap");
     }
 
-    function test_currentApyBps() public {
-        assertEq(yieldManager.currentApyBps(), 0, "nothing dripping");
+    function test_currentAprBps() public {
+        assertEq(yieldManager.currentAprBps(), 0, "nothing dripping");
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
-        assertApproxEqAbs(yieldManager.currentApyBps(), APY_BPS, 1, "drips at the target");
+        distributeAt(APR_BPS);
+        assertApproxEqAbs(yieldManager.currentAprBps(), APR_BPS, 1, "drips at the target");
         skip(PERIOD);
-        assertEq(yieldManager.currentApyBps(), 0, "drip finished");
+        assertEq(yieldManager.currentAprBps(), 0, "drip finished");
     }
 
-    function test_currentApyBps_zeroWithoutShares() public {
+    function test_currentAprBps_zeroWithoutShares() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
         uint256 shares = stakingVault.balanceOf(alice);
         vm.prank(alice);
         stakingVault.requestRedeem(shares, alice);
         vm.prank(alice);
         IERC20(address(peggedToken)).safeTransfer(address(stakingVault), 1_000e18);
 
-        assertEq(yieldManager.currentApyBps(), 0, "nobody earns without shares");
+        assertEq(yieldManager.currentAprBps(), 0, "nobody earns without shares");
     }
 
     function test_harvestable() public {
@@ -828,14 +828,14 @@ contract YieldManagerTest is Test {
 
     function test_undistributed_zeroAfterPeriodFinish() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
         skip(PERIOD + 1);
         assertEq(yieldManager.undistributed(), 0, "drip finished");
     }
 
     function test_undistributed_excludesPendingYield() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
         skip(3 days);
 
         assertGt(distributor.pendingYield(), 0, "yield accrued");
@@ -844,7 +844,7 @@ contract YieldManagerTest is Test {
 
     function test_undistributed_keepsStaleCheckpointWithoutShares() public {
         fillBuffer(1_000e6);
-        distributeAt(APY_BPS);
+        distributeAt(APR_BPS);
         skip(1 days);
         uint256 shares = stakingVault.balanceOf(alice);
         vm.prank(alice);

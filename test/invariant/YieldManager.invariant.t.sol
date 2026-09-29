@@ -91,8 +91,8 @@ contract YieldManagerHandler is Test {
         ghost_bufferIn += yieldManager.harvest(token, 0);
     }
 
-    function distributeForApy(uint256 apyBps_) external {
-        uint256 _amount = yieldManager.amountForApy(bound(apyBps_, 1, yieldManager.MAX_APY_BPS()));
+    function distributeForApr(uint256 aprBps_) external {
+        uint256 _amount = yieldManager.amountForApr(bound(aprBps_, 1, yieldManager.MAX_APR_BPS()));
         _amount = _min(_amount, yieldManager.maxDistribute());
         if (_amount == 0) return;
         _distribute(_amount);
@@ -115,10 +115,10 @@ contract YieldManagerHandler is Test {
         } catch {}
     }
 
-    function setMaxApy(uint256 maxApyBps_) external {
-        maxApyBps_ = bound(maxApyBps_, 0, yieldManager.MAX_APY_BPS());
+    function setMaxApr(uint256 maxAprBps_) external {
+        maxAprBps_ = bound(maxAprBps_, 0, yieldManager.MAX_APR_BPS());
         vm.prank(admin);
-        yieldManager.setMaxApy(maxApyBps_);
+        yieldManager.setMaxApr(maxAprBps_);
     }
 
     function setAbsoluteCap(uint256 absoluteCap_) external {
@@ -150,12 +150,12 @@ contract YieldManagerHandler is Test {
         }
     }
 
-    /// @dev Independent recomputation of `min(maxApyBps on totalAssets, absoluteCap per 7 days)` for one period
+    /// @dev Independent recomputation of `min(maxAprBps on totalAssets, absoluteCap per 7 days)` for one period
     function _expectedCap() private view returns (uint256) {
         if (vault.totalSupply() == 0) return 0;
         uint256 _duration = distributor.yieldDuration();
-        uint256 _apyCap = vault.totalAssets() * yieldManager.maxApyBps() * _duration / (10_000 * YEAR);
-        return _min(_apyCap, yieldManager.absoluteCap() * _duration / 7 days);
+        uint256 _aprCap = vault.totalAssets() * yieldManager.maxAprBps() * _duration / (10_000 * YEAR);
+        return _min(_aprCap, yieldManager.absoluteCap() * _duration / 7 days);
     }
 
     function _min(uint256 a_, uint256 b_) private pure returns (uint256) {
