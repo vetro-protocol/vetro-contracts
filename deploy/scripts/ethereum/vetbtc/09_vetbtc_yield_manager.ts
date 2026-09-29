@@ -12,13 +12,13 @@ const {VetBTC, VetBTCTreasury, VetBTCYieldDistributor, VetBTCYieldManager, Yield
  * and DISTRIBUTOR_ROLE (YieldDistributor) for it and revokes both from a replaced deployment.
  *
  * Requires a YieldDistributor whose `distribute` pulls accrued yield first (else it reverts
- * DripExceedsTarget), so deploy with its tags: `--tags YieldDistributor,VetBTCYieldDistributor,
+ * DripExceedsCap), so deploy with its tags: `--tags YieldDistributor,VetBTCYieldDistributor,
  * YieldManager,VetBTCYieldManager`, then `--tags MultisigTxs`.
  */
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {deployments} = hre
   const {get, getOrNull, read} = deployments
-  const {targetApyBps, absoluteCap} = YieldManagerConfig.vetBTC
+  const {maxApyBps, absoluteCap} = YieldManagerConfig.vetBTC
 
   const {address: vetBTCAddress} = await get(VetBTC)
   const {address: yieldDistributorAddress} = await get(VetBTCYieldDistributor)
@@ -28,7 +28,7 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {address: yieldManagerAddress} = await deployNonUpgradeable(
     hre,
     VetBTCYieldManager,
-    [vetBTCAddress, yieldDistributorAddress, targetApyBps, absoluteCap],
+    [vetBTCAddress, yieldDistributorAddress, maxApyBps, absoluteCap],
     YieldManager
   )
 

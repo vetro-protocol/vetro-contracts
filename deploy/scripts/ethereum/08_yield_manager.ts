@@ -12,13 +12,13 @@ const {PeggedToken, Treasury, YieldDistributor, YieldManager} = ContractAliases
  * and DISTRIBUTOR_ROLE (YieldDistributor) for it and revokes both from a replaced deployment.
  *
  * Requires a YieldDistributor whose `distribute` pulls accrued yield first (else it reverts
- * DripExceedsTarget), so deploy with its tags: `--tags YieldDistributor,VetBTCYieldDistributor,
+ * DripExceedsCap), so deploy with its tags: `--tags YieldDistributor,VetBTCYieldDistributor,
  * YieldManager,VetBTCYieldManager`, then `--tags MultisigTxs`.
  */
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {deployments} = hre
   const {get, getOrNull, read} = deployments
-  const {targetApyBps, absoluteCap} = YieldManagerConfig.vusd
+  const {maxApyBps, absoluteCap} = YieldManagerConfig.vusd
 
   const {address: peggedTokenAddress} = await get(PeggedToken)
   const {address: yieldDistributorAddress} = await get(YieldDistributor)
@@ -27,7 +27,7 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {address: yieldManagerAddress} = await deployNonUpgradeable(hre, YieldManager, [
     peggedTokenAddress,
     yieldDistributorAddress,
-    targetApyBps,
+    maxApyBps,
     absoluteCap,
   ])
 
