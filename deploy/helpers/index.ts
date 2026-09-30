@@ -347,13 +347,16 @@ export const updateParamIfNeeded = async (
  * @param hre - Hardhat runtime environment
  * @param contractName - Name of the contract to deploy
  * @param args - Constructor arguments
+ * @param contractArtifact - Artifact name when it differs from the alias
+ * @param redeploy - Replace an existing deployment when its bytecode or args changed (periphery only)
  * @returns Deployed contract address
  */
 export const deployNonUpgradeable = async (
   hre: HardhatRuntimeEnvironment,
   alias: string,
   args: unknown[],
-  contractArtifact?: string
+  contractArtifact?: string,
+  redeploy = false
 ): Promise<{address: string}> => {
   const {
     deployments: {deploy},
@@ -368,7 +371,7 @@ export const deployNonUpgradeable = async (
     log: true,
     // Immutable core is never redeployed on bytecode drift (e.g. an OZ bump); already-deployed
     // wins over bytecode equality. New contracts (no prior record) still deploy.
-    skipIfAlreadyDeployed: true,
+    skipIfAlreadyDeployed: !redeploy,
   })
 
   return {address: result.address}
@@ -404,6 +407,44 @@ export const grantRoleIfNeeded = async (
 
     const multiSigTx = await catchUnknownSigner(
       execute(contractAlias, {from: admin, log: true}, 'grantRole', role, account),
+      {log: true}
+    )
+
+    if (multiSigTx) {
+      await saveForMultiSigBatchExecution(multiSigTx)
+    }
+  }
+}
+
+/**
+ * Revoke a role on an AccessControl contract
+ *
+ * @param hre - Hardhat runtime environment
+ * @param contractAlias - Contract deployment alias
+ * @param role - Role bytes32 hash
+ * @param account - Address to revoke role from
+ */
+export const revokeRoleIfNeeded = async (
+  hre: HardhatRuntimeEnvironment,
+  contractAlias: string,
+  role: string,
+  account: string
+): Promise<void> => {
+  const {deployments} = hre
+  const {read, execute, catchUnknownSigner} = deployments
+
+  const hasRole = await read(contractAlias, 'hasRole', role, account)
+
+  if (hasRole) {
+    let admin: string
+    try {
+      admin = await read(contractAlias, 'owner')
+    } catch {
+      admin = GOVERNOR
+    }
+
+    const multiSigTx = await catchUnknownSigner(
+      execute(contractAlias, {from: admin, log: true}, 'revokeRole', role, account),
       {log: true}
     )
 
