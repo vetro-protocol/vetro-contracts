@@ -73,6 +73,22 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 0);
     }
 
+    function test_addToWhitelist_revertIfStalePeriodExceedsMax() public {
+        MockERC20 _token2 = new MockERC20();
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
+        MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8);
+        vm.expectRevert(Treasury.InvalidStalePeriod.selector);
+        treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 72 hours + 1);
+    }
+
+    function test_addToWhitelist_acceptsMaxStalePeriod() public {
+        MockERC20 _token2 = new MockERC20();
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
+        MockChainlinkOracle _oracle2 = new MockChainlinkOracle(1e8);
+        treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 72 hours);
+        assertTrue(treasury.isWhitelistedToken(address(_token2)));
+    }
+
     function test_addToWhitelist_revertOnAssetMismatch() public {
         MockERC20 _fakeToken = new MockERC20();
         vm.expectRevert(Treasury.AssetMismatch.selector);
@@ -535,6 +551,12 @@ contract TreasuryTest is Test {
 
     function test_getPrice_revertIfStale() public {
         vm.warp(2 hours);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(mockOracle)));
+        treasury.getPrice(address(token));
+    }
+
+    function test_getPrice_revertIfFutureDated() public {
+        mockOracle.setUpdatedAt(block.timestamp + 1);
         vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(mockOracle)));
         treasury.getPrice(address(token));
     }

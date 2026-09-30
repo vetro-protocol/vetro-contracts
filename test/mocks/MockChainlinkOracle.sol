@@ -17,6 +17,10 @@ contract MockChainlinkOracle is AggregatorV2V3Interface {
         updatedAt = block.timestamp;
     }
 
+    function setUpdatedAt(uint256 updatedAt_) external {
+        updatedAt = updatedAt_;
+    }
+
     function setDecimals(uint8 decimals_) external {
         _decimals = decimals_;
     }

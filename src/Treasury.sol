@@ -139,7 +139,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
         if (token_ == address(0) || vault_ == address(0) || oracle_ == address(0)) revert AddressIsZero();
-        if (stalePeriod_ == 0) revert InvalidStalePeriod();
+        if (stalePeriod_ == 0 || stalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
         if (_whitelistedTokens.length() >= MAX_WHITELISTED_TOKENS) revert MaxWhitelistedTokensReached();
         uint8 _decimals = IERC20Metadata(token_).decimals();
         if (_decimals > 18) revert InvalidTokenDecimals(_decimals);
@@ -495,7 +495,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         returns (uint256 _latestPrice, uint256 _unitPrice)
     {
         (, int256 _price,, uint256 _updatedAt,) = oracle_.latestRoundData();
-        if (block.timestamp - _updatedAt >= stalePeriod_) revert StalePrice(address(oracle_));
+        // A future-dated round is treated as stale rather than underflowing into a panic
+        if (_updatedAt > block.timestamp || block.timestamp - _updatedAt >= stalePeriod_) {
+            revert StalePrice(address(oracle_));
+        }
         if (_price <= 0) revert InvalidOraclePrice();
         _latestPrice = uint256(_price);
 
