@@ -139,6 +139,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         // Calculate shares at current rate BEFORE updating totalAssetsInCooldown
         // This ensures the share calculation uses correct totalAssets() value
         shares_ = previewDeposit(_assets);
+        if (shares_ == 0) revert ZeroAmount();
 
         // Update total assets in cooldown AFTER calculating shares
         $.totalAssetsInCooldown -= _assets;
@@ -361,7 +362,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
 
     /// @notice Deposit assets and receive vault shares
     /// @dev Pulls pending yield before deposit to ensure accurate share calculation.
-    ///      Protected against reentrancy.
+    ///      Protected against reentrancy. Reverts if `assets_` would mint zero shares.
     /// @param assets_ The amount of assets to deposit
     /// @param receiver_ The address to receive the vault shares
     /// @return shares The amount of vault shares minted
@@ -377,7 +378,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
 
     /// @notice Mint exact amount of vault shares by depositing assets
     /// @dev Pulls pending yield before mint to ensure accurate asset calculation.
-    ///      Protected against reentrancy.
+    ///      Protected against reentrancy. Reverts if `shares_` is 0.
     /// @param shares_ The exact amount of vault shares to mint
     /// @param receiver_ The address to receive the vault shares
     /// @return assets The amount of assets deposited
@@ -533,6 +534,12 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         $.activeRequestIds[owner_].add(requestId_);
 
         emit WithdrawRequested(owner_, requestId_, shares_, assets_, _claimableAt);
+    }
+
+    /// @dev Rejects zero-share mints: at dust or zero supply an orphaned balance would absorb the deposit
+    function _deposit(address caller_, address receiver_, uint256 assets_, uint256 shares_) internal override {
+        if (shares_ == 0) revert ZeroAmount();
+        super._deposit(caller_, receiver_, assets_, shares_);
     }
 
     /// @notice Pull pending yield from the yield distributor

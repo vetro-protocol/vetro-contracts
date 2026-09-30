@@ -175,12 +175,14 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     }
 
     /// @notice Get the timestamp of the last yield pull
+    /// @dev While the vault has no shares, this lags until the next pull slides the schedule.
     /// @return The Unix timestamp when yield was last pulled
     function lastUpdateTime() external view returns (uint256) {
         return _getYieldDistributorStorage().lastUpdateTime;
     }
 
     /// @notice Get the timestamp when current distribution period ends
+    /// @dev While the vault has no shares, this lags until the next pull slides the schedule.
     /// @return The Unix timestamp when yield distribution ends
     function periodFinish() external view returns (uint256) {
         return _getYieldDistributorStorage().periodFinish;
@@ -222,10 +224,24 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Transfer all accrued yield to the vault
-    /// @dev Updates lastUpdateTime to current timestamp when there is yield to transfer.
+    /// @dev Updates lastUpdateTime to current timestamp when there is yield to transfer. While the vault
+    ///      has no shares, the unfinished schedule slides forward instead.
     /// @param $ The storage pointer
     /// @return amount_ The amount of yield transferred to the vault
     function _pullYield(YieldDistributorStorage storage $) internal returns (uint256 amount_) {
+        uint256 _lastUpdateTime = $.lastUpdateTime;
+        if (_lastUpdateTime == 0) return 0;
+
+        if (IERC20($.vault).totalSupply() == 0) {
+            // Nobody earns while the vault is empty: slide the schedule instead of accruing a backlog for the next depositor
+            uint256 _periodFinish = $.periodFinish;
+            if (_lastUpdateTime < _periodFinish && block.timestamp > _lastUpdateTime) {
+                $.periodFinish = block.timestamp + (_periodFinish - _lastUpdateTime);
+                $.lastUpdateTime = block.timestamp;
+            }
+            return 0;
+        }
+
         amount_ = _pendingYield($);
 
         if (amount_ > 0) {

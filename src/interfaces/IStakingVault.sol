@@ -16,7 +16,8 @@ interface IStakingVault is IERC4626 {
     }
 
     /// @notice Cancel a pending withdrawal request
-    /// @dev Only the request owner can cancel
+    /// @dev Only the request owner can cancel. Reverts if the request would re-mint zero shares; claim it after
+    ///      cooldown instead.
     /// @param requestId_ The ID of the request to cancel
     /// @return shares The amount of shares returned to owner
     function cancelWithdraw(uint256 requestId_) external returns (uint256 shares);
