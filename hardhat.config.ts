@@ -12,6 +12,7 @@ import 'hardhat-contract-sizer'
 import 'hardhat-spdx-license-identifier'
 import './tasks/create-release'
 import './tasks/impersonate-deployer'
+import './tasks/validate-upgrades'
 import dotenv from 'dotenv'
 
 dotenv.config()

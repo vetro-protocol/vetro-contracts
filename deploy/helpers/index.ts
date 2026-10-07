@@ -3,17 +3,13 @@ import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {Deployment} from 'hardhat-deploy/types'
 import Address from './address'
 import {executeForcedTxUsingMultiSig, saveForMultiSigBatchExecution} from './gnosis-safe'
+import {getImplementation, getProxyAdmin} from './eip1967'
+import {assertUpgradeSafety} from './upgrade-safety'
 import {UpgradableContracts, ContractAliases} from '../config'
 
 const {GOVERNOR} = Address
 
 const {log} = console
-
-// ERC-1967 implementation slot
-const IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'
-
-// ERC-1967 admin slot
-const ADMIN_SLOT = '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103'
 
 /**
  * Contract configuration for upgradeable contracts
@@ -34,22 +30,6 @@ interface DeployUpgradableFunctionProps {
   // If true, doesn't add upgrade tx to batch but requires multi sig to run it immediately
   // It's needed when a later script must execute after this upgrade
   force?: boolean
-}
-
-/**
- * Get implementation address from proxy's ERC-1967 slot
- */
-const getImplementation = async (hre: HardhatRuntimeEnvironment, proxyAddress: string): Promise<string> => {
-  const implementationStorage = await hre.ethers.provider.getStorageAt(proxyAddress, IMPLEMENTATION_SLOT)
-  return hre.ethers.utils.getAddress(`0x${implementationStorage.slice(-40)}`)
-}
-
-/**
- * Get ProxyAdmin address from proxy's ERC-1967 slot
- */
-const getProxyAdmin = async (hre: HardhatRuntimeEnvironment, proxyAddress: string): Promise<string> => {
-  const adminStorage = await hre.ethers.provider.getStorageAt(proxyAddress, ADMIN_SLOT)
-  return hre.ethers.utils.getAddress(`0x${adminStorage.slice(-40)}`)
 }
 
 /**
@@ -89,7 +69,7 @@ export const deployUpgradable = async ({
   implementationAddress?: string | undefined
 }> => {
   const {
-    deployments: {deploy, save, getOrNull, catchUnknownSigner, execute},
+    deployments: {deploy, save, getOrNull, fetchIfDifferent, catchUnknownSigner, execute},
     getNamedAccounts,
     ethers,
   } = hre
@@ -103,6 +83,21 @@ export const deployUpgradable = async ({
   const proxyAlias = `${alias}_Proxy`
   const proxyAdminAlias = `${alias}_ProxyAdmin`
 
+  // Deploying the implementation changes neither the proxy nor its live implementation, so read them once
+  const proxyDeployment: Deployment | null = await getOrNull(proxyAlias)
+  const currentImpl = proxyDeployment && (await getImplementation(ethers.provider, proxyDeployment.address))
+
+  // 0. Never deploy or queue an upgrade the Safe would sign blindly: before spending gas or overwriting the
+  // implementation artifact, the new layout must be compatible with the live one
+  if (proxyDeployment) {
+    const {differences} = await fetchIfDifferent(implementationAlias, {contract, from: deployer})
+    const recordedImpl = (await getOrNull(implementationAlias))?.address
+    if (differences || !recordedImpl || ethers.utils.getAddress(recordedImpl) !== currentImpl) {
+      const {reference} = await assertUpgradeSafety(hre, proxyDeployment.address, contract)
+      log(chalk.green(`${alias}: storage layout compatible with live ${reference}`))
+    }
+  }
+
   // 1. Deploy implementation
   const implDeployment = await deploy(implementationAlias, {
     contract,
@@ -110,9 +105,7 @@ export const deployUpgradable = async ({
     log: true,
   })
 
-  // 2. Check if proxy already exists
-  let proxyDeployment: Deployment | null = await getOrNull(proxyAlias)
-
+  // 2. Deploy the proxy if it doesn't exist yet
   if (!proxyDeployment) {
     // First deployment - create new proxy
 
@@ -131,7 +124,7 @@ export const deployUpgradable = async ({
     })
 
     // Get the auto-created ProxyAdmin address from ERC-1967 slot
-    const proxyAdmin = await getProxyAdmin(hre, proxyDeployResult.address)
+    const proxyAdmin = await getProxyAdmin(ethers.provider, proxyDeployResult.address)
     log(chalk.green(`  ProxyAdmin (auto-created): ${proxyAdmin}`))
 
     // Save ProxyAdmin deployment for reference
@@ -165,7 +158,6 @@ export const deployUpgradable = async ({
   }
 
   // Proxy exists - check if upgrade is needed
-  const currentImpl = await getImplementation(hre, proxyDeployment.address)
   const newImplAddress = ethers.utils.getAddress(implDeployment.address)
 
   if (currentImpl !== newImplAddress) {
@@ -174,7 +166,7 @@ export const deployUpgradable = async ({
     log(chalk.yellow(`  New implementation: ${newImplAddress}`))
 
     // Get the ProxyAdmin address
-    const proxyAdmin = await getProxyAdmin(hre, proxyDeployment.address)
+    const proxyAdmin = await getProxyAdmin(ethers.provider, proxyDeployment.address)
     log(chalk.yellow(`  ProxyAdmin: ${proxyAdmin}`))
 
     // Upgrade via ProxyAdmin.upgradeAndCall, sent BY the ProxyAdmin owner. Use hardhat-deploy's
@@ -185,7 +177,7 @@ export const deployUpgradable = async ({
         proxyAdminAlias,
         {from: owner, log: true},
         'upgradeAndCall',
-        proxyDeployment!.address,
+        proxyDeployment.address,
         newImplAddress,
         '0x'
       )
