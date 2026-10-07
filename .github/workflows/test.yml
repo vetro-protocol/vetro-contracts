@@ -26,7 +26,8 @@ jobs:
         id: build
 
       - name: Run Forge tests
+        # test/fork asserts on live mainnet state for upgrade dry runs, so a governance change would fail unrelated PRs
         run: |
-          forge test -vvv
+          forge test -vvv --no-match-path 'test/fork/*'
         env:
           ETHEREUM_FORK_NODE_URL: ${{ secrets.ETHEREUM_FORK_NODE_URL }}
