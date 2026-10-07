@@ -12,9 +12,8 @@ Vetro currently operates two parallel deployments on Ethereum mainnet: the USD-p
 StakingVault, and YieldDistributor. All contract APIs are identical — operators perform the
 same actions on either system; the only differences are addresses and per-token settings.
 
-Canonical addresses live in [`releases/ethereum-1.0.0.json`](../releases/ethereum-1.0.0.json)
-(VUSD) and [`releases/ethereum-1.0.0-vetbtc.json`](../releases/ethereum-1.0.0-vetbtc.json)
-(vetBTC). The tables below mirror those files.
+Canonical addresses live in the latest release manifest under [`releases/vusd/`](../releases/vusd/) (VUSD) and
+[`releases/vetbtc/`](../releases/vetbtc/) (vetBTC). The tables below mirror those files.
 
 ## VUSD - Ethereum Mainnet
 

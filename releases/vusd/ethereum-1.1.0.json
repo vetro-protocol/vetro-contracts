@@ -1,7 +1,8 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "network": "ethereum",
   "chainId": 1,
+  "instance": "vusd",
   "contracts": {
     "PeggedToken": {
       "address": "0xCa83DDE9c22254f58e771bE5E157773212AcBAc3",
@@ -25,22 +26,28 @@
       "address": "0x55745265Ba172378cf45d224F09F0673cB470cef",
       "implementation": "0xe8Ac98555f8815F4c125C871F803DFCaD2101886",
       "proxyAdmin": "0xDd751f2B4FA3445C7befa39cf981b6bEc1FeB1B1"
+    },
+    "YieldManager": {
+      "address": "0x964d0E0C1fc7eCB2061A4e7e011e3F2406daC33e"
     }
   },
   "whitelistedTokens": {
-    "USDC": {
-      "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-      "vault": "0xe3DA4B83C9dd4c4D185ecE42077462b3F35c454a",
-      "oracle": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
-      "stalePeriod": 86400
-    },
-    "USDT": {
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7": {
+      "symbol": "USDT",
       "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
       "vault": "0x6d134cAAD0CA29Cd6ea145f6C0DC766076690547",
       "oracle": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
       "stalePeriod": 86400
     },
-    "frxUSD": {
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+      "symbol": "USDC",
+      "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "vault": "0xe3DA4B83C9dd4c4D185ecE42077462b3F35c454a",
+      "oracle": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
+      "stalePeriod": 86400
+    },
+    "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29": {
+      "symbol": "frxUSD",
       "token": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
       "vault": "0xBd44B65cE2b7c736724E0AE7e008CE3Fb00697d8",
       "oracle": "0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83",
