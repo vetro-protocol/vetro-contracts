@@ -554,6 +554,56 @@ StakingVault.totalAssets()         // should gradually increase
 
 ---
 
+## Upgrading Proxies
+
+Only `Gateway`, `StakingVault` and `YieldDistributor` (and their vetBTC counterparts) are upgradeable. Each sits
+behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks share one implementation per contract.
+
+1. **Check storage compatibility** against the live implementations:
+
+   ```bash
+   npx hardhat validate-upgrades --network ethereum
+   ```
+
+   This finds the source of each live implementation by recompiling the solc inputs in `deployments/ethereum` and
+   matching the bytecode on-chain, then runs OZ's upgrade safety and storage layout checks (including ERC-7201
+   namespaces) against this repo's contracts. The deploy scripts run the same check before deploying a new
+   implementation.
+
+2. **Dry run on a fork**: deploys and upgrades as the Safe, checks that only implementations changed, and reruns the
+   flow tests against the upgraded node:
+
+   ```bash
+   ./scripts/test-upgrade-on-fork.sh
+   ```
+
+   The Foundry fork tests (`test/fork/Upgrade.fork.t.sol`) also run on their own: `UpgradeStateForkTest` compares
+   every stored value (config, whitelists, roles, balances, cooldown requests) before and after an in-test upgrade
+   in the same block, and `LiveForkTest` / `UpgradedForkTest` run the user, keeper and integrator flows on both
+   stacks before and after.
+
+3. **Deploy** with `npx hardhat deploy --network ethereum`. The storage check runs before any implementation is
+   deployed, and the upgrades are queued and proposed as one Safe batch.
+
+4. **After the Safe executes** in block `B`, compare the block before it with block `B` and cut the release:
+
+   ```bash
+   npx hardhat upgrade-snapshot --network ethereum --block <B-1> --out before.json
+   npx hardhat upgrade-snapshot --network ethereum --block <B> --compare before.json
+   npx hardhat create-release --release <version> --notes "<what changed>" --network ethereum
+   ```
+
+   Comparing adjacent blocks keeps normal user and keeper activity out of the diff, so the compare can be strict: it
+   fails if anything other than implementations changed. Anything else in block `B` shows up as an unexpected change
+   and must be explained, including config calls bundled into the same Safe batch (e.g. role grants). Values that
+   move with prices or time (reserve, total assets, share price, pending yield) are listed for review. Reading past
+   blocks needs an archive RPC.
+
+   `create-release` writes `releases/<instance>/<network>-<version>.json` for each deployed instance and refuses
+   to overwrite an existing version: manifests are immutable. An implementation upgrade is a patch bump.
+
+---
+
 ## Monitoring Checklist
 
 ### Daily Checks
