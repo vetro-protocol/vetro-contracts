@@ -224,7 +224,7 @@ contract YieldManagerInvariantTest is Test {
         handler = new YieldManagerHandler(yieldManager, treasury, token, keeper, admin);
 
         vm.startPrank(admin);
-        treasury.addToWhitelist(token, address(yieldVault), address(oracle), 365 days);
+        treasury.addToWhitelist(token, address(yieldVault), address(oracle), treasury.MAX_STALE_PERIOD());
         treasury.grantRole(treasury.UMM_ROLE(), address(yieldManager));
         treasury.grantRole(treasury.KEEPER_ROLE(), keeper);
         distributor.grantRole(distributor.DISTRIBUTOR_ROLE(), address(yieldManager));
