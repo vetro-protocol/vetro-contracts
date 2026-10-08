@@ -78,8 +78,13 @@ echo "Deployer: $DEPLOYER (ProxyAdmin owner)"
 echo "Output:   $OUT_DIR"
 echo ""
 
+# A leftover Safe batch may be a real mainnet batch that was never proposed; never delete it here
+if [[ -f multisig.batch.tmp.json ]]; then
+    echo "Error: multisig.batch.tmp.json exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
+    exit 1
+fi
+
 # anvil rather than a hardhat node: forge forks by block hash, which the hardhat node rejects
-rm -rf multisig.batch.tmp.json
 if [[ -n "$block" ]]; then
     anvil --fork-url "$url" --fork-block-number "$block" --port $PORT > "$NODE_LOG" 2>&1 &
 else

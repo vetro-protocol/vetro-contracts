@@ -85,8 +85,14 @@ echo "  Block: ${block:-latest}"
 echo "  Log: $NODE_LOG"
 echo ""
 
+# A leftover Safe batch may be a real mainnet batch that was never proposed; never delete it here
+if [[ -f multisig.batch.tmp.json ]]; then
+    echo "Error: multisig.batch.tmp.json exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
+    exit 1
+fi
+
 # Clean old artifacts
-rm -rf artifacts/ cache/ multisig.batch.tmp.json
+rm -rf artifacts/ cache/
 
 # Start forked node in background
 if [[ -n "$block" ]]; then

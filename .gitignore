@@ -35,6 +35,9 @@ coverage.json
 
 deployments/localhost
 
+# Pending Safe batch
+multisig.batch.tmp.json
+
 # Foundry
 forge-cache
 out

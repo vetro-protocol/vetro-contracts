@@ -20,6 +20,19 @@ type MultiSigTx = {
 
 const {log} = console
 
+// Set by this process's first save, so later saves in the same run append to the batch it started
+let batchStarted = false
+
+// A batch file present before this run's first save is left over from an aborted run: appending to or proposing it
+// would mix stale calls into this batch. Re-running the deploy queues again whatever is still needed.
+const assertNoStaleBatch = () => {
+  if (!batchStarted && fs.existsSync(MULTI_SIG_TXS_FILE)) {
+    throw Error(
+      `'${MULTI_SIG_TXS_FILE}' has Safe txs from a previous run. Check the Safe queue, then propose or discard them.`
+    )
+  }
+}
+
 /**
  * Impersonate an account for local testing
  * Sets a high ETH balance and returns the signer
@@ -52,6 +65,9 @@ const prepareTx = ({from, to, data, value}: MultiSigTx): MetaTransactionData => 
  * Prevents duplicate transactions from being stored.
  */
 export const saveForMultiSigBatchExecution = async (rawTx: MultiSigTx): Promise<void> => {
+  assertNoStaleBatch()
+  batchStarted = true
+
   if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
     fs.closeSync(fs.openSync(MULTI_SIG_TXS_FILE, 'w'))
   }
@@ -157,6 +173,7 @@ export const executeBatchUsingMultisig = async (hre: HardhatRuntimeEnvironment):
   if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
     return
   }
+  assertNoStaleBatch()
 
   const file = fs.readFileSync(MULTI_SIG_TXS_FILE)
 
