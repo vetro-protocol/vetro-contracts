@@ -27,9 +27,9 @@ import {INSTANCES} from './helpers/instances'
  * are listed under `oracles` by deployment name (any artifact whose address is a collateral's `oracle`); external
  * oracles appear only as a collateral's `oracle`.
  *
- * Unlike Vesper2, proxy fields, token name/symbol and the owner are read on-chain: an upgrade queued for the Safe
- * updates the artifacts before it executes, and the deploy-time owner in the constructor args goes stale after the
- * governance handover.
+ * Unlike Vesper2, a release is cut once the upgrade is live (after the Safe executes), so proxy fields, token
+ * name/symbol and the owner are read on-chain. The task refuses while an upgrade queued for the Safe is still
+ * pending, and the deploy-time owner in the constructor args goes stale after the governance handover.
  *
  * Versioning convention: manifests are IMMUTABLE once cut; the task refuses to overwrite an existing version.
  * Bump on every change to the deployed composition:
@@ -97,11 +97,15 @@ task(
       const contract = async (alias: string) => {
         const {address} = get(alias)
         if (!exists(`${alias}_ProxyAdmin`)) return {address}
-        return {
-          address,
-          implementation: await getImplementation(ethers.provider, address),
-          proxyAdmin: await getProxyAdmin(ethers.provider, address),
+        const implementation = await getImplementation(ethers.provider, address)
+        // The artifact records a queued upgrade before the Safe executes it, so a mismatch means it isn't live yet
+        const recorded = get(`${alias}_Proxy`).implementation
+        if (recorded && recorded.toLowerCase() !== implementation.toLowerCase()) {
+          throw new Error(
+            `${alias}: upgrade to ${recorded} still pending in the Safe (live: ${implementation}). Nothing written.`
+          )
         }
+        return {address, implementation, proxyAdmin: await getProxyAdmin(ethers.provider, address)}
       }
 
       const contracts: any = {}

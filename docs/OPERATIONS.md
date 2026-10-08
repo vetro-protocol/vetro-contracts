@@ -600,7 +600,8 @@ behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks sha
    blocks needs an archive RPC.
 
    `create-release` writes `releases/<instance>/<network>-<version>.json` for each deployed instance and refuses
-   to overwrite an existing version: manifests are immutable. An implementation upgrade is a patch bump.
+   to overwrite an existing version: manifests are immutable. An implementation upgrade is a patch bump. It also
+   refuses while an upgrade is still pending in the Safe, so the manifest only records what is live.
 
 ---
 
