@@ -1,118 +1,179 @@
 import {task} from 'hardhat/config'
 import fs from 'fs'
-import _ from 'lodash'
-import compareVersions from 'compare-versions'
+import {getImplementation, getProxyAdmin} from '../deploy/helpers/eip1967'
+import {TREASURY_ABI} from './helpers/abis'
+import {INSTANCES} from './helpers/instances'
 
-const readFileAsJson = (fileName: string) => JSON.parse(fs.readFileSync(fileName).toString())
+/**
+ * Generate a release manifest from the deploy artifacts and on-chain state (ported from Vesper2).
+ *
+ * Output: releases/<instance>/<network>-<version>.json, the schema consumed by the e2e suite
+ * (test/e2e/deployed-contracts.test.ts) and scripts/run-e2e-tests.sh:
+ *
+ *   { version, notes?, network, chainId, instance,
+ *     contracts: {
+ *       PeggedToken:      {address, name, symbol},
+ *       Treasury:         {address},
+ *       Gateway:          {address, implementation, proxyAdmin},
+ *       StakingVault:     {address, implementation, proxyAdmin},
+ *       YieldDistributor: {address, implementation, proxyAdmin},
+ *       YieldManager:     {address},   // optional: post-launch periphery, included when deployed
+ *     },
+ *     oracles: { <deployment alias>: {address} },   // optional: price feeds deployed from this repo
+ *     whitelistedTokens: { <token>: {symbol, token, vault, oracle, stalePeriod} },
+ *     governance: { owner } }
+ *
+ * `contracts` keeps Vesper2's core roles only. Price feed adapters this repo deployed for the instance's collateral
+ * are listed under `oracles` by deployment name (any artifact whose address is a collateral's `oracle`); external
+ * oracles appear only as a collateral's `oracle`.
+ *
+ * Unlike Vesper2, a release is cut once the upgrade is live (after the Safe executes), so proxy fields, token
+ * name/symbol and the owner are read on-chain. The task refuses while an upgrade queued for the Safe is still
+ * pending, and the deploy-time owner in the constructor args goes stale after the governance handover.
+ *
+ * Versioning convention: manifests are IMMUTABLE once cut; the task refuses to overwrite an existing version.
+ * Bump on every change to the deployed composition:
+ *   major = core redeploy / treasury migration; minor = additive (new contract, new collateral);
+ *   patch = in-place implementation upgrade or config-only change.
+ * The release-to-release delta is mechanical:
+ *   git diff --no-index releases/<inst>/<net>-<old>.json releases/<inst>/<net>-<new>.json
+ *
+ * Usage:
+ *   npx hardhat create-release --release 1.2.0 --network ethereum            # all deployed instances
+ *   npx hardhat create-release --release 1.2.0 --instance vetbtc --network ethereum
+ *   npx hardhat create-release --release 1.2.0 --notes "upgrade Gateway" --network ethereum
+ */
 
-const getAddress = (fileName: string) => readFileAsJson(fileName).address
+// Roles that may be absent: post-launch periphery is included only once deployed
+const OPTIONAL_ROLES = ['YieldManager']
 
-const IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'
+const readJson = (file: string) => JSON.parse(fs.readFileSync(file).toString())
 
-async function getImplAddress(proxyAddress: string) {
-  const {ethers} = await import('hardhat')
-  const implStorage = (await ethers.provider.getStorageAt(proxyAddress, IMPLEMENTATION_SLOT)).toString()
-  if (implStorage.length === 42) {
-    return ethers.utils.getAddress(implStorage)
-  }
-  return ethers.utils.getAddress(`0x${implStorage.slice(26)}`)
-}
-
-// Return deployment name and address
-const getDeploymentData = async (dirName: string) => {
-  const data = fs.readdirSync(dirName).map(function (fileName) {
-    if (fileName.includes('.json')) {
-      return {
-        [fileName.split('.json')[0]]: getAddress(`${dirName}/${fileName}`),
-      }
-    }
-    return {}
-  })
-
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  const mergedData = _.merge(...data)
-  for (const [key, value] of Object.entries(mergedData)) {
-    if (key.includes('_Proxy')) {
-      const implKey = `${key.split('_Proxy')[0]}_Implementation`
-      mergedData[implKey] = await getImplAddress(value)
-    }
-  }
-
-  return Object.keys(mergedData)
-    .sort()
-    .reduce((sortedData, key) => {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      sortedData[key] = mergedData[key]
-      return sortedData
-    }, {})
-}
-
-function getPreviousRelease() {
-  let releases = fs.readdirSync('releases')
-  if (releases.length) {
-    if (releases[0] === '.DS_Store') {
-      releases.shift() // delete first element, generally found on mac machine.
-    }
-    releases = releases.sort(compareVersions)
-    const prevRelease = releases[releases.length - 1]
-    const preReleaseFile = `releases/${prevRelease}/contracts.json`
-    if (fs.existsSync(preReleaseFile)) {
-      return readFileAsJson(preReleaseFile)
-    }
-  }
-  return {}
-}
-
-/* eslint-disable no-param-reassign */
-task('create-release', 'Create release file from deploy data')
-  .addParam('release', 'Metronome Synth release semantic version, i.e 1.2.3')
-  .setAction(async function ({release}, hre) {
+/* eslint-disable @typescript-eslint/no-explicit-any */
+task(
+  'create-release',
+  'Generate a release manifest (releases/<instance>/<network>-<version>.json) from deploy artifacts'
+)
+  .addParam('release', 'Release semantic version, e.g. 1.2.0')
+  .addOptionalParam('instance', 'Limit to one instance dir (e.g. vusd). Default: every deployed instance.')
+  .addOptionalParam('notes', 'One-line change note stored in the manifest (what this release adds/changes)')
+  .setAction(async ({release, instance, notes}, hre) => {
+    const {ethers} = hre
     const network = hre.network.name
-    const networkDir = `./deployments/${network}`
+    const dir = `./deployments/${network}`
+    if (!fs.existsSync(dir)) {
+      throw new Error(`No deployments found for network '${network}' (${dir}).`)
+    }
 
-    console.log('Task args are', release)
-    const poolDir = `${networkDir}`
+    const exists = (alias: string) => fs.existsSync(`${dir}/${alias}.json`)
+    const get = (alias: string) => readJson(`${dir}/${alias}.json`)
 
-    // Read pool deployment name and address
-    const deployData = await getDeploymentData(poolDir)
+    if (instance && !INSTANCES[instance]) {
+      throw new Error(`Unknown instance '${instance}'. Known: ${Object.keys(INSTANCES).join(', ')}`)
+    }
+    const targets = instance ? [instance] : Object.keys(INSTANCES)
 
-    const releaseDir = `releases/${release}`
-    const releaseFile = `${releaseDir}/contracts.json`
+    // address -> deployment alias, to recognise collateral oracles deployed from this repo. Proxy companions share
+    // or shadow their alias's address, so skip them.
+    const deployedAliases: Record<string, string> = {}
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+      if (/_(Proxy|ProxyAdmin|Implementation)\.json$/.test(file)) continue
+      deployedAliases[get(file.replace('.json', '')).address.toLowerCase()] = file.replace('.json', '')
+    }
+    const pending: {file: string; data: any}[] = []
 
-    // Get previous release data
-    const prevReleaseData = getPreviousRelease()
-    let releaseData: any = {}
+    for (const instDir of targets) {
+      const roles = INSTANCES[instDir]
 
-    // If last stored release is same as current release
-    if (prevReleaseData.version === release) {
-      // Update release with new deployment
-      releaseData = prevReleaseData
-    } else {
-      // If this is new release
-      // Create new release directory if doesn't exist
-      if (!fs.existsSync(releaseDir)) {
-        fs.mkdirSync(releaseDir, {recursive: true})
+      // Deployed? The pegged-token deployment is the instance-unique marker.
+      if (!exists(roles.PeggedToken)) {
+        if (instance) {
+          throw new Error(`Instance '${instDir}' is not deployed on '${network}' (${roles.PeggedToken}.json missing).`)
+        }
+        continue // auto mode: silently skip instances that aren't deployed
       }
-      // Copy data from previous release
-      releaseData = prevReleaseData
-      // Update release version
-      releaseData.version = release
+
+      // address only, plus implementation/proxyAdmin iff a ProxyAdmin deploy exists (= upgradeable)
+      const contract = async (alias: string) => {
+        const {address} = get(alias)
+        if (!exists(`${alias}_ProxyAdmin`)) return {address}
+        const implementation = await getImplementation(ethers.provider, address)
+        // The artifact records a queued upgrade before the Safe executes it, so a mismatch means it isn't live yet
+        const recorded = get(`${alias}_Proxy`).implementation
+        if (recorded && recorded.toLowerCase() !== implementation.toLowerCase()) {
+          throw new Error(
+            `${alias}: upgrade to ${recorded} still pending in the Safe (live: ${implementation}). Nothing written.`
+          )
+        }
+        return {address, implementation, proxyAdmin: await getProxyAdmin(ethers.provider, address)}
+      }
+
+      const contracts: any = {}
+      for (const [role, alias] of Object.entries(roles)) {
+        if (!exists(alias)) {
+          if (OPTIONAL_ROLES.includes(role)) continue
+          throw new Error(`${instDir}: ${alias}.json missing from ${dir}`)
+        }
+        contracts[role] = await contract(alias)
+      }
+
+      const token = await ethers.getContractAt(
+        ['function name() view returns (string)', 'function symbol() view returns (string)'],
+        contracts.PeggedToken.address
+      )
+      contracts.PeggedToken = {...contracts.PeggedToken, name: await token.name(), symbol: await token.symbol()}
+
+      // Not best-effort as in Vesper2: an immutable manifest must never record an RPC failure as "no collateral"
+      const whitelistedTokens: Record<string, any> = {}
+      const oracles: Record<string, {address: string}> = {}
+      const treasury = await ethers.getContractAt(TREASURY_ABI, contracts.Treasury.address)
+      for (const collateral of await treasury.whitelistedTokens()) {
+        const cfg = await treasury.tokenConfig(collateral)
+        const erc20 = await ethers.getContractAt(['function symbol() view returns (string)'], collateral)
+        whitelistedTokens[collateral] = {
+          symbol: await erc20.symbol(),
+          token: collateral,
+          vault: cfg.vault,
+          oracle: cfg.oracle,
+          stalePeriod: cfg.stalePeriod.toNumber(),
+        }
+        const oracleAlias = deployedAliases[cfg.oracle.toLowerCase()]
+        if (oracleAlias) oracles[oracleAlias] = {address: cfg.oracle}
+      }
+
+      const gateway = await ethers.getContractAt(['function owner() view returns (address)'], contracts.Gateway.address)
+
+      const releaseData = {
+        version: release,
+        ...(notes ? {notes} : {}),
+        network,
+        chainId: hre.network.config.chainId,
+        instance: instDir,
+        contracts,
+        ...(Object.keys(oracles).length ? {oracles} : {}),
+        whitelistedTokens,
+        // The Gateway's owner is the Treasury's default admin (GOVERNOR); the e2e impersonates it for role grants
+        governance: {owner: await gateway.owner()},
+      }
+
+      pending.push({file: `releases/${instDir}/${network}-${release}.json`, data: releaseData})
     }
 
-    // We might have new network in this deployment, if not exist add empty network
-    if (!releaseData.networks) {
-      releaseData.networks = {}
-      releaseData.networks[network] = {}
-    } else if (!releaseData.networks[network]) {
-      releaseData.networks[network] = {}
+    if (!pending.length) {
+      throw new Error(`No deployed instances found for network '${network}'. Nothing written.`)
     }
-    // Update pool data with latest deployment
-    releaseData.networks[network] = deployData
-    // Write release data into file
-    fs.writeFileSync(releaseFile, JSON.stringify(releaseData, null, 2))
-    console.log(`${network} release ${release} is created successfully!`)
+
+    // Manifests are immutable: refuse before writing anything, so a multi-instance run never half-writes
+    const taken = pending.filter(({file}) => fs.existsSync(file)).map(({file}) => file)
+    if (taken.length) {
+      throw new Error(`Release already exists, bump the version: ${taken.join(', ')}. Nothing written.`)
+    }
+
+    for (const {file, data} of pending) {
+      fs.mkdirSync(file.slice(0, file.lastIndexOf('/')), {recursive: true})
+      fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+      console.log(`Wrote ${file}`)
+    }
   })
 
 module.exports = {}
