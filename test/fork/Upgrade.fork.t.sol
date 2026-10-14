@@ -383,6 +383,22 @@ abstract contract VetroFlowsForkTest is VetroForkBase {
         _integratorsRedeemInstantly(vetbtc);
     }
 
+    function test_vusd_mintExact() public {
+        _mintExact(vusd);
+    }
+
+    function test_vetbtc_mintExact() public {
+        _mintExact(vetbtc);
+    }
+
+    function test_vusd_keeperActions() public {
+        _keeperActions(vusd);
+    }
+
+    function test_vetbtc_keeperActions() public {
+        _keeperActions(vetbtc);
+    }
+
     /// @dev Every active collateral can be deposited and, after the withdrawal delay, redeemed again
     function _depositAndRedeem(Stack memory s_) internal {
         _extendOracleStalePeriods(s_);
@@ -514,6 +530,135 @@ abstract contract VetroFlowsForkTest is VetroForkBase {
             assertEq(s_.token.balanceOf(_account) - _tokenBefore, _assets, "instant withdraw failed");
         }
         assertGt(_instantWithdrawers, 0, "vault whitelist empty");
+    }
+
+    /// @dev Minting an exact pegged amount charges exactly what previewMint quotes, and never more than the max
+    function _mintExact(Stack memory s_) internal {
+        _extendOracleStalePeriods(s_);
+        address[] memory _tokens = _activeTokens(s_);
+        assertGt(_tokens.length, 0, "no active collateral");
+
+        for (uint256 i; i < _tokens.length; ++i) {
+            address _collateral = _tokens[i];
+            address _user = makeAddr(string.concat(s_.name, "-minter-", vm.toString(_collateral)));
+            uint256 _peggedOut = s_.gateway.previewDeposit(_collateral, _amount(s_, _collateral));
+            uint256 _required = s_.gateway.previewMint(_collateral, _peggedOut);
+            deal(_collateral, _user, _required);
+
+            vm.startPrank(_user);
+            IERC20(_collateral).forceApprove(address(s_.gateway), _required);
+            vm.expectRevert(
+                abi.encodeWithSelector(Gateway.TokenAmountIsHigherThanMax.selector, _required, _required - 1)
+            );
+            s_.gateway.mint(_collateral, _peggedOut, _required - 1, _user);
+            uint256 _paid = s_.gateway.mint(_collateral, _peggedOut, _required, _user);
+            vm.stopPrank();
+
+            assertEq(_paid, _required, "mint cost != preview");
+            assertEq(s_.token.balanceOf(_user), _peggedOut, "pegged token not minted");
+            assertEq(IERC20(_collateral).balanceOf(_user), 0, "collateral not taken");
+        }
+    }
+
+    /// @dev The keeper moves collateral between the Treasury and its yield vault and pauses deposits and withdrawals.
+    /// Deposits go straight into the vault, so the redeem at the end is the only one paid partly from idle collateral.
+    function _keeperActions(Stack memory s_) internal {
+        _extendOracleStalePeriods(s_);
+        address _keeper = makeAddr(string.concat(s_.name, "-keeper"));
+        bytes32 _keeperRole = s_.treasury.KEEPER_ROLE();
+        vm.prank(s_.treasury.defaultAdmin());
+        s_.treasury.grantRole(_keeperRole, _keeper);
+
+        address[] memory _tokens = _activeTokens(s_);
+        assertGt(_tokens.length, 0, "no active collateral");
+
+        for (uint256 i; i < _tokens.length; ++i) {
+            address _collateral = _tokens[i];
+            address _user = makeAddr(string.concat(s_.name, "-keeper-user-", vm.toString(_collateral)));
+            uint256 _amountIn = _amount(s_, _collateral);
+            uint256 _minted = _deposit(s_, _collateral, _user, _amountIn);
+
+            _pullAndPush(s_, _keeper, _collateral, _amountIn / 2);
+            _pausedDepositReverts(s_, _keeper, _collateral, _user, _amountIn);
+            _redeemWithIdleCollateral(s_, _keeper, _collateral, _user, _minted);
+        }
+    }
+
+    /// @dev Pulls `pulled_` out of the vault and pushes half of it back, leaving the rest idle in the Treasury
+    function _pullAndPush(Stack memory s_, address keeper_, address collateral_, uint256 pulled_) private {
+        address _treasury = address(s_.treasury);
+        (address _yieldVault,,,,,) = s_.treasury.tokenConfig(collateral_);
+        uint256 _withdrawable = s_.treasury.withdrawable(collateral_);
+        uint256 _idle = IERC20(collateral_).balanceOf(_treasury);
+        uint256 _shares = IERC20(_yieldVault).balanceOf(_treasury);
+
+        vm.prank(keeper_);
+        s_.treasury.pull(collateral_, pulled_);
+        assertEq(IERC20(collateral_).balanceOf(_treasury) - _idle, pulled_, "pull not received");
+        assertLt(IERC20(_yieldVault).balanceOf(_treasury), _shares, "pull did not burn vault shares");
+        assertApproxEqAbs(s_.treasury.withdrawable(collateral_), _withdrawable, 2, "pull changed withdrawable");
+
+        _shares = IERC20(_yieldVault).balanceOf(_treasury);
+        uint256 _pushed = pulled_ / 2;
+        vm.prank(keeper_);
+        s_.treasury.push(collateral_, _pushed);
+        assertEq(IERC20(collateral_).balanceOf(_treasury) - _idle, pulled_ - _pushed, "push not sent");
+        assertGt(IERC20(_yieldVault).balanceOf(_treasury), _shares, "push did not mint vault shares");
+    }
+
+    function _pausedDepositReverts(
+        Stack memory s_,
+        address keeper_,
+        address collateral_,
+        address user_,
+        uint256 amountIn_
+    ) private {
+        vm.prank(keeper_);
+        s_.treasury.setDepositActive(collateral_, false);
+        deal(collateral_, user_, amountIn_);
+        vm.startPrank(user_);
+        IERC20(collateral_).forceApprove(address(s_.gateway), amountIn_);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.DepositIsPaused.selector, collateral_));
+        s_.gateway.deposit(collateral_, amountIn_, 0, user_);
+        vm.stopPrank();
+        vm.prank(keeper_);
+        s_.treasury.setDepositActive(collateral_, true);
+    }
+
+    /// @dev Redeems more than the idle balance after a paused attempt reverts: the Treasury pays out its idle
+    /// collateral first and withdraws the rest from the vault
+    function _redeemWithIdleCollateral(
+        Stack memory s_,
+        address keeper_,
+        address collateral_,
+        address user_,
+        uint256 minted_
+    ) private {
+        vm.startPrank(user_);
+        IERC20(address(s_.token)).forceApprove(address(s_.gateway), minted_);
+        if (s_.gateway.withdrawalDelayEnabled()) {
+            s_.gateway.requestRedeem(minted_);
+            skip(s_.gateway.withdrawalDelay());
+        }
+        vm.stopPrank();
+
+        vm.prank(keeper_);
+        s_.treasury.setWithdrawActive(collateral_, false);
+        vm.prank(user_);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.WithdrawIsPaused.selector, collateral_));
+        s_.gateway.redeem(collateral_, minted_, 0, user_);
+        vm.prank(keeper_);
+        s_.treasury.setWithdrawActive(collateral_, true);
+
+        address _treasury = address(s_.treasury);
+        uint256 _expectedOut = s_.gateway.previewRedeem(collateral_, minted_);
+        assertGt(_expectedOut, IERC20(collateral_).balanceOf(_treasury), "redeem would not reach the vault");
+        uint256 _collateralBefore = IERC20(collateral_).balanceOf(user_);
+        vm.prank(user_);
+        uint256 _out = s_.gateway.redeem(collateral_, minted_, _expectedOut, user_);
+        assertEq(_out, _expectedOut, "redeem != preview");
+        assertEq(IERC20(collateral_).balanceOf(user_) - _collateralBefore, _out, "collateral not received");
+        assertEq(IERC20(collateral_).balanceOf(_treasury), 0, "idle collateral not used first");
     }
 
     function _deposit(Stack memory s_, address collateral_, address user_, uint256 amountIn_)
