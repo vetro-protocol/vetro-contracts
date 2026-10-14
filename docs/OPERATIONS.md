@@ -557,7 +557,10 @@ StakingVault.totalAssets()         // should gradually increase
 ## Upgrading Proxies
 
 Only `Gateway`, `StakingVault` and `YieldDistributor` (and their vetBTC counterparts) are upgradeable. Each sits
-behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks share one implementation per contract.
+behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks upgrade to one shared implementation
+per contract (`<Contract>_Implementation`), though the live ones can differ until then: in the 1.1.0 releases VUSD's
+`YieldDistributor` runs `0xe8Ac98555f8815F4c125C871F803DFCaD2101886` and vetBTC's runs
+`0x4a6e1AcA9fB0A5d428dFac5127C511a9d5723080`.
 
 1. **Check storage compatibility** against the live implementations:
 
@@ -570,8 +573,9 @@ behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks sha
    namespaces) against this repo's contracts. The deploy scripts run the same check before deploying a new
    implementation.
 
-2. **Dry run on a fork**: deploys and upgrades as the Safe, checks that only implementations changed, and reruns the
-   flow tests against the upgraded node:
+2. **Dry run on a fork**: deploys as the mainnet deployer, queues the upgrades and config calls in the Safe batch
+   and executes it as the impersonated Safe, checks that only implementations changed, and reruns the flow tests
+   against the upgraded node. On the fork the batch runs as one tx per call, not atomically through MultiSend:
 
    ```bash
    ./scripts/test-upgrade-on-fork.sh
@@ -582,8 +586,9 @@ behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks sha
    in the same block, and `LiveForkTest` / `UpgradedForkTest` run the user, keeper and integrator flows on both
    stacks before and after.
 
-3. **Deploy** with `npx hardhat deploy --network ethereum`. The storage check runs before any implementation is
-   deployed, and the upgrades are queued and proposed as one Safe batch.
+3. **Deploy** with `npx hardhat deploy --network ethereum`. The storage check runs before each contract's
+   implementation is deployed, so a failure on a later contract leaves the earlier implementations deployed: run
+   step 1 first. The upgrades are queued and proposed as one Safe batch.
 
 4. **After the Safe executes** in block `B`, compare the block before it with block `B` and cut the release:
 

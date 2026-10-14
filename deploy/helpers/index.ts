@@ -69,7 +69,7 @@ export const deployUpgradable = async ({
   implementationAddress?: string | undefined
 }> => {
   const {
-    deployments: {deploy, save, getOrNull, fetchIfDifferent, catchUnknownSigner, execute},
+    deployments: {deploy, save, getOrNull, fetchIfDifferent, catchUnknownSigner, execute, read},
     getNamedAccounts,
     ethers,
   } = hre
@@ -169,13 +169,15 @@ export const deployUpgradable = async ({
     const proxyAdmin = await getProxyAdmin(ethers.provider, proxyDeployment.address)
     log(chalk.yellow(`  ProxyAdmin: ${proxyAdmin}`))
 
-    // Upgrade via ProxyAdmin.upgradeAndCall, sent BY the ProxyAdmin owner. Use hardhat-deploy's
-    // `execute` (it honors the named `owner`, unlike raw ethers which would default to account[0]
-    // and revert OwnableUnauthorizedAccount against a Safe-owned ProxyAdmin).
+    // Upgrade via ProxyAdmin.upgradeAndCall, sent BY the ProxyAdmin's live owner rather than `owner`: on a fork
+    // `owner` is the deployer, not the Safe that owns the live ProxyAdmin, so the upgrade must be queued for the Safe
+    // just as on mainnet. Use hardhat-deploy's `execute` (it honors `from`, unlike raw ethers which would default to
+    // account[0] and revert OwnableUnauthorizedAccount against a Safe-owned ProxyAdmin).
+    const proxyAdminOwner: string = await read(proxyAdminAlias, 'owner')
     const executeFn = () =>
       execute(
         proxyAdminAlias,
-        {from: owner, log: true},
+        {from: proxyAdminOwner, log: true},
         'upgradeAndCall',
         proxyDeployment.address,
         newImplAddress,
@@ -192,7 +194,7 @@ export const deployUpgradable = async ({
         await saveForMultiSigBatchExecution(multiSigTx)
         log(
           chalk.yellow(
-            `  ⧗ ${alias} upgrade QUEUED for the Safe batch — owner ${owner} can't sign here. ` +
+            `  ⧗ ${alias} upgrade QUEUED for the Safe batch — owner ${proxyAdminOwner} can't sign here. ` +
               `Confirm & execute the batch in the Safe to apply the upgrade on-chain, then re-run the deploy.`
           )
         )

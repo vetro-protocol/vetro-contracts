@@ -3,11 +3,12 @@ set -e
 
 # Upgrade dry run on a mainnet fork
 #
-# Runs the real deploy scripts against a forked node as the governance Safe, and checks that only the
+# Runs the real deploy scripts against a forked node as the mainnet deployer, and checks that only the
 # implementations changed and that the deployed contracts still work:
 #   1. start a forked node and copy deployments/<network> to deployments/localhost
 #   2. snapshot state through the live implementations
-#   3. `hardhat deploy` (validates storage layouts, deploys implementations, upgrades proxies as the Safe)
+#   3. `hardhat deploy` (validates storage layouts, deploys implementations, queues the upgrades and config calls
+#      in the Safe batch, then executes the batch as the impersonated Safe)
 #   4. snapshot again and fail if anything but implementations changed
 #   5. run the Foundry flow tests against the upgraded node
 #
@@ -16,6 +17,7 @@ set -e
 # Environment Variables (set in .env):
 #   <NETWORK>_NODE_URL     - RPC URL to fork (required)
 #   <NETWORK>_BLOCK_NUMBER - Block number to fork from (optional)
+#   DEPLOYER               - Deployer EOA (optional, defaults to the one that deployed the live implementations)
 
 NETWORK=${1:-"ethereum"}
 PORT=8545
@@ -23,8 +25,14 @@ NODE_URL="http://127.0.0.1:$PORT"
 NODE_PID=""
 OUT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/vetro-upgrade.XXXXXX")
 NODE_LOG="$OUT_DIR/node.log"
+BATCH_FILE=multisig.batch.tmp.json
+batch_is_ours=""
 
 cleanup() {
+    # Only a batch this run queued: one left by a failed dry run would later pass for a real mainnet batch
+    if [[ -n "$batch_is_ours" && -f $BATCH_FILE ]]; then
+        rm -f $BATCH_FILE
+    fi
     if [[ -n "$NODE_PID" ]]; then
         echo ""
         echo "Stopping forked node (PID: $NODE_PID)..."
@@ -59,13 +67,21 @@ if [[ -z "$url" ]]; then
     exit 1
 fi
 
-# Proxy admins are owned by the governance Safe; impersonating it executes the upgrades the Safe batch would. Read
-# the owner at the forked block (it may have changed since), and assign before exporting: `export X=$(...)` would
-# hide a failed lookup from `set -e` and the deploy would silently sign as the node's default account
-proxy_admin=$(node -e "console.log(require('./deployments/$NETWORK/Gateway_ProxyAdmin.json').address)")
-DEPLOYER=$(cast call "$proxy_admin" 'owner()(address)' --rpc-url "$url" --block "${block:-latest}")
+# Deploy as the real deployer so that, as on mainnet, every owner call is queued for the Safe and run by
+# 99_multisig_txs. Deploying as the Safe would run them directly and skip the batch. Assign before exporting:
+# `export X=$(...)` would hide a failed lookup from `set -e` and the deploy would silently sign as the node's
+# default account
 if [[ -z "$DEPLOYER" ]]; then
-    echo "Error: could not read the owner of ProxyAdmin $proxy_admin"
+    DEPLOYER=$(node -e "console.log(require('./deployments/$NETWORK/Gateway_Implementation.json').receipt.from)")
+fi
+if [[ -z "$DEPLOYER" || "$DEPLOYER" == "undefined" ]]; then
+    echo "Error: DEPLOYER not set and not found in deployments/$NETWORK/Gateway_Implementation.json"
+    exit 1
+fi
+proxy_admin=$(node -e "console.log(require('./deployments/$NETWORK/Gateway_ProxyAdmin.json').address)")
+proxy_admin_owner=$(cast call "$proxy_admin" 'owner()(address)' --rpc-url "$url" --block "${block:-latest}")
+if [[ "${DEPLOYER:l}" == "${proxy_admin_owner:l}" ]]; then
+    echo "Error: DEPLOYER is the ProxyAdmin owner, so the upgrades would run directly instead of through the Safe batch"
     exit 1
 fi
 export DEPLOYER
@@ -74,15 +90,17 @@ echo "========================================"
 echo "Upgrade dry run on $NETWORK fork"
 echo "========================================"
 echo "Block:    ${block:-latest}"
-echo "Deployer: $DEPLOYER (ProxyAdmin owner)"
+echo "Deployer: $DEPLOYER"
+echo "Safe:     $proxy_admin_owner (ProxyAdmin owner)"
 echo "Output:   $OUT_DIR"
 echo ""
 
 # A leftover Safe batch may be a real mainnet batch that was never proposed; never delete it here
-if [[ -f multisig.batch.tmp.json ]]; then
-    echo "Error: multisig.batch.tmp.json exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
+if [[ -f $BATCH_FILE ]]; then
+    echo "Error: $BATCH_FILE exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
     exit 1
 fi
+batch_is_ours=1
 
 # anvil rather than a hardhat node: forge forks by block hash, which the hardhat node rejects
 if [[ -n "$block" ]]; then
