@@ -14,15 +14,15 @@ import * as path from 'path'
  * from on-chain state so they work regardless of deployment configuration.
  *
  * Usage:
- *   RELEASE_FILE=ethereum-1.0.0-beta.1.json npx hardhat test test/e2e/deployed-contracts.test.ts
+ *   RELEASE_FILE=vusd/ethereum-1.0.0.json npx hardhat test test/e2e/deployed-contracts.test.ts
  *
  * Prerequisites:
  *   - Set ETHEREUM_NODE_URL env variable for mainnet fork
- *   - Set RELEASE_FILE env variable to the release JSON filename (optional, defaults to ethereum-1.0.0-beta.1.json)
+ *   - Set RELEASE_FILE env variable to the release JSON under releases/ (optional, defaults to vusd/ethereum-1.0.0.json)
  */
 
 // Load release config
-const RELEASE_FILE = process.env.RELEASE_FILE || 'ethereum-1.0.0.json'
+const RELEASE_FILE = process.env.RELEASE_FILE || 'vusd/ethereum-1.0.0.json'
 const releasePath = path.join(__dirname, '../../releases', RELEASE_FILE)
 
 interface ReleaseConfig {

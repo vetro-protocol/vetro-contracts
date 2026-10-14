@@ -1,0 +1,148 @@
+#!/usr/bin/env zsh
+set -e
+
+# Upgrade dry run on a mainnet fork
+#
+# Runs the real deploy scripts against a forked node as the mainnet deployer, and checks that only the
+# implementations changed and that the deployed contracts still work:
+#   1. start a forked node and copy deployments/<network> to deployments/localhost
+#   2. snapshot state through the live implementations
+#   3. `hardhat deploy` (validates storage layouts, deploys implementations, queues the upgrades and config calls
+#      in the Safe batch, then executes the batch as the impersonated Safe)
+#   4. snapshot again and fail if anything but implementations changed
+#   5. run the Foundry flow tests against the upgraded node
+#
+# Usage: ./scripts/test-upgrade-on-fork.sh [network]
+#
+# Environment Variables (set in .env):
+#   <NETWORK>_NODE_URL     - RPC URL to fork (required)
+#   <NETWORK>_BLOCK_NUMBER - Block number to fork from (optional)
+#   DEPLOYER               - Deployer EOA (optional, defaults to the one that deployed the live implementations)
+
+NETWORK=${1:-"ethereum"}
+PORT=8545
+NODE_URL="http://127.0.0.1:$PORT"
+NODE_PID=""
+OUT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/vetro-upgrade.XXXXXX")
+NODE_LOG="$OUT_DIR/node.log"
+BATCH_FILE=multisig.batch.tmp.json
+batch_is_ours=""
+
+cleanup() {
+    # Only a batch this run queued: one left by a failed dry run would later pass for a real mainnet batch
+    if [[ -n "$batch_is_ours" && -f $BATCH_FILE ]]; then
+        rm -f $BATCH_FILE
+    fi
+    if [[ -n "$NODE_PID" ]]; then
+        echo ""
+        echo "Stopping forked node (PID: $NODE_PID)..."
+        kill $NODE_PID 2>/dev/null || true
+        wait $NODE_PID 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+if [[ ! -d "deployments/$NETWORK" ]]; then
+    echo "Error: deployments/$NETWORK not found"
+    exit 1
+fi
+
+if curl -s $NODE_URL > /dev/null 2>&1; then
+    echo "Error: Port $PORT is already in use. Stop the existing node first."
+    exit 1
+fi
+
+set +e
+source .env 2>/dev/null
+set -e
+
+network_upper=$(echo "$NETWORK" | tr '[:lower:]' '[:upper:]')
+url_var="${network_upper}_NODE_URL"
+block_var="${network_upper}_BLOCK_NUMBER"
+url="${(P)url_var}"
+block="${(P)block_var}"
+
+if [[ -z "$url" ]]; then
+    echo "Error: ${url_var} not set in .env"
+    exit 1
+fi
+
+# Deploy as the real deployer so that, as on mainnet, every owner call is queued for the Safe and run by
+# 99_multisig_txs. Deploying as the Safe would run them directly and skip the batch. Assign before exporting:
+# `export X=$(...)` would hide a failed lookup from `set -e` and the deploy would silently sign as the node's
+# default account
+if [[ -z "$DEPLOYER" ]]; then
+    DEPLOYER=$(node -e "console.log(require('./deployments/$NETWORK/Gateway_Implementation.json').receipt.from)")
+fi
+if [[ -z "$DEPLOYER" || "$DEPLOYER" == "undefined" ]]; then
+    echo "Error: DEPLOYER not set and not found in deployments/$NETWORK/Gateway_Implementation.json"
+    exit 1
+fi
+proxy_admin=$(node -e "console.log(require('./deployments/$NETWORK/Gateway_ProxyAdmin.json').address)")
+proxy_admin_owner=$(cast call "$proxy_admin" 'owner()(address)' --rpc-url "$url" --block "${block:-latest}")
+if [[ "${DEPLOYER:l}" == "${proxy_admin_owner:l}" ]]; then
+    echo "Error: DEPLOYER is the ProxyAdmin owner, so the upgrades would run directly instead of through the Safe batch"
+    exit 1
+fi
+export DEPLOYER
+
+echo "========================================"
+echo "Upgrade dry run on $NETWORK fork"
+echo "========================================"
+echo "Block:    ${block:-latest}"
+echo "Deployer: $DEPLOYER"
+echo "Safe:     $proxy_admin_owner (ProxyAdmin owner)"
+echo "Output:   $OUT_DIR"
+echo ""
+
+# A leftover Safe batch may be a real mainnet batch that was never proposed; never delete it here
+if [[ -f $BATCH_FILE ]]; then
+    echo "Error: $BATCH_FILE exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
+    exit 1
+fi
+batch_is_ours=1
+
+# anvil rather than a hardhat node: forge forks by block hash, which the hardhat node rejects
+if [[ -n "$block" ]]; then
+    anvil --fork-url "$url" --fork-block-number "$block" --port $PORT > "$NODE_LOG" 2>&1 &
+else
+    anvil --fork-url "$url" --port $PORT > "$NODE_LOG" 2>&1 &
+fi
+NODE_PID=$!
+
+for i in {1..60}; do
+    curl -s $NODE_URL > /dev/null 2>&1 && break
+    if ! kill -0 $NODE_PID 2>/dev/null; then
+        echo "Error: node died, see $NODE_LOG"
+        tail -20 "$NODE_LOG"
+        exit 1
+    fi
+    sleep 1
+done
+curl -s $NODE_URL > /dev/null 2>&1 || { echo "Error: node did not start, see $NODE_LOG"; exit 1; }
+
+rm -rf deployments/localhost
+cp -r "deployments/$NETWORK" deployments/localhost
+npx hardhat impersonate-deployer --network localhost
+
+echo ">>> Snapshot before upgrade"
+npx hardhat upgrade-snapshot --network localhost --out "$OUT_DIR/before.json"
+
+echo ""
+echo ">>> Deploying"
+npx hardhat deploy --network localhost
+
+echo ""
+echo ">>> Snapshot after upgrade"
+npx hardhat upgrade-snapshot --network localhost --out "$OUT_DIR/after.json" --compare "$OUT_DIR/before.json"
+
+echo ""
+echo ">>> Flow tests against the upgraded node"
+ETHEREUM_FORK_NODE_URL=$NODE_URL ETHEREUM_FORK_BLOCK_NUMBER=0 forge test --match-contract LiveForkTest
+
+echo ""
+echo "========================================"
+echo "Upgrade dry run PASSED"
+echo "Snapshots: $OUT_DIR"
+echo "Deployment changes: deployments/localhost"
+echo "========================================"
