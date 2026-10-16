@@ -600,9 +600,11 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 
    Comparing adjacent blocks keeps normal user and keeper activity out of the diff, so the compare can be strict: it
    fails if anything other than implementations changed. Anything else in block `B` shows up as an unexpected change
-   and must be explained, including config calls bundled into the same Safe batch (e.g. role grants). Values that
-   move with prices or time (reserve, total assets, share price, pending yield) are listed for review. Reading past
-   blocks needs an archive RPC.
+   and must be explained, including config calls bundled into the same Safe batch (e.g. role grants). Accounts found
+   only after the upgrade (e.g. one added to the Gateway whitelist in the batch) are read again at the baseline's
+   block, so a role or whitelist entry they gained is a change like any other. The baseline must come from the same
+   network and an earlier block. Values that move with prices or time (reserve, total assets, share price, pending
+   yield) are listed for review. Reading past blocks needs an archive RPC.
 
    `create-release` writes `releases/<instance>/<network>-<version>.json` for each deployed instance and refuses
    to overwrite an existing version: manifests are immutable. An implementation upgrade is a patch bump. It also

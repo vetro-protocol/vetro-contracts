@@ -102,8 +102,9 @@ type BlockTag = number | 'latest'
 
 /**
  * Reads at one block. `call` must succeed; `read` records a revert as REVERTED so a getter missing on one
- * implementation shows up as a diff instead of aborting the snapshot. Anything other than a revert (RPC errors,
- * timeouts) is rethrown, so it can never pass for a value.
+ * implementation shows up as a diff instead of aborting the snapshot. ethers reports most failed `eth_call`s as
+ * CALL_EXCEPTION, including RPC errors such as timeouts, so those are recorded as REVERTED too. That can only fail a
+ * compare, never pass one: REVERTED differs from any real value, and fails when on both sides.
  */
 const makeReader = (blockTag: BlockTag) => {
   const call = async (contract: Contract, method: string, ...args: unknown[]) =>
@@ -301,13 +302,12 @@ const flatten = (value: Json, prefix = '', out: Record<string, string> = {}) => 
   return out
 }
 
-const diff = (before: Json, after: Json) => {
-  const a = flatten(before)
-  const b = flatten(after)
-  return [...new Set([...Object.keys(a), ...Object.keys(b)])]
+const diff = (before: Json, after: Json) => diffFlat(flatten(before), flatten(after))
+
+const diffFlat = (a: Record<string, string>, b: Record<string, string>) =>
+  [...new Set([...Object.keys(a), ...Object.keys(b)])]
     .filter((k) => a[k] !== b[k])
     .map((k) => ({key: k, before: a[k] ?? '<missing>', after: b[k] ?? '<missing>'}))
-}
 
 task(
   'upgrade-snapshot',
@@ -340,12 +340,36 @@ task(
     }
 
     const before = JSON.parse(fs.readFileSync(compare, 'utf8'))
+    // The baseline is also read back at its block for new accounts, so it must come from this chain and precede it
+    if (before.network !== hre.network.name) {
+      throw new Error(`${compare} was taken on ${before.network}, not ${hre.network.name}`)
+    }
+    if (before.block > snapshot.block) {
+      throw new Error(`${compare} is from block ${before.block}, after the compared block ${snapshot.block}`)
+    }
     console.log(`Comparing block ${before.block} (${compare}) with block ${snapshot.block}`)
+
+    // Accounts found only after the upgrade (e.g. one added to the Gateway whitelist, or in a dry run a newly deployed
+    // YieldManager) have no values in the baseline, so read them at the baseline's block: a role or whitelist entry
+    // they gained in between is then a change like any other
+    const baselineAccounts = new Set<string>(before.accounts)
+    const newAccounts = snapshot.accounts.filter((a: string) => !baselineAccounts.has(a))
+    const reread = newAccounts.length ? await takeSnapshot(hre, before.block, newAccounts) : undefined
+    const touchesNewAccount = (key: string) => key.split('.').some((part) => newAccounts.includes(part))
+    const baselineState = (name: string) => {
+      const a = flatten(before.stacks[name].state)
+      if (reread) {
+        for (const [key, value] of Object.entries(flatten(reread.stacks[name].state))) {
+          if (!(key in a) && touchesNewAccount(key)) a[key] = value
+        }
+      }
+      return a
+    }
 
     const upgraded = diff(before.proxies, snapshot.proxies)
     const unexpectedProxyChanges = upgraded.filter((d) => !d.key.endsWith('.implementation'))
     const stateChanges = Object.keys(INSTANCES).flatMap((name) =>
-      diff(before.stacks[name].state, snapshot.stacks[name].state).map((d) => ({...d, key: `${name}.${d.key}`}))
+      diffFlat(baselineState(name), flatten(snapshot.stacks[name].state)).map((d) => ({...d, key: `${name}.${d.key}`}))
     )
     const derivedChanges = Object.keys(INSTANCES).flatMap((name) =>
       diff(before.stacks[name].derived, snapshot.stacks[name].derived).map((d) => ({...d, key: `${name}.${d.key}`}))
@@ -361,14 +385,19 @@ task(
     )
     console.log(chalk.bold('\nPrice/time dependent values (review, not enforced):'))
     console.log(derivedChanges.map(print).join('\n') || '    (unchanged)')
+    if (newAccounts.length) {
+      console.log(chalk.bold(`\nNew accounts, compared with their values at block ${before.block}:`))
+      console.log(newAccounts.map((a: string) => `    ${a}`).join('\n'))
+    }
 
     // A value that reverts on both sides compares equal and proves nothing, so it fails too. A revert on one side
     // only is already a state change.
+    const revertedValue = JSON.stringify(REVERTED)
     const reverted = Object.keys(INSTANCES).flatMap((name) => {
-      const a = flatten(before.stacks[name].state)
+      const a = baselineState(name)
       const b = flatten(snapshot.stacks[name].state)
       return Object.keys(a)
-        .filter((key) => a[key] === JSON.stringify(REVERTED) && b[key] === a[key])
+        .filter((key) => a[key] === revertedValue && b[key] === a[key])
         .map((key) => ({key: `${name}.${key}`, before: REVERTED, after: REVERTED}))
     })
 
