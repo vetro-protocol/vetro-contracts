@@ -23,10 +23,13 @@ const {log} = console
 // Set by this process's first save, so later saves in the same run append to the batch it started
 let batchStarted = false
 
+// An empty file holds no txs (e.g. left by an older version of this helper), so only a non-empty one counts
+const hasBatchFile = () => fs.existsSync(MULTI_SIG_TXS_FILE) && fs.statSync(MULTI_SIG_TXS_FILE).size > 0
+
 // A batch file present before this run's first save is left over from an aborted run: appending to or proposing it
 // would mix stale calls into this batch. Re-running the deploy queues again whatever is still needed.
 const assertNoStaleBatch = () => {
-  if (!batchStarted && fs.existsSync(MULTI_SIG_TXS_FILE)) {
+  if (!batchStarted && hasBatchFile()) {
     throw Error(
       `'${MULTI_SIG_TXS_FILE}' has Safe txs from a previous run. Check the Safe queue, then propose or discard them.`
     )
@@ -65,34 +68,25 @@ const prepareTx = ({from, to, data, value}: MultiSigTx): MetaTransactionData => 
  * Prevents duplicate transactions from being stored.
  */
 export const saveForMultiSigBatchExecution = async (rawTx: MultiSigTx): Promise<void> => {
+  // Validate first: a rejected tx must not start a batch or leave a file that blocks later runs
+  const tx = prepareTx(rawTx)
   assertNoStaleBatch()
   batchStarted = true
 
-  if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
-    fs.closeSync(fs.openSync(MULTI_SIG_TXS_FILE, 'w'))
+  const current: MetaTransactionData[] = hasBatchFile()
+    ? JSON.parse(fs.readFileSync(MULTI_SIG_TXS_FILE).toString())
+    : []
+
+  const alreadyStored = current.find(
+    (i: MetaTransactionData) => i.to == tx.to && i.data == tx.data && i.value == tx.value
+  )
+
+  if (alreadyStored) {
+    log(chalk.blue(`This multi-sig transaction is already saved in '${MULTI_SIG_TXS_FILE}'.`))
+    return
   }
 
-  const file = fs.readFileSync(MULTI_SIG_TXS_FILE)
-
-  const tx = prepareTx(rawTx)
-
-  if (file.length == 0) {
-    fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify([tx]))
-  } else {
-    const current = JSON.parse(file.toString()) as MetaTransactionData[]
-
-    const alreadyStored = current.find(
-      (i: MetaTransactionData) => i.to == tx.to && i.data == tx.data && i.value == tx.value
-    )
-
-    if (alreadyStored) {
-      log(chalk.blue(`This multi-sig transaction is already saved in '${MULTI_SIG_TXS_FILE}'.`))
-      return
-    }
-
-    const json = [...current, tx]
-    fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify(json))
-  }
+  fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify([...current, tx]))
 
   log(chalk.blue(`Multi-sig transaction saved in '${MULTI_SIG_TXS_FILE}'.`))
 }
@@ -170,7 +164,7 @@ const proposeSafeTransaction = async (hre: HardhatRuntimeEnvironment, txs: MetaT
  * proposes them to the Safe, then cleans up the file.
  */
 export const executeBatchUsingMultisig = async (hre: HardhatRuntimeEnvironment): Promise<void> => {
-  if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
+  if (!hasBatchFile()) {
     return
   }
   assertNoStaleBatch()

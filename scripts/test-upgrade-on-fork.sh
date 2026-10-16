@@ -98,7 +98,7 @@ echo "Output:   $OUT_DIR"
 echo ""
 
 # A leftover Safe batch may be a real mainnet batch that was never proposed; never delete it here
-if [[ -f $BATCH_FILE ]]; then
+if [[ -s $BATCH_FILE ]]; then
     echo "Error: $BATCH_FILE exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
     exit 1
 fi

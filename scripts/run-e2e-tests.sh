@@ -86,7 +86,7 @@ echo "  Log: $NODE_LOG"
 echo ""
 
 # A leftover Safe batch may be a real mainnet batch that was never proposed; never delete it here
-if [[ -f multisig.batch.tmp.json ]]; then
+if [[ -s multisig.batch.tmp.json ]]; then
     echo "Error: multisig.batch.tmp.json exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
     exit 1
 fi
