@@ -588,7 +588,12 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 
 3. **Deploy** with `npx hardhat deploy --network ethereum`. The storage check runs before each contract's
    implementation is deployed, so a failure on a later contract leaves the earlier implementations deployed: run
-   step 1 first. The upgrades are queued and proposed as one Safe batch.
+   step 1 first. The upgrades are queued and proposed as one Safe batch. If the run fails after queueing any Safe
+   tx, `multisig.batch.tmp.json` is left behind and blocks later runs. If only the proposal failed (e.g. the Safe API
+   rejected it), check the Safe queue, then propose the batch unchanged with
+   `npx hardhat propose-safe-batch --network ethereum`. A run that failed before proposing left an incomplete batch,
+   which the task refuses: delete the file and re-run the deploy. The task also refuses a batch built for another
+   network, so a leftover mainnet batch can't be rehearsed on a fork first.
 
 4. **After the Safe executes** in block `B`, compare the block before it with block `B` and cut the release:
 
