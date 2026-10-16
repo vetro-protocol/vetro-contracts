@@ -18,6 +18,8 @@ set -e
 #   <NETWORK>_NODE_URL     - RPC URL to fork (required)
 #   <NETWORK>_BLOCK_NUMBER - Block number to fork from (optional)
 #   DEPLOYER               - Deployer EOA (optional, defaults to the one that deployed the live implementations)
+#   ALLOW_CHANGES          - Comma separated snapshot key globs of expected changes, e.g. config calls queued in
+#                            the same Safe batch (optional, passed to `upgrade-snapshot --allow`)
 
 NETWORK=${1:-"ethereum"}
 PORT=8545
@@ -134,7 +136,9 @@ npx hardhat deploy --network localhost
 
 echo ""
 echo ">>> Snapshot after upgrade"
-npx hardhat upgrade-snapshot --network localhost --out "$OUT_DIR/after.json" --compare "$OUT_DIR/before.json"
+compare_args=(--compare "$OUT_DIR/before.json")
+[[ -n "$ALLOW_CHANGES" ]] && compare_args+=(--allow "$ALLOW_CHANGES")
+npx hardhat upgrade-snapshot --network localhost --out "$OUT_DIR/after.json" "${compare_args[@]}"
 
 echo ""
 echo ">>> Flow tests against the upgraded node"

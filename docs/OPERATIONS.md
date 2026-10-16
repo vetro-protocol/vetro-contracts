@@ -603,8 +603,12 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
    and must be explained, including config calls bundled into the same Safe batch (e.g. role grants). Accounts found
    only after the upgrade (e.g. one added to the Gateway whitelist in the batch) are read again at the baseline's
    block, so a role or whitelist entry they gained is a change like any other. The baseline must come from the same
-   network and an earlier block. Values that move with prices or time (reserve, total assets, share price, pending
-   yield) are listed for review. Reading past blocks needs an archive RPC.
+   network and an earlier block. Pass the changes you expect with `--allow`, as comma separated key globs (`*`
+   within one key segment, `**` across segments), quoted so the shell leaves them alone:
+   `--allow 'vusd.gateway.fees.*.mintFee'`. `ALLOW_CHANGES` does the same for the dry run. Allowed changes are listed
+   and do not fail. A glob that matches nothing fails, and nothing can allow a change to a proxy's admin or its
+   owner, or a value that starts or stops reverting. Values that move with prices or time (reserve, total assets,
+   share price, pending yield) are listed for review. Reading past blocks needs an archive RPC.
 
    `create-release` writes `releases/<instance>/<network>-<version>.json` for each deployed instance and refuses
    to overwrite an existing version: manifests are immutable. An implementation upgrade is a patch bump. It also
