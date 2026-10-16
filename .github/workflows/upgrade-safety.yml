@@ -1,0 +1,49 @@
+name: Upgrade Safety
+on:
+  pull_request:
+    # Only changes that can move a proxy's storage layout, or what it is checked against
+    paths:
+      - 'src/**'
+      # Dependency submodules: most inherited storage comes from the OZ upgradeable contracts
+      - 'lib/**'
+      - '.gitmodules'
+      - 'deploy/**'
+      - 'deployments/ethereum/**'
+      - 'tasks/validate-upgrades.ts'
+      - 'hardhat.config.ts'
+      - 'foundry.toml'
+      - 'package-lock.json'
+      - '.github/workflows/upgrade-safety.yml'
+
+jobs:
+  validate-upgrades:
+    name: Validate Upgrades
+    runs-on: ubuntu-latest
+    env:
+      # The live implementations are read from mainnet
+      ETHEREUM_NODE_URL: ${{ secrets.ETHEREUM_FORK_NODE_URL }}
+
+    steps:
+      - name: Require an RPC
+        run: test -n "$ETHEREUM_NODE_URL" || { echo "::error::ETHEREUM_FORK_NODE_URL secret is not available"; exit 1; }
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      # hardhat-foundry reads the remapping through forge
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@8b0419c685ef46cb79ec93fbdc131174afceb730 # v1.6.0
+        with:
+          version: nightly
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check storage layouts against the live implementations
+        run: npx hardhat validate-upgrades --network ethereum
