@@ -9,19 +9,19 @@ set -e
 # Usage: ./scripts/run-e2e-tests.sh [release-file] [network]
 #
 # Arguments:
-#   release-file  - Release JSON file in releases/ folder (default: ethereum-1.0.0-beta.1.json)
+#   release-file  - Release JSON file under releases/, as <instance>/<file> (default: vusd/ethereum-1.0.0.json)
 #   network       - Network to fork: mainnet (default: mainnet)
 #
 # Examples:
 #   ./scripts/run-e2e-tests.sh                                    # Uses defaults
-#   ./scripts/run-e2e-tests.sh ethereum-1.0.0-beta.2.json         # Specific release
-#   ./scripts/run-e2e-tests.sh ethereum-1.0.0-beta.1.json mainnet # Explicit network
+#   ./scripts/run-e2e-tests.sh vusd/ethereum-1.1.0.json           # Specific release
+#   ./scripts/run-e2e-tests.sh vusd/ethereum-1.1.0.json ethereum  # Explicit network
 #
 # Environment Variables (set in .env):
 #   ETHEREUM_NODE_URL     - RPC URL for ethereum fork (required)
 #   MAINNET_BLOCK_NUMBER - Block number to fork from (optional)
 
-RELEASE_FILE=${1:-"ethereum-1.0.0.json"}
+RELEASE_FILE=${1:-"vusd/ethereum-1.0.0.json"}
 NETWORK=${2:-"ethereum"}
 NODE_PID=""
 NODE_LOG="/tmp/hardhat-node-e2e.log"
@@ -50,7 +50,7 @@ if [[ ! -f "releases/$RELEASE_FILE" ]]; then
     echo "Error: Release file not found: releases/$RELEASE_FILE"
     echo ""
     echo "Available release files:"
-    ls -1 releases/*.json 2>/dev/null || echo "  (none)"
+    ls -1 releases/*/*.json 2>/dev/null || echo "  (none)"
     exit 1
 fi
 
@@ -85,8 +85,14 @@ echo "  Block: ${block:-latest}"
 echo "  Log: $NODE_LOG"
 echo ""
 
+# A leftover Safe batch may be a real mainnet batch that was never proposed; never delete it here
+if [[ -f multisig.batch.tmp.json ]]; then
+    echo "Error: multisig.batch.tmp.json exists with Safe txs. Check the Safe queue, then propose them or discard the file first."
+    exit 1
+fi
+
 # Clean old artifacts
-rm -rf artifacts/ cache/ multisig.batch.tmp.json
+rm -rf artifacts/ cache/
 
 # Start forked node in background
 if [[ -n "$block" ]]; then
