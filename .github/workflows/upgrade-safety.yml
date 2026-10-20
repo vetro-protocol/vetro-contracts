@@ -15,10 +15,14 @@ on:
       - 'package-lock.json'
       - '.github/workflows/upgrade-safety.yml'
 
+permissions: {}
+
 jobs:
   validate-upgrades:
     name: Validate Upgrades
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       # The live implementations are read from mainnet
       ETHEREUM_NODE_URL: ${{ secrets.ETHEREUM_FORK_NODE_URL }}
@@ -29,6 +33,7 @@ jobs:
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       # hardhat-foundry reads the remapping through forge
