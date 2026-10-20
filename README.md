@@ -117,7 +117,7 @@ This project uses [Foundry](https://github.com/foundry-rs/foundry).
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/hemilabs/vetro-contracts.git
+    git clone https://github.com/vetro-protocol/vetro-contracts.git
     cd vetro-contracts
     ```
 
