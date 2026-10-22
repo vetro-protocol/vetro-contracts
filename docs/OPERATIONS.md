@@ -588,7 +588,12 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 
 3. **Deploy** with `npx hardhat deploy --network ethereum`. The storage check runs before each contract's
    implementation is deployed, so a failure on a later contract leaves the earlier implementations deployed: run
-   step 1 first. The upgrades are queued and proposed as one Safe batch.
+   step 1 first. The upgrades are queued and proposed as one Safe batch. If the run fails after queueing any Safe
+   tx, `multisig.batch.tmp.json` is left behind and blocks later runs. If only the proposal failed (e.g. the Safe API
+   rejected it), check the Safe queue, then propose the batch unchanged with
+   `npx hardhat propose-safe-batch --network ethereum`. A run that failed before proposing left an incomplete batch,
+   which the task refuses: delete the file and re-run the deploy. The task also refuses a batch built for another
+   network, so a leftover mainnet batch can't be rehearsed on a fork first.
 
 4. **After the Safe executes** in block `B`, compare the block before it with block `B` and cut the release:
 
@@ -600,9 +605,15 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 
    Comparing adjacent blocks keeps normal user and keeper activity out of the diff, so the compare can be strict: it
    fails if anything other than implementations changed. Anything else in block `B` shows up as an unexpected change
-   and must be explained, including config calls bundled into the same Safe batch (e.g. role grants). Values that
-   move with prices or time (reserve, total assets, share price, pending yield) are listed for review. Reading past
-   blocks needs an archive RPC.
+   and must be explained, including config calls bundled into the same Safe batch (e.g. role grants). Accounts found
+   only after the upgrade (e.g. one added to the Gateway whitelist in the batch) are read again at the baseline's
+   block, so a role or whitelist entry they gained is a change like any other. The baseline must come from the same
+   network and an earlier block. Pass the changes you expect with `--allow`, as comma separated key globs (`*`
+   within one key segment, `**` across segments), quoted so the shell leaves them alone:
+   `--allow 'vusd.gateway.fees.*.mintFee'`. `ALLOW_CHANGES` does the same for the dry run. Allowed changes are listed
+   and do not fail. A glob that matches nothing fails, and nothing can allow a change to a proxy's admin or its
+   owner, or a value that starts or stops reverting. Values that move with prices or time (reserve, total assets,
+   share price, pending yield) are listed for review. Reading past blocks needs an archive RPC.
 
    `create-release` writes `releases/<instance>/<network>-<version>.json` for each deployed instance and refuses
    to overwrite an existing version: manifests are immutable. An implementation upgrade is a patch bump. It also

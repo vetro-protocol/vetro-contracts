@@ -1,4 +1,5 @@
 import fs from 'fs'
+import {network} from 'hardhat'
 import {HardhatRuntimeEnvironment, HttpNetworkConfig} from 'hardhat/types'
 import chalk from 'chalk'
 import SafeApiKit from '@safe-global/api-kit'
@@ -18,17 +19,47 @@ type MultiSigTx = {
   data?: string | undefined
 }
 
+// The batch records where it was built and whether its run reached the proposal, so a leftover can only be proposed
+// to the network it was built for, and only if no queued call is missing from it
+type BatchFile = {
+  network: string
+  chainId: number | undefined
+  complete: boolean
+  txs: MetaTransactionData[]
+}
+
 const {log} = console
 
 // Set by this process's first save, so later saves in the same run append to the batch it started
 let batchStarted = false
 
+// An empty file holds no txs (e.g. left by an older version of this helper), so only a non-empty one counts
+const hasBatchFile = () => fs.existsSync(MULTI_SIG_TXS_FILE) && fs.statSync(MULTI_SIG_TXS_FILE).size > 0
+
+const readBatch = (): BatchFile => {
+  const json = JSON.parse(fs.readFileSync(MULTI_SIG_TXS_FILE).toString())
+  // A bare array was written by an older version of this helper, which recorded neither network nor completeness
+  if (Array.isArray(json)) {
+    throw Error(
+      `'${MULTI_SIG_TXS_FILE}' is in an older format that does not say which network it was built for or whether ` +
+        'it is complete: discard it and re-run the deploy.'
+    )
+  }
+  return json
+}
+
+const writeBatch = (txs: MetaTransactionData[], complete: boolean) => {
+  const batch: BatchFile = {network: network.name, chainId: network.config.chainId, complete, txs}
+  fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify(batch, null, 2))
+}
+
 // A batch file present before this run's first save is left over from an aborted run: appending to or proposing it
 // would mix stale calls into this batch. Re-running the deploy queues again whatever is still needed.
 const assertNoStaleBatch = () => {
-  if (!batchStarted && fs.existsSync(MULTI_SIG_TXS_FILE)) {
+  if (!batchStarted && hasBatchFile()) {
     throw Error(
-      `'${MULTI_SIG_TXS_FILE}' has Safe txs from a previous run. Check the Safe queue, then propose or discard them.`
+      `'${MULTI_SIG_TXS_FILE}' has Safe txs from a previous run. Check the Safe queue, then propose them with ` +
+        '`npx hardhat propose-safe-batch --network <network>` if only their proposal failed, or discard the file.'
     )
   }
 }
@@ -65,34 +96,23 @@ const prepareTx = ({from, to, data, value}: MultiSigTx): MetaTransactionData => 
  * Prevents duplicate transactions from being stored.
  */
 export const saveForMultiSigBatchExecution = async (rawTx: MultiSigTx): Promise<void> => {
+  // Validate first: a rejected tx must not start a batch or leave a file that blocks later runs
+  const tx = prepareTx(rawTx)
   assertNoStaleBatch()
   batchStarted = true
 
-  if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
-    fs.closeSync(fs.openSync(MULTI_SIG_TXS_FILE, 'w'))
+  const current = hasBatchFile() ? readBatch().txs : []
+
+  const alreadyStored = current.find(
+    (i: MetaTransactionData) => i.to == tx.to && i.data == tx.data && i.value == tx.value
+  )
+
+  if (alreadyStored) {
+    log(chalk.blue(`This multi-sig transaction is already saved in '${MULTI_SIG_TXS_FILE}'.`))
+    return
   }
 
-  const file = fs.readFileSync(MULTI_SIG_TXS_FILE)
-
-  const tx = prepareTx(rawTx)
-
-  if (file.length == 0) {
-    fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify([tx]))
-  } else {
-    const current = JSON.parse(file.toString()) as MetaTransactionData[]
-
-    const alreadyStored = current.find(
-      (i: MetaTransactionData) => i.to == tx.to && i.data == tx.data && i.value == tx.value
-    )
-
-    if (alreadyStored) {
-      log(chalk.blue(`This multi-sig transaction is already saved in '${MULTI_SIG_TXS_FILE}'.`))
-      return
-    }
-
-    const json = [...current, tx]
-    fs.writeFileSync(MULTI_SIG_TXS_FILE, JSON.stringify(json))
-  }
+  writeBatch([...current, tx], false)
 
   log(chalk.blue(`Multi-sig transaction saved in '${MULTI_SIG_TXS_FILE}'.`))
 }
@@ -113,10 +133,11 @@ const proposeSafeTransaction = async (hre: HardhatRuntimeEnvironment, txs: MetaT
   const safeAddress = Address.GNOSIS_SAFE_ADDRESS
 
   if (['hardhat', 'localhost'].includes(hre.network.name)) {
-    for (const tx of txs) {
-      const {to, data} = tx
-      const w = await impersonateAccountWithBalance(hre, safeAddress)
-      await w.sendTransaction({to, data})
+    const w = await impersonateAccountWithBalance(hre, safeAddress)
+    for (const {to, data, value} of txs) {
+      // Wait for the receipt: a tx that is only submitted, or mined but reverted, must not count as executed
+      const receipt = await (await w.sendTransaction({to, data, value})).wait()
+      log(chalk.blue(`  ${to} ${data.slice(0, 10)} executed in ${receipt.transactionHash}`))
     }
     log(chalk.blue('Because it is a test deployment, the transactions were executed by impersonated multi-sig.'))
   } else {
@@ -170,19 +191,47 @@ const proposeSafeTransaction = async (hre: HardhatRuntimeEnvironment, txs: MetaT
  * proposes them to the Safe, then cleans up the file.
  */
 export const executeBatchUsingMultisig = async (hre: HardhatRuntimeEnvironment): Promise<void> => {
-  if (!fs.existsSync(MULTI_SIG_TXS_FILE)) {
+  if (!hasBatchFile()) {
     return
   }
   assertNoStaleBatch()
 
-  const file = fs.readFileSync(MULTI_SIG_TXS_FILE)
-
-  const transactions: MetaTransactionData[] = JSON.parse(file.toString())
+  // Every call this run queues is in the batch by now: if the proposal fails, the leftover is safe to propose as is
+  const {txs} = readBatch()
+  writeBatch(txs, true)
 
   log(chalk.blue('Proposing multi-sig batch transaction...'))
-  await proposeSafeTransaction(hre, transactions)
+  await proposeSafeTransaction(hre, txs)
 
   fs.unlinkSync(MULTI_SIG_TXS_FILE)
+}
+
+/**
+ * Propose a batch left over from an aborted run exactly as it is: nothing is added to it, so it never mixes with a
+ * new run's calls. The file is deleted once proposed (or, on a fork, executed by the impersonated Safe).
+ */
+export const proposeLeftoverBatch = async (hre: HardhatRuntimeEnvironment): Promise<MetaTransactionData[]> => {
+  if (!hasBatchFile()) {
+    throw Error(`'${MULTI_SIG_TXS_FILE}' has no Safe txs to propose.`)
+  }
+  // The in-process network is thrown away when the task exits, so "executing" the batch there would only lose it
+  if (hre.network.name === 'hardhat') {
+    throw Error('Pass the network the batch was built for, e.g. `--network ethereum`.')
+  }
+  const {network: builtFor, chainId, complete, txs} = readBatch()
+  if (builtFor !== hre.network.name || chainId !== hre.network.config.chainId) {
+    throw Error(`'${MULTI_SIG_TXS_FILE}' was built for ${builtFor} (chainId ${chainId}), not ${hre.network.name}.`)
+  }
+  // A run that aborted before its last deploy step left some of its calls out, so the batch may be missing
+  // half of an upgrade
+  if (!complete) {
+    throw Error(
+      `'${MULTI_SIG_TXS_FILE}' is from a run that aborted before proposing: discard it and re-run the deploy.`
+    )
+  }
+  await proposeSafeTransaction(hre, txs)
+  fs.unlinkSync(MULTI_SIG_TXS_FILE)
+  return txs
 }
 
 /**

@@ -98,7 +98,11 @@ const compile = (
         const decodeSrc = solcInputOutputDecoder(input, output)
         const validation = validate(output, decodeSrc, solcVersion, input, namespacedOutput)
         return {input, output, validation}
-      })()
+      })().catch((error) => {
+        // A transient failure (solc download, RPC) must not stay cached and fail every later check on this input
+        compilations.delete(key)
+        throw error
+      })
     )
   }
   return compilations.get(key)!
@@ -163,7 +167,16 @@ const liveImplementations = new Map<string, Promise<LiveImplementation>>()
 const findLiveImplementation = async (hre: HardhatRuntimeEnvironment, proxy: string) => {
   const implementation = await getImplementation(hre.ethers.provider, proxy)
   const key = `${hre.network.name}:${implementation}`
-  if (!liveImplementations.has(key)) liveImplementations.set(key, resolveSource(hre, implementation))
+  if (!liveImplementations.has(key)) {
+    liveImplementations.set(
+      key,
+      // Like a failed compile, a failed lookup must not stay cached and fail every proxy sharing the implementation
+      resolveSource(hre, implementation).catch((error) => {
+        liveImplementations.delete(key)
+        throw error
+      })
+    )
+  }
   return liveImplementations.get(key)!
 }
 
