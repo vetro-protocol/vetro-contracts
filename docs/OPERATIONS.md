@@ -621,7 +621,7 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 | Yield Vault health | `YieldVault.pricePerShare()` | Decreasing (loss event) |
 | Pending yield | `YieldDistributor.pendingYield()` | Large unclaimed amount building up |
 | Gateway mint capacity | `Gateway.maxMint()` | Near zero (approaching mint limit) |
-| Withdrawable liquidity | `Treasury.withdrawable(token)` per token | Near zero (low liquidity for redemptions) |
+| Withdrawable liquidity | Simulate `Treasury.withdraw(token, amount, receiver)` per token with `eth_call` from the Gateway (`cast call <treasury> "withdraw(address,uint256,address)" <token> <amount> <receiver> --from <gateway>`). `Treasury.withdrawable(token)` is book value, not what the vault can pay at once | Reverts for a normal redemption size |
 
 ### Weekly Checks
 
@@ -665,7 +665,7 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
    ```
    Treasury.pull(token, amount)
    ```
-2. If vault also lacks liquidity, the Yield Vault will unwind from strategies automatically during withdrawal
+2. The Yield Vault pulls from strategies during a withdrawal, but only what they can return at once. If idle plus that falls short, the withdrawal reverts with `AssetsCanNotBeWithdrawn`, even when `Gateway.maxWithdraw(token)` shows more
 
 ### Compromised Address
 1. **Owner**: Blacklist the address on VUSD

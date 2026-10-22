@@ -420,6 +420,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /**
      * @notice Current withdrawable for given token.
      * If token is not supported by treasury it will return 0.
+     * @dev Book value, not liquidity: a withdrawal reverts if idle plus what the vault can free at once falls short.
      * @param token_ token address
      */
     function withdrawable(address token_) external view returns (uint256) {
