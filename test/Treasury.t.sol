@@ -331,6 +331,15 @@ contract TreasuryTest is Test {
         treasury.deposit(address(token), 10 * TOKEN_UNIT);
     }
 
+    function test_deposit_onlyGateway_revertIfVaultMintsZeroShares() public {
+        uint256 _tokenAmount = 10 * TOKEN_UNIT;
+        deal(address(token), address(treasury), _tokenAmount);
+        vm.mockCall(address(mockVault), abi.encodeWithSelector(mockVault.deposit.selector), abi.encode(0));
+        vm.expectRevert(Treasury.ZeroShares.selector);
+        vm.prank(gateway);
+        treasury.deposit(address(token), _tokenAmount);
+    }
+
     // --- withdraw onlyGateway ---
     function test_withdraw_onlyGateway_withdrawFromVault() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT;
@@ -406,6 +415,16 @@ contract TreasuryTest is Test {
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         vm.prank(keeper);
         treasury.push(address(_token2), 10 * TOKEN_UNIT);
+    }
+
+    function test_push_onlyKeeper_revertIfVaultMintsZeroShares() public {
+        uint256 _tokenAmount = 10 * TOKEN_UNIT;
+        treasury.grantRole(keeperRole, keeper);
+        deal(address(token), address(treasury), _tokenAmount);
+        vm.mockCall(address(mockVault), abi.encodeWithSelector(mockVault.deposit.selector), abi.encode(0));
+        vm.expectRevert(Treasury.ZeroShares.selector);
+        vm.prank(keeper);
+        treasury.push(address(token), _tokenAmount);
     }
 
     function test_onlyKeeper_revertIfCallerIsNotKeeper() public {

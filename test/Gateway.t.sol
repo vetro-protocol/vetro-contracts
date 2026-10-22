@@ -13,6 +13,7 @@ import {PeggedToken} from "src/PeggedToken.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
+import {MockYieldVaultRealistic} from "test/mocks/MockYieldVaultRealistic.sol";
 
 contract GatewayTest is Test {
     using SafeERC20 for IERC20;
@@ -79,7 +80,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
-        tokenAmount = bound(tokenAmount, 0, type(uint128).max);
+        tokenAmount = bound(tokenAmount, 1, type(uint128).max);
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateMintFee(token, mintFee);
@@ -147,6 +148,41 @@ contract GatewayTest is Test {
 
         vm.expectRevert(abi.encodeWithSignature("FeeOnTransferToken(address)", address(token)));
         gateway.deposit(address(token), amt, 0, address(this));
+    }
+
+    function test_deposit_revertIfAmountIsZero() public {
+        vm.expectRevert(Gateway.AmountIsZero.selector);
+        gateway.deposit(token, 0, 0, alice);
+    }
+
+    function test_deposit_revertIfVaultMintsZeroShares() public {
+        MockERC20 _token = new MockERC20();
+        _token.setDecimals(18);
+        MockYieldVaultRealistic _vault = new MockYieldVaultRealistic(address(_token));
+        MockChainlinkOracle _oracle = new MockChainlinkOracle(1e8);
+        vm.prank(admin);
+        treasury.addToWhitelist(address(_token), address(_vault), address(_oracle), 1 hours);
+
+        // 1 share outstanding against 1 token of assets: anything below 1 token rounds to 0 shares
+        deal(address(_token), address(this), 1e18 + 1);
+        _token.approve(address(_vault), 1e18 + 1);
+        _vault.deposit(1, address(this));
+        _vault.simulateYield(1e18);
+
+        uint256 _dust = 0.1e18;
+        assertGt(gateway.previewDeposit(address(_token), _dust), 0);
+        assertEq(_vault.convertToShares(_dust), 0);
+
+        deal(address(_token), alice, _dust);
+        vm.startPrank(alice);
+        _token.approve(address(gateway), _dust);
+        vm.expectRevert(Treasury.ZeroShares.selector);
+        gateway.deposit(address(_token), _dust, 0, alice);
+        vm.stopPrank();
+
+        assertEq(VUSD.balanceOf(alice), 0);
+        assertEq(VUSD.totalSupply(), 0);
+        assertEq(_token.balanceOf(alice), _dust);
     }
 
     // --- mint only UMM role ---
@@ -410,7 +446,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
-        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 1, type(uint256).max / 1e18);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -433,6 +469,11 @@ contract GatewayTest is Test {
         // Verify tokens deposited in vault
         uint256 sharesAfter = mockVault.balanceOf(address(treasury));
         assertEq(sharesAfter, sharesBefore + mockVault.convertToShares(tokenAmount), "Incorrect shares in treasury");
+    }
+
+    function test_mint_revertIfAmountIsZero() public {
+        vm.expectRevert(Gateway.AmountIsZero.selector);
+        gateway.mint(token, 0, 0, alice);
     }
 
     function test_mint_revertIfTokenIsUnsupported() public {
@@ -483,7 +524,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
-        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 1, type(uint256).max / 1e18);
 
         // Setup test conditions
         gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant redeem
@@ -546,7 +587,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
-        tokenAmount = bound(tokenAmount, 0, type(uint128).max);
+        tokenAmount = bound(tokenAmount, 1, type(uint128).max);
 
         // Setup test conditions
         gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant withdraw
