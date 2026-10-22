@@ -1172,4 +1172,171 @@ contract StakingVaultTest is Test {
         vm.expectRevert(StakingVault.ZeroAmount.selector);
         vault.cancelWithdraw(_requestId);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                              BLACKLIST
+    //////////////////////////////////////////////////////////////*/
+
+    function test_transfer_revertIfSenderBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vusd.setBlacklisted(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vault.transfer(bob, 100 * UNIT);
+    }
+
+    function test_transfer_revertIfReceiverBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vusd.setBlacklisted(bob, true);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, bob));
+        vault.transfer(bob, 100 * UNIT);
+    }
+
+    function test_transferFrom_revertIfOwnerBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(alice);
+        vault.approve(bob, 100 * UNIT);
+        vusd.setBlacklisted(alice, true);
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vault.transferFrom(alice, bob, 100 * UNIT);
+    }
+
+    function test_deposit_revertIfReceiverBlacklisted() public {
+        vusd.setBlacklisted(bob, true);
+
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vm.expectRevert(
+            abi.encodeWithSignature("ERC4626ExceededMaxDeposit(address,uint256,uint256)", bob, 100 * UNIT, 0)
+        );
+        vault.deposit(100 * UNIT, bob);
+        vm.stopPrank();
+    }
+
+    function test_redeem_revertIfOwnerBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(owner);
+        vault.updateInstantWithdrawWhitelist(alice, true);
+        vusd.setBlacklisted(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSignature("ERC4626ExceededMaxRedeem(address,uint256,uint256)", alice, 100 * UNIT, 0)
+        );
+        vault.redeem(100 * UNIT, bob, alice);
+    }
+
+    function test_requestRedeem_revertIfOwnerBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vusd.setBlacklisted(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vault.requestRedeem(100 * UNIT, alice);
+    }
+
+    function test_claimWithdraw_revertIfOwnerBlacklistedAfterRequest() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(alice);
+        (uint256 _requestId,) = vault.requestRedeem(100 * UNIT, alice);
+        vusd.setBlacklisted(alice, true);
+        skip(7 days);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vault.claimWithdraw(_requestId, bob);
+    }
+
+    function test_claimWithdraw_succeedsAfterRemovedFromBlacklist() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(alice);
+        (uint256 _requestId,) = vault.requestRedeem(100 * UNIT, alice);
+        vusd.setBlacklisted(alice, true);
+        skip(7 days);
+        vusd.setBlacklisted(alice, false);
+
+        vm.prank(alice);
+        uint256 _assets = vault.claimWithdraw(_requestId, bob);
+        assertEq(vusd.balanceOf(bob), 1000 * UNIT + _assets);
+    }
+
+    function test_cancelWithdraw_revertIfOwnerBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(alice);
+        (uint256 _requestId,) = vault.requestRedeem(100 * UNIT, alice);
+        vusd.setBlacklisted(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vault.cancelWithdraw(_requestId);
+    }
+
+    function test_mint_revertIfReceiverBlacklisted() public {
+        vusd.setBlacklisted(bob, true);
+
+        vm.startPrank(alice);
+        vusd.approve(address(vault), 100 * UNIT);
+        vm.expectRevert(abi.encodeWithSignature("ERC4626ExceededMaxMint(address,uint256,uint256)", bob, 100 * UNIT, 0));
+        vault.mint(100 * UNIT, bob);
+        vm.stopPrank();
+    }
+
+    function test_withdraw_revertIfOwnerBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(owner);
+        vault.updateInstantWithdrawWhitelist(alice, true);
+        vusd.setBlacklisted(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSignature("ERC4626ExceededMaxWithdraw(address,uint256,uint256)", alice, 100 * UNIT, 0)
+        );
+        vault.withdraw(100 * UNIT, bob, alice);
+    }
+
+    function test_requestWithdraw_revertIfOwnerBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vusd.setBlacklisted(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vault.requestWithdraw(100 * UNIT, alice);
+    }
+
+    function test_claimWithdrawBatch_revertIfOwnerBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        uint256[] memory _requestIds = new uint256[](2);
+        vm.startPrank(alice);
+        (_requestIds[0],) = vault.requestRedeem(50 * UNIT, alice);
+        (_requestIds[1],) = vault.requestRedeem(50 * UNIT, alice);
+        vm.stopPrank();
+        vusd.setBlacklisted(alice, true);
+        skip(7 days);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vault.claimWithdrawBatch(_requestIds, bob);
+    }
+
+    function test_maxFunctions_zeroWhenBlacklisted() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(owner);
+        vault.updateInstantWithdrawWhitelist(alice, true);
+        assertGt(vault.maxRedeem(alice), 0);
+        assertGt(vault.maxWithdraw(alice), 0);
+        assertGt(vault.maxDeposit(alice), 0);
+        assertGt(vault.maxMint(alice), 0);
+
+        vusd.setBlacklisted(alice, true);
+
+        assertEq(vault.maxRedeem(alice), 0);
+        assertEq(vault.maxWithdraw(alice), 0);
+        assertEq(vault.maxDeposit(alice), 0);
+        assertEq(vault.maxMint(alice), 0);
+    }
 }

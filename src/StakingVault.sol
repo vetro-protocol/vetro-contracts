@@ -10,6 +10,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IYieldDistributor} from "./interfaces/IYieldDistributor.sol";
 import {IVaultRewards} from "./interfaces/IVaultRewards.sol";
+import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {IStakingVault} from "./interfaces/IStakingVault.sol";
 
 /**
@@ -55,6 +56,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
 
+    error Blacklisted(address account);
     error CooldownEnabled();
     error CooldownNotEnabled();
     error CooldownNotMatured(uint256 requestId, uint256 claimableAt);
@@ -451,19 +453,37 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         return _balance > _inCooldown ? _balance - _inCooldown : 0;
     }
 
+    /// @notice Max assets depositable for receiver without reverting.
+    /// @dev Returns 0 when the receiver is blacklisted on the pegged token.
+    /// @param receiver_ The share receiver
+    function maxDeposit(address receiver_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
+        if (IPeggedToken(asset()).isBlacklisted(receiver_)) return 0;
+        return super.maxDeposit(receiver_);
+    }
+
+    /// @notice Max shares mintable for receiver without reverting.
+    /// @dev Returns 0 when the receiver is blacklisted on the pegged token.
+    /// @param receiver_ The share receiver
+    function maxMint(address receiver_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
+        if (IPeggedToken(asset()).isBlacklisted(receiver_)) return 0;
+        return super.maxMint(receiver_);
+    }
+
     /// @notice Max shares redeemable via instant redeem() without reverting.
-    /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted).
+    /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted)
+    ///      or is blacklisted on the pegged token.
     /// @param owner_ The share owner
     function maxRedeem(address owner_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
-        if (!_canInstantWithdraw(owner_)) return 0;
+        if (!_canInstantWithdraw(owner_) || IPeggedToken(asset()).isBlacklisted(owner_)) return 0;
         return super.maxRedeem(owner_);
     }
 
     /// @notice Max assets withdrawable via instant withdraw() without reverting.
-    /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted).
+    /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted)
+    ///      or is blacklisted on the pegged token.
     /// @param owner_ The share owner
     function maxWithdraw(address owner_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
-        if (!_canInstantWithdraw(owner_)) return 0;
+        if (!_canInstantWithdraw(owner_) || IPeggedToken(asset()).isBlacklisted(owner_)) return 0;
         return super.maxWithdraw(owner_);
     }
 
@@ -493,6 +513,9 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
 
         // Only the request owner can claim
         if (msg.sender != _owner) revert NotRequestOwner();
+        // Shares were burned at request time, so _update() no longer guards this position
+        IPeggedToken _peggedToken = IPeggedToken(asset());
+        if (_peggedToken.isBlacklisted(_owner)) revert Blacklisted(_owner);
 
         // Remove from active set
         $.activeRequestIds[_owner].remove(requestId_);
@@ -501,7 +524,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         $.totalAssetsInCooldown -= assets_;
 
         // Transfer assets to receiver
-        IERC20(asset()).safeTransfer(receiver_, assets_);
+        IERC20(_peggedToken).safeTransfer(receiver_, assets_);
 
         emit WithdrawClaimed(_owner, receiver_, requestId_, assets_);
     }
@@ -574,12 +597,16 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         requestId_ = _createRequest(assets_, shares_, owner_);
     }
 
-    /// @notice Override ERC20 _update to call vault rewards before transfers
-    /// @dev Calls updateReward on vault rewards contract for from/to addresses
+    /// @notice Override ERC20 _update to enforce the asset blacklist and call vault rewards before transfers
+    /// @dev Reverts if from/to is blacklisted on the pegged token (covers transfers, mints and burns).
+    ///      Calls updateReward on vault rewards contract for from/to addresses
     /// @param from The address tokens are transferred from
     /// @param to The address tokens are transferred to
     /// @param value The amount of tokens transferred
     function _update(address from, address to, uint256 value) internal override {
+        IPeggedToken _peggedToken = IPeggedToken(asset());
+        if (from != address(0) && _peggedToken.isBlacklisted(from)) revert Blacklisted(from);
+        if (to != address(0) && _peggedToken.isBlacklisted(to)) revert Blacklisted(to);
         address _vaultRewards = _getStakingVaultStorage().vaultRewards;
         if (_vaultRewards != address(0)) {
             if (from != address(0)) {
