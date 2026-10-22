@@ -79,7 +79,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
-        tokenAmount = bound(tokenAmount, 0, type(uint128).max);
+        tokenAmount = bound(tokenAmount, 1, type(uint128).max);
         // Setup test conditions
         mockOracle.updatePrice(price);
         gateway.updateMintFee(token, mintFee);
@@ -410,7 +410,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         mintFee = bound(mintFee, 0, gateway.MAX_FEE_BPS());
-        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 1, type(uint256).max / 1e18);
 
         // Setup test conditions
         mockOracle.updatePrice(price);
@@ -483,7 +483,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
-        VUSDAmount = bound(VUSDAmount, 0, type(uint256).max / 1e18);
+        VUSDAmount = bound(VUSDAmount, 1, type(uint256).max / 1e18);
 
         // Setup test conditions
         gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant redeem
@@ -546,7 +546,7 @@ contract GatewayTest is Test {
         // Bound inputs
         price = bound(price, 0.998e8, 1.002e8);
         redeemFee = bound(redeemFee, 0, gateway.MAX_FEE_BPS());
-        tokenAmount = bound(tokenAmount, 0, type(uint128).max);
+        tokenAmount = bound(tokenAmount, 1, type(uint128).max);
 
         // Setup test conditions
         gateway.setWithdrawalDelayEnabled(false); // Disable withdrawal delay for instant withdraw

@@ -47,6 +47,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error TreasuryNotMigrated();
     error UnsupportedToken(address);
     error WithdrawIsPaused(address);
+    error ZeroShares();
 
     /*/////////////////////////////////////////////////////////////
                         STATE VARIABLES
@@ -169,7 +170,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (!tokenConfig[token_].depositActive) revert DepositIsPaused(token_);
 
-        IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this));
+        if (IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
     }
 
     /**
@@ -257,7 +258,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
             amount_ = IERC20(token_).balanceOf(address(this));
         }
         if (amount_ > 0) {
-            IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this));
+            if (IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
         }
     }
 
