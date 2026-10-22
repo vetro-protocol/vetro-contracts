@@ -185,6 +185,10 @@ contract TreasurySolvencyInvariantTest is Test {
     function invariant_collateralization() public view {
         uint256 _backedSupply = vusd.totalSupply() - gateway.amoSupply();
         assertGe(treasury.withdrawable(address(collateral)), _backedSupply, "par backing below backed supply");
+
+        // At or above par reserve() takes the capped path, so it must still cover the backed supply
+        (uint256 _price, uint256 _unitPrice) = treasury.getPrice(address(collateral));
+        if (_price >= _unitPrice) assertGe(treasury.reserve(), _backedSupply, "reserve below backed supply");
     }
 
     /// @notice AMO supply is always a subset of total supply (so maxMint's subtraction can't underflow).
