@@ -504,6 +504,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @inheritdoc IGateway
     /// @dev Capped at `previewRedeem(tokenOut_, totalSupply - amoSupply)`, the token-denominated equivalent of the
     ///      maxRedeem cap: redemptions may not burn supply below outstanding AMO debt.
+    ///      Book value, not liquidity: it relies on `Treasury.withdrawable`, so a withdrawal within it can still
+    ///      revert if the vault can't free that much at once.
     function maxWithdraw(address tokenOut_) public view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
         uint256 _totalSupply = $.peggedToken.totalSupply();
