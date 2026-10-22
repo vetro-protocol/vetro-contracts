@@ -85,6 +85,52 @@ contract TreasurySolvencyTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
+                        RESERVE UNDER ABOVE-PAR ORACLE
+    //////////////////////////////////////////////////////////////*/
+
+    // Harvest during an in-tolerance up-tick and re-mint the excess at par, as YieldManager does.
+    function test_abovePegTick_harvestAndRemint_keepsSupplyBacked() public {
+        uint256 amount = 1_000e18;
+        _mint(alice, amount);
+
+        oracle.updatePrice(1.005e8);
+        uint256 harvested = treasury.harvest(address(collateral), owner);
+        if (harvested > 0) {
+            collateral.approve(address(gateway), harvested);
+            gateway.deposit(address(collateral), harvested, 0, owner);
+        }
+
+        oracle.updatePrice(1e8);
+        assertGe(treasury.reserve(), vusd.totalSupply(), "supply must stay backed once the price returns to par");
+    }
+
+    function testFuzz_priceTick_harvestAndRemint_keepsSupplyBacked(uint256 price_, uint256 yield_) public {
+        price_ = bound(price_, 0.99e8, 1.01e8);
+        yield_ = bound(yield_, 0, 100e18);
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(yield_);
+
+        oracle.updatePrice(int256(price_));
+        bool hadExcess = treasury.reserve() > vusd.totalSupply();
+        uint256 harvested = treasury.harvest(address(collateral), owner);
+        assertLe(harvested, yield_, "harvest must not exceed real yield");
+        if (hadExcess) {
+            // Harvest releases the excess measured at the same capped price, leaving only rounding dust
+            assertGe(treasury.reserve(), vusd.totalSupply(), "harvest must not take more than the excess");
+            assertApproxEqAbs(treasury.reserve(), vusd.totalSupply(), 10, "harvest should take the whole excess");
+        } else {
+            assertEq(harvested, 0, "nothing to harvest without excess");
+        }
+        if (harvested > 0) {
+            collateral.approve(address(gateway), harvested);
+            gateway.deposit(address(collateral), harvested, 0, owner);
+        }
+
+        oracle.updatePrice(1e8);
+        assertGe(treasury.reserve(), vusd.totalSupply(), "supply must stay backed once the price returns to par");
+    }
+
+    /*//////////////////////////////////////////////////////////////
                         REDEEM UNDER ILLIQUIDITY
     //////////////////////////////////////////////////////////////*/
 

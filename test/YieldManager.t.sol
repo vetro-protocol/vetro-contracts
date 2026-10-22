@@ -577,6 +577,33 @@ contract YieldManagerTest is Test {
         assertBackingInvariant();
     }
 
+    function test_harvest_priceAboveParWithinTolerance_nothingWithoutYield() public {
+        mockOracle.updatePrice(1.005e8);
+        assertEq(yieldManager.harvestable(), 0, "an above-par tick is not yield");
+
+        vm.prank(keeper);
+        uint256 minted = yieldManager.harvest(token, 0);
+
+        assertEq(minted, 0, "nothing to harvest");
+        mockOracle.updatePrice(1e8);
+        assertBackingInvariant();
+    }
+
+    function test_harvest_priceAboveParWithinTolerance() public {
+        mockOracle.updatePrice(1.005e8);
+        createExcess(1_000e6);
+        assertEq(yieldManager.harvestable(), 1_000e18, "only the donated excess is harvestable");
+
+        // Harvest converts the 1_000 pegged excess at the par-capped price, which mints at par
+        vm.prank(keeper);
+        uint256 minted = yieldManager.harvest(token, 1_000e18);
+
+        assertEq(minted, 1_000e18, "minted should equal the real excess");
+        assertEq(yieldManager.harvestable(), 0, "excess should be fully harvested");
+        mockOracle.updatePrice(1e8);
+        assertBackingInvariant();
+    }
+
     function test_harvest_revertIfPriceExceedsTolerance() public {
         createExcess(1_000e6);
         mockOracle.updatePrice(0.98e8); // 2% below par, beyond the treasury's 1% priceTolerance

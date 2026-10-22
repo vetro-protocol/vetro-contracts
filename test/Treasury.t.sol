@@ -697,17 +697,48 @@ contract TreasuryTest is Test {
         assertEq(treasury.reserve(), _expectedReserve1 + _expectedReserve2);
     }
 
-    function test_reserve_withPriceChange() public {
+    function test_reserve_priceAbovePar_valuedAtPar() public {
         mockOracle.updatePrice(1.01e8);
 
         uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
         deal(address(token), address(treasury), _tokenAmount);
 
-        // Expected reserve should be 101 * 1e18.
-        (uint256 _latestPrice, uint256 _unitPrice) = treasury.getPrice(address(token));
-        uint256 _reserveInTokenDecimal = _tokenAmount.mulDiv(_latestPrice, _unitPrice);
-        uint256 _expectedReserve = (_reserveInTokenDecimal * 1e18) / TOKEN_UNIT;
-        assertEq(treasury.reserve(), _expectedReserve);
+        // Gateway never credits more than par, so neither does the reserve.
+        assertEq(treasury.reserve(), 100e18);
+    }
+
+    function test_reserve_priceBelowPar_usesOraclePrice() public {
+        mockOracle.updatePrice(0.99e8);
+
+        uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
+        deal(address(token), address(treasury), _tokenAmount);
+
+        assertEq(treasury.reserve(), 99e18);
+    }
+
+    function test_reserve_aboveParTokenDoesNotOffsetBelowParToken() public {
+        mockOracle.updatePrice(1.01e8);
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+
+        MockERC20 _token2 = new MockERC20();
+        _token2.setDecimals(18);
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
+        MockChainlinkOracle _oracle2 = new MockChainlinkOracle(0.99e8);
+        treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
+        deal(address(_token2), address(treasury), 100e18);
+
+        assertEq(treasury.reserve(), 100e18 + 99e18);
+    }
+
+    function testFuzz_reserve_neverExceedsParValue(uint256 price_, uint256 amount_) public {
+        price_ = bound(price_, 0.99e8, 1.01e8);
+        amount_ = bound(amount_, 0, 1e15 * TOKEN_UNIT);
+        mockOracle.updatePrice(int256(price_));
+        deal(address(token), address(treasury), amount_);
+
+        uint256 _parValue = amount_ * 1e12;
+        assertLe(treasury.reserve(), _parValue);
+        if (price_ >= 1e8) assertEq(treasury.reserve(), _parValue);
     }
 
     function test_reserve_btcLikeCollateral_withinTolerance_usesOracleRatio() public {
@@ -806,6 +837,38 @@ contract TreasuryTest is Test {
         treasury.harvest(address(token), alice);
 
         assertEq(token.balanceOf(alice), 0);
+    }
+
+    function test_harvest_priceAbovePar_noExcessWithoutYield() public {
+        treasury.grantRole(ummRole, alice);
+
+        vm.prank(gateway);
+        VUSD.mint(alice, 1000e18);
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+        mockOracle.updatePrice(1.005e8);
+
+        vm.prank(alice);
+        uint256 _harvested = treasury.harvest(address(token), alice);
+
+        assertEq(_harvested, 0);
+        assertEq(token.balanceOf(address(treasury)), 1000 * TOKEN_UNIT);
+    }
+
+    function test_harvest_priceAbovePar_withdrawsOnlyRealExcess() public {
+        treasury.grantRole(ummRole, alice);
+
+        // 200 tokens of real excess over the backed supply
+        vm.prank(gateway);
+        VUSD.mint(alice, 800e18);
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+        mockOracle.updatePrice(1.005e8);
+
+        vm.prank(alice);
+        uint256 _harvested = treasury.harvest(address(token), alice);
+
+        // Converted at the par-capped price, the harvest releases exactly the real 200 tokens
+        assertEq(_harvested, 200 * TOKEN_UNIT);
+        assertEq(treasury.reserve(), VUSD.totalSupply(), "reserve should land on backed supply");
     }
 
     function test_harvest_btcLikeCollateral_withinTolerance_withdrawsExpectedExcess() public {
