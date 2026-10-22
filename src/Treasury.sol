@@ -435,6 +435,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /////////////////////////////////////////////////////////////*/
 
     /// @notice Returns total reserve value denominated in PeggedToken units
+    /// @dev Each token is valued at its oracle price capped at par
     function reserve() public view returns (uint256 _reserve) {
         uint256 _len = _whitelistedTokens.length();
         uint256 _priceToleranceBps = priceTolerance;
@@ -452,6 +453,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
                 (uint256 _price, uint256 _unitPrice) = _getPrice(
                     IAggregatorV3(tokenConfig[_token].oracle), tokenConfig[_token].stalePeriod, _priceToleranceBps
                 );
+                // Gateway never mints above par, so an above-par price would surface as phantom harvestable excess
+                if (_price > _unitPrice) _price = _unitPrice;
                 // Calculate reserve in token decimals relative to PeggedToken peg
                 uint256 _reserveInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
                 // Normalize reserve to PeggedToken decimals (18) before adding to total reserve
@@ -484,6 +487,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         TokenConfig storage _config = tokenConfig[token_];
         (uint256 _price, uint256 _unitPrice) =
             _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, priceTolerance);
+        // Convert at the same par-capped price reserve() measured the excess with
+        if (_price > _unitPrice) _price = _unitPrice;
         uint256 _tokens = _excess.mulDiv(_unitPrice, _price) / (10 ** (18 - _config.decimals));
 
         return _tokens;
