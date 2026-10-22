@@ -10,7 +10,7 @@ import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockYieldVaultRealistic} from "test/mocks/MockYieldVaultRealistic.sol";
 
-/// @notice Drives random mint / redeem / AMO / yield / harvest sequences against the full system.
+/// @notice Drives random mint / redeem / AMO / yield / price-tick / harvest sequences against the full system.
 /// @dev AMO-minted tokens are held by the handler. Besides burnFromAMO, `amoFloatRedeem` hands AMO float
 ///      to an actor who redeems it at the Gateway (the Morpho-borrower path), so redemptions can burn
 ///      AMO-origin supply. Combined with vault yield, that is what used to push totalSupply below amoSupply.
@@ -20,8 +20,10 @@ contract TreasurySolvencyHandler is Test {
     PeggedToken public vusd;
     MockERC20 public collateral;
     MockYieldVaultRealistic public vault;
+    MockChainlinkOracle public oracle;
 
     address[] public actors;
+    address public yieldSink = makeAddr("yieldSink");
     address internal currentActor;
 
     uint256 public ghost_minted;
@@ -30,6 +32,8 @@ contract TreasurySolvencyHandler is Test {
     uint256 public ghost_amoBurned;
     uint256 public ghost_yield;
     uint256 public ghost_amoFloatRedeemed;
+    uint256 public ghost_harvested;
+    uint256 public ghost_priceTicks;
 
     modifier useActor(uint256 seed) {
         currentActor = actors[bound(seed, 0, actors.length - 1)];
@@ -42,6 +46,7 @@ contract TreasurySolvencyHandler is Test {
         PeggedToken vusd_,
         MockERC20 collateral_,
         MockYieldVaultRealistic vault_,
+        MockChainlinkOracle oracle_,
         address[] memory actors_
     ) {
         gateway = gateway_;
@@ -49,6 +54,7 @@ contract TreasurySolvencyHandler is Test {
         vusd = vusd_;
         collateral = collateral_;
         vault = vault_;
+        oracle = oracle_;
         actors = actors_;
     }
 
@@ -106,8 +112,20 @@ contract TreasurySolvencyHandler is Test {
         ghost_yield += amount;
     }
 
+    // Moves the oracle anywhere inside the Treasury's default 1% priceTolerance
+    function priceTick(uint256 price) external {
+        price = bound(price, 0.99e8, 1.01e8);
+        oracle.updatePrice(int256(price));
+        ghost_priceTicks++;
+    }
+
+    // Re-mints the harvested collateral through the Gateway, as YieldManager does
     function harvest() external {
-        treasury.harvest(address(collateral), address(this));
+        uint256 _harvested = treasury.harvest(address(collateral), address(this));
+        if (_harvested == 0) return;
+        collateral.approve(address(gateway), _harvested);
+        gateway.deposit(address(collateral), _harvested, 0, yieldSink);
+        ghost_harvested += _harvested;
     }
 }
 
@@ -147,7 +165,7 @@ contract TreasurySolvencyInvariantTest is Test {
             actors.push(makeAddr(string.concat("actor", vm.toString(i))));
         }
 
-        handler = new TreasurySolvencyHandler(gateway, treasury, vusd, collateral, vault, actors);
+        handler = new TreasurySolvencyHandler(gateway, treasury, vusd, collateral, vault, oracle, actors);
 
         // Gateway role checks resolve against Treasury.hasRole; UMM covers mintToAMO/burnFromAMO/harvest.
         treasury.grantRole(treasury.UMM_ROLE(), address(handler));
@@ -161,10 +179,12 @@ contract TreasurySolvencyInvariantTest is Test {
         excludeContract(address(oracle));
     }
 
-    /// @notice Backing never falls below the collateralized (non-AMO) supply.
+    /// @notice Backing at par never falls below the collateralized (non-AMO) supply.
+    /// @dev Valued at par because a below-par tick legitimately marks reserve() down; the collateral
+    ///      has 18 decimals, so its token count is its par value.
     function invariant_collateralization() public view {
         uint256 _backedSupply = vusd.totalSupply() - gateway.amoSupply();
-        assertGe(treasury.reserve(), _backedSupply, "reserve below backed supply");
+        assertGe(treasury.withdrawable(address(collateral)), _backedSupply, "par backing below backed supply");
     }
 
     /// @notice AMO supply is always a subset of total supply (so maxMint's subtraction can't underflow).
@@ -180,6 +200,8 @@ contract TreasurySolvencyInvariantTest is Test {
         console.log("amoBurned:", handler.ghost_amoBurned());
         console.log("yield:    ", handler.ghost_yield());
         console.log("amoFloatRedeemed:", handler.ghost_amoFloatRedeemed());
+        console.log("harvested:", handler.ghost_harvested());
+        console.log("priceTicks:", handler.ghost_priceTicks());
         console.log("reserve:  ", treasury.reserve());
         console.log("supply:   ", vusd.totalSupply());
         console.log("amoSupply:", gateway.amoSupply());
