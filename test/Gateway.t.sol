@@ -149,6 +149,11 @@ contract GatewayTest is Test {
         gateway.deposit(address(token), amt, 0, address(this));
     }
 
+    function test_deposit_revertIfAmountIsZero() public {
+        vm.expectRevert(Gateway.AmountIsZero.selector);
+        gateway.deposit(token, 0, 0, alice);
+    }
+
     // --- mint only UMM role ---
     function test_mintToAMO_onlyUMMRole() public {
         // add tokens in Treasury to build reserve. Token has 6 decimals.
@@ -433,6 +438,11 @@ contract GatewayTest is Test {
         // Verify tokens deposited in vault
         uint256 sharesAfter = mockVault.balanceOf(address(treasury));
         assertEq(sharesAfter, sharesBefore + mockVault.convertToShares(tokenAmount), "Incorrect shares in treasury");
+    }
+
+    function test_mint_revertIfAmountIsZero() public {
+        vm.expectRevert(Gateway.AmountIsZero.selector);
+        gateway.mint(token, 0, 0, alice);
     }
 
     function test_mint_revertIfTokenIsUnsupported() public {

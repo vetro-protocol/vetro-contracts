@@ -555,9 +555,10 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /**
      * @dev Handle token deposit and PeggedToken minting
-     * @custom:validation Checks mint limit and rejects fee-on-transfer tokens
+     * @custom:validation Checks mint limit and rejects zero amounts and fee-on-transfer tokens
      */
     function _executeDeposit(address tokenIn_, uint256 amountIn_, uint256 peggedTokenOut_, address receiver_) private {
+        if (amountIn_ == 0) revert AmountIsZero();
         uint256 _maxMintable = maxMint();
         if (peggedTokenOut_ > _maxMintable) revert ExceededMaxMint(peggedTokenOut_, _maxMintable);
 
