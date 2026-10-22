@@ -1448,6 +1448,33 @@ contract GatewayTest is Test {
         assertEq(VUSD.balanceOf(address(gateway)), 0, "Gateway should have 0 VUSD");
     }
 
+    function test_redeem_afterRequest_revertIfBlacklisted() public {
+        uint256 VUSDAmount = 100e18;
+
+        mintPeggedToken(alice, VUSDAmount);
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), VUSDAmount);
+        gateway.requestRedeem(VUSDAmount);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 7 days + 1);
+        mockOracle.updatePrice(0.999e8);
+
+        VUSD.addToBlacklist(alice);
+
+        uint256 _tokenAmount = gateway.previewRedeem(token, VUSDAmount);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.Blacklisted.selector, alice));
+        gateway.redeem(token, VUSDAmount, 0, bob);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.Blacklisted.selector, alice));
+        gateway.withdraw(token, _tokenAmount, type(uint256).max, bob);
+        vm.stopPrank();
+
+        (uint256 _locked,) = gateway.getRedeemRequest(alice);
+        assertEq(_locked, VUSDAmount, "Request should remain locked");
+        assertEq(VUSD.balanceOf(address(gateway)), VUSDAmount, "Gateway should still hold locked VUSD");
+    }
+
     function test_redeem_afterRequest_partialAmount() public {
         uint256 VUSDAmount = 100e18;
         uint256 redeemAmount = 60e18;

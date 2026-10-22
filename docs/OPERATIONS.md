@@ -391,8 +391,9 @@ VUSD.removeFromBlacklist(address account_)
   address cannot transfer, receive, deposit, redeem or withdraw vault shares, and cannot open, cancel or claim cooldown
   requests. Its staked position and pending requests are frozen, not seized. Removing the address from the blacklist
   restores all of these actions.
-- Blacklisting does not stop a Gateway redeem request that has already matured. The locked tokens are burned from the
-  Gateway's balance, so the token's transfer check never sees the user.
+- A blacklisted address cannot claim a Gateway redeem request, even one that has already matured. The locked tokens
+  stay in the Gateway until the address is removed from the blacklist. Cancelling the request also reverts, because the
+  token's transfer check blocks the refund.
 
 #### 6.2 Update Gateway/Treasury References
 
