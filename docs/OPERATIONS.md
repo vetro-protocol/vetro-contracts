@@ -387,6 +387,13 @@ VUSD.removeFromBlacklist(address account_)
 ```
 
 - Blacklisted addresses cannot send or receive VUSD
+- The blacklist also applies to the staking vault that holds the token (sVUSD for VUSD, sVETBTC for vetBTC). A blacklisted
+  address cannot transfer, receive, deposit, redeem or withdraw vault shares, and cannot open, cancel or claim cooldown
+  requests. Its staked position and pending requests are frozen, not seized. Removing the address from the blacklist
+  restores all of these actions.
+- A blacklisted address cannot claim a Gateway redeem request, even one that has already matured. The locked tokens
+  stay in the Gateway until the address is removed from the blacklist. Cancelling the request also reverts, because the
+  token's transfer check blocks the refund.
 
 #### 6.2 Update Gateway/Treasury References
 
@@ -679,7 +686,8 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 2. The Yield Vault pulls from strategies during a withdrawal, but only what they can return at once. If idle plus that falls short, the withdrawal reverts with `AssetsCanNotBeWithdrawn`, even when `Gateway.maxWithdraw(token)` shows more
 
 ### Compromised Address
-1. **Owner**: Blacklist the address on VUSD
+1. **Owner**: Blacklist the address on VUSD (and/or vetBTC). This also freezes its staked shares and cooldown requests
+   in the matching staking vault (see 6.1).
    ```
    VUSD.addToBlacklist(address)
    ```

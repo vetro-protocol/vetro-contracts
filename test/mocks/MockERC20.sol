@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract MockERC20 is ERC20 {
     uint8 private _decimals = 6;
     bool private _hasFeeOnTransfer = false;
+    mapping(address => bool) public isBlacklisted;
 
     constructor() ERC20("Test token", "TST") {}
 
@@ -15,6 +16,10 @@ contract MockERC20 is ERC20 {
 
     function setDecimals(uint8 decimals_) external {
         _decimals = decimals_;
+    }
+
+    function setBlacklisted(address account_, bool status_) external {
+        isBlacklisted[account_] = status_;
     }
 
     function setHasFeeOnTransfer(bool hasFeeOnTransfer_) external {
