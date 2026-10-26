@@ -96,6 +96,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AddressIsZero();
     error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error AmountIsZero();
+    error Blacklisted(address account);
     error BurnBelowAmoSupply(uint256 totalSupply, uint256 amoSupply);
     error CallerNotWhitelisted(address caller);
     error ExceededMaxMint(uint256 requested, uint256 available);
@@ -636,14 +637,16 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 tokenAmountOut_,
         address receiver_
     ) private {
+        GatewayStorage storage $ = _getGatewayStorage();
+        IPeggedToken _token = $.peggedToken;
+        if (_token.isBlacklisted(msg.sender)) revert Blacklisted(msg.sender);
+
         // Validate treasury has sufficient withdrawable amount
         uint256 _maxWithdraw = maxWithdraw(tokenOut_);
         if (tokenAmountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(tokenAmountOut_, _maxWithdraw);
 
-        GatewayStorage storage $ = _getGatewayStorage();
         RedeemRequest storage _request = $.redeemRequests[msg.sender];
         uint256 _lockedAmount = _request.amountLocked;
-        IPeggedToken _token = $.peggedToken;
 
         if (peggedTokenToBurn_ <= _lockedAmount) {
             // Case 1: Use only locked balance
