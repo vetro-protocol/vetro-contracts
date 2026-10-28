@@ -2,9 +2,10 @@ import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {ContractAliases} from '../../helpers'
 import {saveForMultiSigBatchExecution} from '../../helpers/gnosis-safe'
+import {isTreasuryMigrationPending} from '../../helpers/treasury-migration'
 import Address from '../../helpers/address'
 
-const {Treasury} = ContractAliases
+const {PeggedToken, Treasury} = ContractAliases
 
 // 24 hours in seconds
 const TWENTY_FOUR_HOURS = 24 * 60 * 60
@@ -54,6 +55,12 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   // Skip on non-mainnet networks (tokens don't exist on local hardhat)
   if (['hardhat'].includes(hre.network.name)) {
     console.log('Skipping WhitelistTokens on local network (mainnet addresses not available)')
+    return
+  }
+
+  // The migration batch copies the live collateral config onto the new Treasury; this list is not that config
+  if (await isTreasuryMigrationPending(hre, {peggedTokenAlias: PeggedToken, treasuryAlias: Treasury})) {
+    console.log('Skipping WhitelistTokens: a Treasury migration is pending')
     return
   }
 

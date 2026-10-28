@@ -55,7 +55,7 @@ const writeBatch = (txs: MetaTransactionData[], complete: boolean) => {
 
 // A batch file present before this run's first save is left over from an aborted run: appending to or proposing it
 // would mix stale calls into this batch. Re-running the deploy queues again whatever is still needed.
-const assertNoStaleBatch = () => {
+export const assertNoStaleBatch = () => {
   if (!batchStarted && hasBatchFile()) {
     throw Error(
       `'${MULTI_SIG_TXS_FILE}' has Safe txs from a previous run. Check the Safe queue, then propose them with ` +
@@ -63,6 +63,9 @@ const assertNoStaleBatch = () => {
     )
   }
 }
+
+/** The Safe txs this run has queued so far: a leftover batch file is not this run's and fails on the next save. */
+export const queuedMultiSigTxs = (): MetaTransactionData[] => (batchStarted && hasBatchFile() ? readBatch().txs : [])
 
 /**
  * Impersonate an account for local testing
@@ -180,7 +183,7 @@ const proposeSafeTransaction = async (hre: HardhatRuntimeEnvironment, txs: MetaT
     log(chalk.blue(`MultiSig tx '${safeTxHash}' was proposed.`))
     log(chalk.blue('Wait for tx to confirm (at least 2 confirmations is recommended).'))
     log(chalk.blue('After confirmation, you must run the deployment again.'))
-    log(chalk.blue("That way the `hardhat-deploy` will be able to catch the changes and update `deployments/` files."))
+    log(chalk.blue('That way the `hardhat-deploy` will be able to catch the changes and update `deployments/` files.'))
   }
 }
 

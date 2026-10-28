@@ -28,8 +28,8 @@ import {INSTANCES} from './helpers/instances'
  * oracles appear only as a collateral's `oracle`.
  *
  * Unlike Vesper2, a release is cut once the upgrade is live (after the Safe executes), so proxy fields, token
- * name/symbol and the owner are read on-chain. The task refuses while an upgrade queued for the Safe is still
- * pending, and the deploy-time owner in the constructor args goes stale after the governance handover.
+ * name/symbol and the owner are read on-chain. The task refuses while an upgrade or Treasury migration queued for the
+ * Safe is still pending, and the deploy-time owner in the constructor args goes stale after the governance handover.
  *
  * Versioning convention: manifests are IMMUTABLE once cut; the task refuses to overwrite an existing version.
  * Bump on every change to the deployed composition:
@@ -118,9 +118,21 @@ task(
       }
 
       const token = await ethers.getContractAt(
-        ['function name() view returns (string)', 'function symbol() view returns (string)'],
+        [
+          'function name() view returns (string)',
+          'function symbol() view returns (string)',
+          'function treasury() view returns (address)',
+        ],
         contracts.PeggedToken.address
       )
+      // A Treasury migration records the new Treasury before the Safe executes it, as an upgrade does
+      const liveTreasury: string = await token.treasury()
+      if (liveTreasury.toLowerCase() !== contracts.Treasury.address.toLowerCase()) {
+        throw new Error(
+          `${roles.Treasury}: migration to ${contracts.Treasury.address} still pending in the Safe (live: ` +
+            `${liveTreasury}). Nothing written.`
+        )
+      }
       contracts.PeggedToken = {...contracts.PeggedToken, name: await token.name(), symbol: await token.symbol()}
 
       // Not best-effort as in Vesper2: an immutable manifest must never record an RPC failure as "no collateral"

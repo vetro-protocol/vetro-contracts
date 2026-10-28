@@ -15,13 +15,11 @@ import {YieldDistributor} from "src/YieldDistributor.sol";
 import {
     VETRO_GOVERNOR,
     VUSD,
-    VUSD_TREASURY,
     VUSD_GATEWAY,
     SVUSD,
     VUSD_YIELD_DISTRIBUTOR,
     VUSD_YIELD_MANAGER,
     VETBTC,
-    VETBTC_TREASURY,
     VETBTC_GATEWAY,
     SVETBTC,
     VETBTC_YIELD_DISTRIBUTOR,
@@ -29,6 +27,7 @@ import {
 } from "test/helpers/Address.ethereum.sol";
 
 /// @dev Forks mainnet and loads the deployed VUSD and vetBTC stacks. Pin the fork with ETHEREUM_FORK_BLOCK_NUMBER.
+/// Each Treasury is the one its token points at, so the flows also run on a fork that migrated it.
 abstract contract VetroForkBase is Test {
     using SafeERC20 for IERC20;
 
@@ -67,7 +66,7 @@ abstract contract VetroForkBase is Test {
         vusd = Stack({
             name: "VUSD",
             token: PeggedToken(VUSD),
-            treasury: Treasury(VUSD_TREASURY),
+            treasury: Treasury(PeggedToken(VUSD).treasury()),
             gateway: Gateway(VUSD_GATEWAY),
             vault: StakingVault(SVUSD),
             distributor: YieldDistributor(VUSD_YIELD_DISTRIBUTOR),
@@ -77,7 +76,7 @@ abstract contract VetroForkBase is Test {
         vetbtc = Stack({
             name: "vetBTC",
             token: PeggedToken(VETBTC),
-            treasury: Treasury(VETBTC_TREASURY),
+            treasury: Treasury(PeggedToken(VETBTC).treasury()),
             gateway: Gateway(VETBTC_GATEWAY),
             vault: StakingVault(SVETBTC),
             distributor: YieldDistributor(VETBTC_YIELD_DISTRIBUTOR),

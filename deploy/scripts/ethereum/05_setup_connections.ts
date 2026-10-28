@@ -1,6 +1,7 @@
 import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {updateParamIfNeeded, ContractAliases} from '../../helpers'
+import {isTreasuryMigrationPending} from '../../helpers/treasury-migration'
 
 const {PeggedToken, Treasury, Gateway, StakingVault, YieldDistributor} = ContractAliases
 
@@ -24,13 +25,18 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {address: gatewayAddress} = await get(Gateway)
   const {address: yieldDistributorAddress} = await get(YieldDistributor)
 
-  // 1. Set Treasury on PeggedToken (must be done before setting Gateway)
-  await updateParamIfNeeded(hre, {
-    contractAlias: PeggedToken,
-    readMethod: 'treasury',
-    writeMethod: 'updateTreasury',
-    writeArgs: [treasuryAddress],
-  })
+  // 1. Set Treasury on PeggedToken (must be done before setting Gateway). A pending migration owns this call: on its
+  // own it would point the token at a Treasury that holds no collateral yet
+  if (await isTreasuryMigrationPending(hre, {peggedTokenAlias: PeggedToken, treasuryAlias: Treasury})) {
+    console.log(`Treasury migration to ${treasuryAddress} is pending: leaving updateTreasury to MigrateTreasury`)
+  } else {
+    await updateParamIfNeeded(hre, {
+      contractAlias: PeggedToken,
+      readMethod: 'treasury',
+      writeMethod: 'updateTreasury',
+      writeArgs: [treasuryAddress],
+    })
+  }
 
   // 2. Set Gateway on PeggedToken (requires Treasury to be set first)
   await updateParamIfNeeded(hre, {

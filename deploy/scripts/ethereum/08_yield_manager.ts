@@ -2,6 +2,7 @@ import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {deployNonUpgradeable, grantRoleIfNeeded, revokeRoleIfNeeded, ContractAliases} from '../../helpers'
 import {YieldManagerConfig} from '../../config'
+import {isTreasuryMigrationPending} from '../../helpers/treasury-migration'
 
 const {PeggedToken, Treasury, YieldDistributor, YieldManager} = ContractAliases
 
@@ -16,6 +17,12 @@ const {PeggedToken, Treasury, YieldDistributor, YieldManager} = ContractAliases
  * YieldManager,VetBTCYieldManager`, then `--tags MultisigTxs`.
  */
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
+  // UMM_ROLE goes on the Treasury artifact, which during a pending migration is not the one the token uses yet
+  if (await isTreasuryMigrationPending(hre, {peggedTokenAlias: PeggedToken, treasuryAlias: Treasury})) {
+    console.log('Skipping YieldManager: a Treasury migration is pending, run it after the Safe executes')
+    return
+  }
+
   const {deployments} = hre
   const {get, getOrNull, read} = deployments
   const {maxAprBps, absoluteCap} = YieldManagerConfig.vusd

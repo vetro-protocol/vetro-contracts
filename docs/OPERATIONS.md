@@ -628,6 +628,88 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 
 ---
 
+## Migrating a Treasury
+
+The Treasury is not upgradeable: a change to its code ships as a new Treasury that takes over the collateral.
+`09_migrate_treasury.ts` (VUSD) and `vetbtc/10_vetbtc_migrate_treasury.ts` do this, and only when asked to with
+`MIGRATE_TREASURY=true`, so a routine deploy never starts a migration.
+
+1. **Dry run on a fork.** Fork with anvil (`--gas-limit 16777216 --base-fee 0 --chain-id 1`: mainnet caps a tx at
+   2^24 gas, and the fork's base fee outruns the deploy's fee estimate), copy `deployments/ethereum` to
+   `deployments/localhost`, `export DEPLOYER=<deployer address>`, impersonate it, and run step 2 with
+   `--network localhost`. The impersonated Safe executes the batch. Then re-run without the flag to verify, and run
+   the Foundry fork tests against the node with `ETHEREUM_FORK_NODE_URL=http://127.0.0.1:8545
+   ETHEREUM_FORK_BLOCK_NUMBER=0`: they use the Treasury each token points at, so they exercise the new one.
+
+2. **Build the batch**:
+
+   ```bash
+   MIGRATE_TREASURY=true npx hardhat deploy --network ethereum \
+     --tags MigrateTreasury,MigrateVetBTCTreasury,MultisigTxs
+   ```
+
+   Before deploying anything, the script checks that the Safe is the live Treasury's admin, the token's owner and a
+   maintainer of every yield vault, that no admin transfer or delay change is pending on the live Treasury, and that
+   no batch file is left over. It refuses if this run already queued a call to the live Treasury (it would run before
+   the copy and not be in it). The deployer then deploys the compiled Treasury with the live Treasury's admin and
+   renounces the KEEPER and MAINTAINER roles its constructor gave it; the live Treasury's record is kept as
+   `<alias>_Previous`.
+
+   Everything else is a Safe call, read from the live Treasury and printed as a numbered list:
+   - whitelist the new Treasury on each yield vault
+   - add each collateral with its live vault, oracle and stale period
+   - grant every live role holder (found from `RoleGranted` events, kept only if `hasRole`)
+   - copy the price tolerance, swapper and pause flags, granting the Safe a role for the batch only when it needs one
+     it does not hold
+   - revoke anything the live Treasury does not have
+   - `updateTreasury`, then `migrate`
+   - remove the old Treasury from each yield vault's whitelist (shares move by plain transfer, so `migrate` does not
+     need it)
+
+   The batch is recorded on `<alias>_Previous`. **Execute it as one Safe transaction.** Between `updateTreasury` and
+   `migrate` the token points at a Treasury without collateral, and `migrate` reverts until `updateTreasury` has run.
+
+3. **While it is pending**, routine deploys leave `updateTreasury`, the whitelist and the YieldManager scripts alone.
+   The migration script rebuilds the batch from live state and **fails if it no longer matches the recorded one**: a
+   role revoked or a token paused after the build would be undone by executing it. Run it right before executing:
+
+   ```bash
+   npx hardhat deploy --network ethereum --tags MigrateTreasury,MigrateVetBTCTreasury
+   ```
+
+   If it fails, reject the proposal and run step 2 again, which rebuilds the batch for the same new Treasury. A
+   started admin transfer or admin delay change on the live Treasury cannot be copied, so the script refuses until
+   it is completed or cancelled. Do not run `create-release` (it refuses) or cut a release until the batch has
+   executed and been verified.
+
+   The check only sees what has executed. Before executing, make sure no Safe tx queued ahead of the batch changes
+   the live Treasury, and do not migrate during an incident: the batch would undo a change it does not know about.
+   A keeper action after the check is caught by step 4, which is why it follows the execution right away.
+
+4. **Right after the Safe executes**, re-run the deploy without the flag. The migration script finds the block
+   `migrate` executed in and compares both Treasuries at that block: collateral list and order, configs, flags,
+   tolerance, swapper, admin, admin delay and every role's holders. It checks that the old Treasury held no
+   collateral or vault shares right after `migrate` (transfers sent to it later in the block do not count) and that
+   each vault whitelisted the new Treasury, then that the vaults no longer whitelist the old one. It fails listing
+   every difference. On success it deletes `<alias>_Previous`. Then:
+   - commit the artifacts (git keeps the deleted `_Previous` record)
+   - update the Treasury addresses in this file and in `test/helpers/Address.ethereum.sol`
+   - repoint keeper bots and monitoring at the new Treasury
+   - cut a release (major bump)
+
+   If it reports a difference, the batch undid a change made on the old Treasury, typically a keeper pause right
+   before execution: apply the change again on the new Treasury, whose role holders are the old one's. A change made
+   on either Treasury later in the migration's own block also shows up as a difference, and stays one, since that
+   block never changes. Once every reported difference is explained or applied again, delete
+   `<alias>_Previous.json` by hand and commit.
+
+5. **To abandon a pending migration** (never executed, e.g. the Treasury code changed and the script now refuses to
+   rebuild), copy `<alias>_Previous.json` back over `<alias>.json`, remove its `linkedData` field, and delete
+   `<alias>_Previous.json`. Then reject the Safe proposal. The abandoned Treasury holds nothing and no roles but the
+   Safe's admin, so it can stay.
+
+---
+
 ## Monitoring Checklist
 
 ### Daily Checks

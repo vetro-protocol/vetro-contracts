@@ -159,7 +159,8 @@ const snapshotStack = async (
   const at = async (alias: string, abi: string[]) =>
     new Contract((await hre.deployments.get(alias)).address, abi, provider)
   const token = await at(aliases.PeggedToken, TOKEN_ABI)
-  const treasury = await at(aliases.Treasury, TREASURY_ABI)
+  // The token's own Treasury, not the artifact: while a migration is pending the artifact is the new, empty one
+  const treasury = new Contract(await call(token, 'treasury'), TREASURY_ABI, provider)
   const gateway = await at(aliases.Gateway, GATEWAY_ABI)
   const vault = await at(aliases.StakingVault, VAULT_ABI)
   const distributor = await at(aliases.YieldDistributor, DISTRIBUTOR_ABI)
