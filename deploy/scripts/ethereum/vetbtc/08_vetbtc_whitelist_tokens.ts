@@ -2,9 +2,10 @@ import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {ContractAliases} from '../../../helpers'
 import {saveForMultiSigBatchExecution} from '../../../helpers/gnosis-safe'
+import {isTreasuryMigrationPending} from '../../../helpers/treasury-migration'
 import Address from '../../../helpers/address'
 
-const {VetBTCTreasury, FixedPriceFeedAdapter, DerivedPriceFeedAdapter} = ContractAliases
+const {VetBTC, VetBTCTreasury, FixedPriceFeedAdapter, DerivedPriceFeedAdapter} = ContractAliases
 
 const TWENTY_FOUR_HOURS = 24 * 60 * 60
 
@@ -22,6 +23,12 @@ const TWENTY_FOUR_HOURS = 24 * 60 * 60
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   if (['hardhat'].includes(hre.network.name)) {
     console.log('Skipping VetBTCWhitelistTokens on local network (mainnet addresses not available)')
+    return
+  }
+
+  // The migration batch copies the live collateral config onto the new Treasury; this list is not that config
+  if (await isTreasuryMigrationPending(hre, {peggedTokenAlias: VetBTC, treasuryAlias: VetBTCTreasury})) {
+    console.log('Skipping VetBTCWhitelistTokens: a VetBTCTreasury migration is pending')
     return
   }
 
