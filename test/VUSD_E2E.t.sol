@@ -8,6 +8,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {PeggedToken} from "src/PeggedToken.sol";
 import {Gateway} from "src/Gateway.sol";
 import {Treasury} from "src/Treasury.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {USDC, tvUSDC, COMPOUND_V3_STRATEGY, USDC_USD_FEED} from "test/helpers/Address.ethereum.sol";
 
 interface IStrategy {
@@ -35,8 +36,11 @@ contract VUSD_E2E_Test is Test {
         usdcVault = tvUSDC;
         // Deploy core contracts
         VUSD = new PeggedToken("viaUSD", "viaUSD", owner);
-        treasury = new Treasury(address(VUSD), owner);
+        treasury = deployTreasury(address(VUSD), owner);
         VUSD.updateTreasury(address(treasury));
+        // The tests act as keeper and maintainer
+        treasury.grantRole(treasury.KEEPER_ROLE(), address(this));
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), address(this));
 
         // Deploy Gateway implementation
         Gateway implementation = new Gateway();

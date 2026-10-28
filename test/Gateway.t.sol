@@ -9,6 +9,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Gateway} from "src/Gateway.sol";
 import {Treasury} from "src/Treasury.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
@@ -33,8 +34,13 @@ contract GatewayTest is Test {
     function setUp() public {
         owner = address(this);
         VUSD = new PeggedToken("VUSD", "VUSD", owner);
-        treasury = new Treasury(address(VUSD), admin);
+        treasury = deployTreasury(address(VUSD), admin);
         VUSD.updateTreasury(address(treasury));
+        // The tests act as keeper and maintainer
+        vm.startPrank(admin);
+        treasury.grantRole(treasury.KEEPER_ROLE(), address(this));
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), address(this));
+        vm.stopPrank();
 
         // Deploy Gateway implementation
         Gateway implementation = new Gateway();

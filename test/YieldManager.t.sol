@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Gateway} from "src/Gateway.sol";
 import {Treasury} from "src/Treasury.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {StakingVault} from "src/StakingVault.sol";
 import {YieldDistributor} from "src/YieldDistributor.sol";
@@ -55,8 +56,13 @@ contract YieldManagerTest is Test {
     function setUp() public {
         owner = address(this);
         peggedToken = new PeggedToken("VUSD", "VUSD", owner);
-        treasury = new Treasury(address(peggedToken), admin);
+        treasury = deployTreasury(address(peggedToken), admin);
         peggedToken.updateTreasury(address(treasury));
+        // The tests act as keeper and maintainer
+        vm.startPrank(admin);
+        treasury.grantRole(treasury.KEEPER_ROLE(), address(this));
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), address(this));
+        vm.stopPrank();
 
         Gateway gatewayImpl = new Gateway();
         bytes memory gatewayInit =

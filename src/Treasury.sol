@@ -2,8 +2,8 @@
 
 pragma solidity 0.8.30;
 
-import {AccessControlDefaultAdminRules} from
-    "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+import {AccessControlDefaultAdminRulesUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -14,14 +14,52 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IAggregatorV3} from "./interfaces/chainlink/IAggregatorV3.sol";
 import {ISwapper} from "./interfaces/bloq/ISwapper.sol";
 import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
-import {ITreasury} from "./interfaces/ITreasury.sol";
 import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title PeggedToken Treasury
-contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
+contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpgradeable {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
+
+    /*/////////////////////////////////////////////////////////////
+                            CONSTANTS
+    /////////////////////////////////////////////////////////////*/
+
+    string public constant VERSION = "2.0.0";
+    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
+    bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
+    bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
+
+    uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
+    uint256 public constant MAX_STALE_PERIOD = 72 hours;
+    uint256 public constant MAX_WHITELISTED_TOKENS = 10;
+
+    /*/////////////////////////////////////////////////////////////
+                        ERC-7201 STORAGE
+    /////////////////////////////////////////////////////////////*/
+
+    struct TokenConfig {
+        address vault;
+        address oracle;
+        uint256 stalePeriod;
+        bool depositActive;
+        bool withdrawActive;
+        uint8 decimals;
+    }
+
+    /// @custom:storage-location erc7201:vetro.storage.treasury
+    struct TreasuryStorage {
+        string name;
+        uint256 priceTolerance;
+        IPeggedToken peggedToken;
+        address swapper;
+        mapping(address token => TokenConfig) tokenConfig;
+        EnumerableSet.AddressSet whitelistedTokens;
+    }
+
+    bytes32 private constant TREASURY_STORAGE_LOCATION =
+        keccak256(abi.encode(uint256(keccak256("vetro.storage.treasury")) - 1)) & ~bytes32(uint256(0xff));
 
     /*/////////////////////////////////////////////////////////////
                             ERRORS
@@ -38,48 +76,14 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     error InvalidStalePeriod();
     error InvalidTokenDecimals(uint8);
     error MaxWhitelistedTokensReached();
-    error PeggedTokenMismatch();
     error PriceExceedTolerance(uint256 latestPrice, uint256 priceUpperBound, uint256 priceLowerBound);
     error RemoveFromListFailed();
     error ReservedToken();
     error StalePrice(address oracle);
     error SwapperNotSet();
-    error TreasuryNotMigrated();
     error UnsupportedToken(address);
     error WithdrawIsPaused(address);
     error ZeroShares();
-
-    /*/////////////////////////////////////////////////////////////
-                        STATE VARIABLES
-    /////////////////////////////////////////////////////////////*/
-
-    string public NAME;
-    string public constant VERSION = "1.0.0";
-    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
-    bytes32 public constant UMM_ROLE = keccak256("UMM_ROLE");
-    bytes32 public constant MAINTAINER_ROLE = keccak256("MAINTAINER_ROLE");
-
-    uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
-    uint256 public constant MAX_STALE_PERIOD = 72 hours;
-    uint256 public constant MAX_WHITELISTED_TOKENS = 10;
-    uint256 public priceTolerance = 100; // 1% based on BPS
-
-    IPeggedToken public immutable PEGGED_TOKEN;
-
-    address public swapper;
-
-    struct TokenConfig {
-        address vault;
-        address oracle;
-        uint256 stalePeriod;
-        bool depositActive;
-        bool withdrawActive;
-        uint8 decimals;
-    }
-
-    mapping(address token => TokenConfig) public tokenConfig;
-
-    EnumerableSet.AddressSet private _whitelistedTokens;
 
     /*/////////////////////////////////////////////////////////////
                             EVENTS
@@ -87,7 +91,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
 
     event AddedToWhitelist(address indexed token, address indexed vault, address indexed oracle);
     event ExcessWithdrawn(address indexed token, uint256 amount);
-    event Migrated(address indexed newTreasury);
     event RemovedFromWhitelist(address indexed token);
     event SetDepositActive(address indexed token, bool newValue);
     event SetWithdrawActive(address indexed token, bool newValue);
@@ -102,7 +105,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /////////////////////////////////////////////////////////////*/
 
     modifier onlyGateway() {
-        if (msg.sender != PEGGED_TOKEN.gateway()) revert CallerIsNotAuthorized(msg.sender);
+        if (msg.sender != _getTreasuryStorage().peggedToken.gateway()) revert CallerIsNotAuthorized(msg.sender);
         _;
     }
 
@@ -110,18 +113,25 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
                             FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
-    constructor(address peggedToken_, address admin_)
-        AccessControlDefaultAdminRules(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the Treasury contract
+    /// @param peggedToken_ Address of the PeggedToken contract
+    /// @param admin_ Initial DEFAULT_ADMIN_ROLE holder
+    function initialize(address peggedToken_, address admin_) external initializer {
+        if (peggedToken_ == address(0)) revert AddressIsZero();
+        __AccessControlDefaultAdminRules_init(
             3 days, // delay for admin transfers
             admin_ // initial admin
-        )
-    {
-        if (peggedToken_ == address(0)) revert AddressIsZero();
-        PEGGED_TOKEN = IPeggedToken(peggedToken_);
-        NAME = string.concat(IERC20Metadata(peggedToken_).symbol(), "-Treasury");
+        );
 
-        _grantRole(KEEPER_ROLE, msg.sender);
-        _grantRole(MAINTAINER_ROLE, msg.sender);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        $.peggedToken = IPeggedToken(peggedToken_);
+        $.name = string.concat(IERC20Metadata(peggedToken_).symbol(), "-Treasury");
+        $.priceTolerance = 100; // 1% based on BPS
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -141,13 +151,14 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     {
         if (token_ == address(0) || vault_ == address(0) || oracle_ == address(0)) revert AddressIsZero();
         if (stalePeriod_ == 0 || stalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
-        if (_whitelistedTokens.length() >= MAX_WHITELISTED_TOKENS) revert MaxWhitelistedTokensReached();
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if ($.whitelistedTokens.length() >= MAX_WHITELISTED_TOKENS) revert MaxWhitelistedTokensReached();
         uint8 _decimals = IERC20Metadata(token_).decimals();
         if (_decimals > 18) revert InvalidTokenDecimals(_decimals);
         if (token_ != IERC4626(vault_).asset()) revert AssetMismatch();
 
-        if (!_whitelistedTokens.add(token_)) revert AddToListFailed();
-        tokenConfig[token_] = TokenConfig({
+        if (!$.whitelistedTokens.add(token_)) revert AddToListFailed();
+        $.tokenConfig[token_] = TokenConfig({
             vault: vault_,
             oracle: oracle_,
             stalePeriod: stalePeriod_,
@@ -167,10 +178,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param amount_  token amount
      */
     function deposit(address token_, uint256 amount_) external nonReentrant onlyGateway {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (!tokenConfig[token_].depositActive) revert DepositIsPaused(token_);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        if (!$.tokenConfig[token_].depositActive) revert DepositIsPaused(token_);
 
-        if (IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
+        if (IERC4626($.tokenConfig[token_].vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
     }
 
     /**
@@ -182,7 +194,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @return Amount of tokens withdrawn
      */
     function harvest(address token_, address receiver_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (receiver_ == address(0)) revert AddressIsZero();
         uint256 _excess = _excessTokens(token_);
         if (_excess == 0) return 0;
@@ -200,7 +213,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
             _excess -= _paid;
         }
 
-        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
+        IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
         uint256 _assets = _vault.convertToAssets(_vault.balanceOf(address(this)));
         if (_assets > 0) {
             uint256 _toWithdraw = Math.min(_excess, _assets);
@@ -213,26 +226,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     }
 
     /**
-     * @notice DEFAULT_ADMIN_ROLE: Migrate assets to new treasury
-     * @param newTreasury_ Address of new treasury of PeggedToken
-     */
-    function migrate(address newTreasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newTreasury_ == address(0)) revert AddressIsZero();
-        if (address(PEGGED_TOKEN) != address(ITreasury(newTreasury_).PEGGED_TOKEN())) revert PeggedTokenMismatch();
-        // Treasury in PEGGED_TOKEN should be updated before migrating assets. Preferably it should be done atomically
-        if (PEGGED_TOKEN.treasury() != newTreasury_) revert TreasuryNotMigrated();
-        uint256 _len = _whitelistedTokens.length();
-        for (uint256 i; i < _len; ++i) {
-            address _token = _whitelistedTokens.at(i);
-            IERC20(_token).safeTransfer(newTreasury_, IERC20(_token).balanceOf(address(this)));
-
-            address _vault = tokenConfig[_token].vault;
-            IERC20(_vault).safeTransfer(newTreasury_, IERC20(_vault).balanceOf(address(this)));
-        }
-        emit Migrated(newTreasury_);
-    }
-
-    /**
      * @notice KEEPER_ROLE: Withdraw token from vault.
      * @dev Keeper is allowed to withdraw even if withdrawActive is false.
      * @dev Keeper can withdraw tokens at treasury address only.
@@ -240,9 +233,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param amount_ token amount to withdraw
      */
     function pull(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (amount_ > 0) {
-            IERC4626(tokenConfig[token_].vault).withdraw(amount_, address(this), address(this));
+            IERC4626($.tokenConfig[token_].vault).withdraw(amount_, address(this), address(this));
         }
     }
 
@@ -253,12 +247,13 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param amount_ token amount to deposit
      */
     function push(address token_, uint256 amount_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (amount_ == type(uint256).max) {
             amount_ = IERC20(token_).balanceOf(address(this));
         }
         if (amount_ > 0) {
-            if (IERC4626(tokenConfig[token_].vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
+            if (IERC4626($.tokenConfig[token_].vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
         }
     }
 
@@ -268,11 +263,12 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param token_ token address to remove from whitelist.
      */
     function removeFromWhitelist(address token_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!_whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
-        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.remove(token_)) revert RemoveFromListFailed();
+        IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
         if (_vault.balanceOf(address(this)) > 0) revert BalanceShouldBeZero();
-        IERC20(token_).forceApprove(tokenConfig[token_].vault, 0);
-        delete tokenConfig[token_];
+        IERC20(token_).forceApprove($.tokenConfig[token_].vault, 0);
+        delete $.tokenConfig[token_];
         emit RemovedFromWhitelist(token_);
     }
 
@@ -280,8 +276,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /// @param token_ Token to set deposit activity for
     /// @param active_ The intended deposit active state
     function setDepositActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        tokenConfig[token_].depositActive = active_;
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        $.tokenConfig[token_].depositActive = active_;
         emit SetDepositActive(token_, active_);
     }
 
@@ -289,8 +286,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /// @param token_ Token to set withdraw activity for
     /// @param active_ The intended withdraw active state
     function setWithdrawActive(address token_, bool active_) external onlyRole(KEEPER_ROLE) {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        tokenConfig[token_].withdrawActive = active_;
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        $.tokenConfig[token_].withdrawActive = active_;
         emit SetWithdrawActive(token_, active_);
     }
 
@@ -299,15 +297,17 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         onlyRole(KEEPER_ROLE)
         returns (uint256)
     {
-        if (swapper == address(0)) revert SwapperNotSet();
-        if (_whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
-        uint256 _len = _whitelistedTokens.length();
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        address _swapper = $.swapper;
+        if (_swapper == address(0)) revert SwapperNotSet();
+        if ($.whitelistedTokens.contains(tokenIn_)) revert ReservedToken();
+        uint256 _len = $.whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
-            if (tokenConfig[_whitelistedTokens.at(i)].vault == tokenIn_) revert ReservedToken();
+            if ($.tokenConfig[$.whitelistedTokens.at(i)].vault == tokenIn_) revert ReservedToken();
         }
-        IERC20(tokenIn_).forceApprove(swapper, amountIn_);
+        IERC20(tokenIn_).forceApprove(_swapper, amountIn_);
         emit Swapped(tokenIn_, tokenOut_, amountIn_);
-        return ISwapper(swapper).swapExactInput(tokenIn_, tokenOut_, amountIn_, minAmountOut_, address(this));
+        return ISwapper(_swapper).swapExactInput(tokenIn_, tokenOut_, amountIn_, minAmountOut_, address(this));
     }
 
     /**
@@ -318,10 +318,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      */
     function sweep(address fromToken_, address receiver_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
-        if (_whitelistedTokens.contains(fromToken_)) revert ReservedToken();
-        uint256 _len = _whitelistedTokens.length();
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if ($.whitelistedTokens.contains(fromToken_)) revert ReservedToken();
+        uint256 _len = $.whitelistedTokens.length();
         for (uint256 i; i < _len; ++i) {
-            if (tokenConfig[_whitelistedTokens.at(i)].vault == fromToken_) revert ReservedToken();
+            if ($.tokenConfig[$.whitelistedTokens.at(i)].vault == fromToken_) revert ReservedToken();
         }
 
         uint256 _amount = IERC20(fromToken_).balanceOf(address(this));
@@ -339,12 +340,13 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         external
         onlyRole(MAINTAINER_ROLE)
     {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (oracle_ == address(0)) revert AddressIsZero();
         if (newStalePeriod_ == 0 || newStalePeriod_ > MAX_STALE_PERIOD) revert InvalidStalePeriod();
 
-        tokenConfig[token_].oracle = oracle_;
-        tokenConfig[token_].stalePeriod = newStalePeriod_;
+        $.tokenConfig[token_].oracle = oracle_;
+        $.tokenConfig[token_].stalePeriod = newStalePeriod_;
 
         emit UpdatedOracle(token_, oracle_, newStalePeriod_);
     }
@@ -352,8 +354,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /// @notice MAINTAINER_ROLE: Update oracle price tolerance
     function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
         if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
-        emit UpdatedPriceTolerance(priceTolerance, newPriceTolerance_);
-        priceTolerance = newPriceTolerance_;
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        emit UpdatedPriceTolerance($.priceTolerance, newPriceTolerance_);
+        $.priceTolerance = newPriceTolerance_;
     }
 
     /**
@@ -362,8 +365,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      */
     function updateSwapper(address swapper_) external onlyRole(MAINTAINER_ROLE) {
         if (swapper_ == address(0)) revert AddressIsZero();
-        emit UpdatedSwapper(address(swapper), swapper_);
-        swapper = swapper_;
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        emit UpdatedSwapper($.swapper, swapper_);
+        $.swapper = swapper_;
     }
 
     /**
@@ -374,9 +378,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param tokenReceiver_ address of token receiver
      */
     function withdraw(address token_, uint256 amount_, address tokenReceiver_) external nonReentrant onlyGateway {
-        if (!_whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
 
-        TokenConfig memory config = tokenConfig[token_];
+        TokenConfig memory config = $.tokenConfig[token_];
         if (!config.withdrawActive) revert WithdrawIsPaused(token_);
 
         uint256 _tokenBalance = IERC20(token_).balanceOf(address(this));
@@ -398,23 +403,68 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /////////////////////////////////////////////////////////////*/
 
     function gateway() external view returns (address) {
-        return PEGGED_TOKEN.gateway();
+        return _getTreasuryStorage().peggedToken.gateway();
     }
 
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice) {
-        IAggregatorV3 _oracle = IAggregatorV3(tokenConfig[token_].oracle);
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        IAggregatorV3 _oracle = IAggregatorV3($.tokenConfig[token_].oracle);
         if (address(_oracle) == address(0)) revert UnsupportedToken(token_);
-        return _getPrice(_oracle, tokenConfig[token_].stalePeriod, priceTolerance);
+        return _getPrice(_oracle, $.tokenConfig[token_].stalePeriod, $.priceTolerance);
     }
 
     /// @notice Returns whether given token is whitelisted
     function isWhitelistedToken(address token_) external view returns (bool) {
-        return _whitelistedTokens.contains(token_);
+        return _getTreasuryStorage().whitelistedTokens.contains(token_);
+    }
+
+    /// @notice Returns the name of the Treasury
+    function NAME() external view returns (string memory) {
+        return _getTreasuryStorage().name;
+    }
+
+    /// @notice Returns the PeggedToken this Treasury backs
+    function PEGGED_TOKEN() external view returns (IPeggedToken) {
+        return _getTreasuryStorage().peggedToken;
+    }
+
+    /// @notice Returns the oracle price tolerance in BPS
+    function priceTolerance() external view returns (uint256) {
+        return _getTreasuryStorage().priceTolerance;
+    }
+
+    /// @notice Returns the swapper used by {swap}
+    function swapper() external view returns (address) {
+        return _getTreasuryStorage().swapper;
+    }
+
+    /// @notice Returns the configuration of given token, all zero if it is not whitelisted
+    function tokenConfig(address token_)
+        external
+        view
+        returns (
+            address vault,
+            address oracle,
+            uint256 stalePeriod,
+            bool depositActive,
+            bool withdrawActive,
+            uint8 decimals
+        )
+    {
+        TokenConfig storage _config = _getTreasuryStorage().tokenConfig[token_];
+        return (
+            _config.vault,
+            _config.oracle,
+            _config.stalePeriod,
+            _config.depositActive,
+            _config.withdrawActive,
+            _config.decimals
+        );
     }
 
     /// @notice Return list of whitelisted tokens
     function whitelistedTokens() external view returns (address[] memory) {
-        return _whitelistedTokens.values();
+        return _getTreasuryStorage().whitelistedTokens.values();
     }
 
     /**
@@ -424,7 +474,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
      * @param token_ token address
      */
     function withdrawable(address token_) external view returns (uint256) {
-        IERC4626 _vault = IERC4626(tokenConfig[token_].vault);
+        IERC4626 _vault = IERC4626(_getTreasuryStorage().tokenConfig[token_].vault);
         // Token is not supported
         if (address(_vault) == address(0)) return 0;
 
@@ -439,12 +489,13 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /// @notice Returns total reserve value denominated in PeggedToken units
     /// @dev Each token is valued at its oracle price capped at par
     function reserve() public view returns (uint256 _reserve) {
-        uint256 _len = _whitelistedTokens.length();
-        uint256 _priceToleranceBps = priceTolerance;
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        uint256 _len = $.whitelistedTokens.length();
+        uint256 _priceToleranceBps = $.priceTolerance;
 
         for (uint256 i; i < _len; ++i) {
-            address _token = _whitelistedTokens.at(i);
-            IERC4626 _vault = IERC4626(tokenConfig[_token].vault);
+            address _token = $.whitelistedTokens.at(i);
+            IERC4626 _vault = IERC4626($.tokenConfig[_token].vault);
             uint256 _shares = _vault.balanceOf(address(this));
             uint256 _balance = IERC20(_token).balanceOf(address(this));
             if (_shares > 0) {
@@ -453,14 +504,14 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
 
             if (_balance > 0) {
                 (uint256 _price, uint256 _unitPrice) = _getPrice(
-                    IAggregatorV3(tokenConfig[_token].oracle), tokenConfig[_token].stalePeriod, _priceToleranceBps
+                    IAggregatorV3($.tokenConfig[_token].oracle), $.tokenConfig[_token].stalePeriod, _priceToleranceBps
                 );
                 // Gateway never mints above par, so an above-par price would surface as phantom harvestable excess
                 if (_price > _unitPrice) _price = _unitPrice;
                 // Calculate reserve in token decimals relative to PeggedToken peg
                 uint256 _reserveInTokenDecimals = _balance.mulDiv(_price, _unitPrice);
                 // Normalize reserve to PeggedToken decimals (18) before adding to total reserve
-                _reserve += (_reserveInTokenDecimals * (10 ** (18 - tokenConfig[_token].decimals)));
+                _reserve += (_reserveInTokenDecimals * (10 ** (18 - $.tokenConfig[_token].decimals)));
             }
         }
     }
@@ -470,10 +521,12 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
     /////////////////////////////////////////////////////////////*/
 
     function _excessTokens(address token_) private view returns (uint256 excess) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        IPeggedToken _peggedToken = $.peggedToken;
         // Excess = reserve - (supply - amoSupply)
-        uint256 _totalSupply = PEGGED_TOKEN.totalSupply();
+        uint256 _totalSupply = _peggedToken.totalSupply();
         // Get AMO supply from Gateway
-        uint256 _amoSupply = IGateway(PEGGED_TOKEN.gateway()).amoSupply();
+        uint256 _amoSupply = IGateway(_peggedToken.gateway()).amoSupply();
 
         // Invariant: amoSupply <= totalSupply always holds
         uint256 _backedSupply = _totalSupply - _amoSupply;
@@ -486,9 +539,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
         }
 
         // Convert excess (in PeggedToken decimals) to token amount
-        TokenConfig storage _config = tokenConfig[token_];
+        TokenConfig storage _config = $.tokenConfig[token_];
         (uint256 _price, uint256 _unitPrice) =
-            _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, priceTolerance);
+            _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, $.priceTolerance);
         // Convert at the same par-capped price reserve() measured the excess with
         if (_price > _unitPrice) _price = _unitPrice;
         uint256 _tokens = _excess.mulDiv(_unitPrice, _price) / (10 ** (18 - _config.decimals));
@@ -517,6 +570,15 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRules {
 
         if (_latestPrice > _priceUpperBound || _latestPrice < _priceLowerBound) {
             revert PriceExceedTolerance(_latestPrice, _priceUpperBound, _priceLowerBound);
+        }
+    }
+
+    /// @notice Get the storage pointer for ERC-7201 namespaced storage
+    /// @return $ The storage pointer
+    function _getTreasuryStorage() private pure returns (TreasuryStorage storage $) {
+        bytes32 _location = TREASURY_STORAGE_LOCATION;
+        assembly {
+            $.slot := _location
         }
     }
 }

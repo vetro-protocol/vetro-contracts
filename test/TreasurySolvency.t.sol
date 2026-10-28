@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {PeggedToken} from "src/PeggedToken.sol";
 import {Gateway} from "src/Gateway.sol";
 import {Treasury} from "src/Treasury.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockYieldVaultRealistic} from "test/mocks/MockYieldVaultRealistic.sol";
@@ -33,8 +34,11 @@ contract TreasurySolvencyTest is Test {
         vault = new MockYieldVaultRealistic(address(collateral));
 
         vusd = new PeggedToken("viaUSD", "viaUSD", owner);
-        treasury = new Treasury(address(vusd), owner);
+        treasury = deployTreasury(address(vusd), owner);
         vusd.updateTreasury(address(treasury));
+        // The tests act as keeper and maintainer
+        treasury.grantRole(treasury.KEEPER_ROLE(), address(this));
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), address(this));
 
         Gateway impl = new Gateway();
         bytes memory initData =

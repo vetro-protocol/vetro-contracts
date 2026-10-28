@@ -1,16 +1,17 @@
 import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
-import {deployNonUpgradeable, ContractAliases} from '../../helpers'
+import {deployUpgradable, UpgradableContracts, ContractAliases} from '../../helpers'
 import Address from '../../helpers/address'
 
 const {PeggedToken, Treasury} = ContractAliases
 
 /**
- * Deploy Treasury
+ * Deploy Treasury (UPGRADEABLE)
  *
- * This is a NON-UPGRADEABLE contract that manages collateral and yield vaults.
+ * This is an UPGRADEABLE contract via OpenZeppelin v5 TransparentProxy pattern.
+ * Uses the default OZ v5 ProxyAdmin (auto-created by the proxy, owned by GOVERNOR).
  *
- * Constructor args:
+ * Initialize args:
  * - peggedToken_: Address of the PeggedToken (VUSD) contract
  * - admin_: GOVERNOR (multisig) or deployer on local networks
  *
@@ -18,30 +19,40 @@ const {PeggedToken, Treasury} = ContractAliases
  * - Uses AccessControlDefaultAdminRules with 3-day delay
  * - Holds collateral in ERC4626 yield vaults
  * - Has roles: DEFAULT_ADMIN_ROLE, KEEPER_ROLE, MAINTAINER_ROLE, UMM_ROLE
- * - Constructor grants KEEPER_ROLE and MAINTAINER_ROLE to deployer
  *
  * After deployment:
  * 1. Call PeggedToken.updateTreasury(treasury)
  * 2. Add whitelisted tokens via Treasury.addToWhitelist()
- * 3. Configure roles as needed
+ * 3. Grant KEEPER_ROLE, MAINTAINER_ROLE and UMM_ROLE: initialize grants none
+ *
+ * An existing Treasury that is not behind a proxy is kept: 09_migrate_treasury.ts replaces it, moving the collateral
+ * in the same Safe batch as updateTreasury.
  */
 const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {deployments, getNamedAccounts} = hre
-  const {get} = deployments
+  const {get, getOrNull} = deployments
   const {deployer} = await getNamedAccounts()
+
+  const existing = await getOrNull(Treasury)
+  if (existing && !(await getOrNull(`${Treasury}_Proxy`))) {
+    console.log(`Keeping ${Treasury} at ${existing.address}: not behind a proxy, replace it through a migration`)
+    return
+  }
 
   // Get the deployed PeggedToken address
   const {address: peggedTokenAddress} = await get(PeggedToken)
 
   // Use deployer as admin on local networks, GOVERNOR on production
-  const admin = ['hardhat', 'localhost'].includes(hre.network.name)
-    ? deployer
-    : Address.GOVERNOR || deployer
+  const admin = ['hardhat', 'localhost'].includes(hre.network.name) ? deployer : Address.GOVERNOR || deployer
 
-  await deployNonUpgradeable(hre, Treasury, [
-    peggedTokenAddress, // peggedToken_
-    admin, // admin_
-  ])
+  await deployUpgradable({
+    hre,
+    contractConfig: UpgradableContracts.Treasury,
+    initializeArgs: [
+      peggedTokenAddress, // peggedToken_
+      admin, // admin_
+    ],
+  })
 }
 
 func.tags = [Treasury]

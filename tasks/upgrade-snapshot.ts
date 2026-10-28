@@ -274,6 +274,8 @@ const takeSnapshot = async (hre: HardhatRuntimeEnvironment, blockTag: BlockTag, 
   if (!block) throw new Error(`Block ${blockTag} does not exist on ${hre.network.name} (not mined yet?)`)
   const proxies: Json = {}
   for (const {alias} of Object.values(UpgradableContracts)) {
+    // The alias of a contract not yet deployed behind a proxy points at a plain contract with no proxy slots
+    if (!(await hre.deployments.getOrNull(`${alias}_Proxy`))) continue
     const {address} = await hre.deployments.get(alias)
     const admin = await getProxyAdmin(provider, address, blockTag)
     proxies[alias] = {
