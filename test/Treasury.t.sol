@@ -8,6 +8,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {IAccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/IAccessControlDefaultAdminRules.sol";
 import {Treasury} from "src/Treasury.sol";
+import {IGateway} from "src/interfaces/IGateway.sol";
 import {deployTreasury} from "test/helpers/Deploy.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
@@ -50,6 +51,8 @@ contract TreasuryTest is Test {
         VUSD.updateGateway(gateway);
         // Mock the amoSupply() call to return 0
         vm.mockCall(gateway, abi.encodeWithSignature("amoSupply()"), abi.encode(0));
+        // No peg band, so harvest converts at the oracle price below par
+        vm.mockCall(gateway, abi.encodeWithSelector(IGateway.effectivePegBand.selector), abi.encode(0));
 
         token = new MockERC20();
         mockVault = new MockYieldVault(address(token));
