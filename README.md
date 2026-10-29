@@ -155,7 +155,7 @@ Security is the highest priority for the Vetro protocol. The contracts have been
 
 -   Comprehensive test suite with high branch coverage.
 -   Protection against reentrancy attacks.
--   Non-upgradeable core contracts.
+-   Non-upgradeable PeggedToken; upgrades of the other core contracts go through the governance Safe.
 -   Strict checks for oracle price staleness and deviation.
 
 *This section will be updated with links to external audit reports once they are completed.*

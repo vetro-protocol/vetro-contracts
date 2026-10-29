@@ -16,7 +16,6 @@ interface ITreasury {
     function isWhitelistedToken(address token_) external view returns (bool);
     // solhint-disable-next-line func-name-mixedcase
     function MAINTAINER_ROLE() external view returns (bytes32);
-    function migrate(address newTreasury_) external;
     function owner() external view returns (address);
     // solhint-disable-next-line func-name-mixedcase
     function PEGGED_TOKEN() external view returns (IPeggedToken);

@@ -27,6 +27,8 @@ interface DeployUpgradableFunctionProps {
   contractConfig: ContractConfig
   initializeArgs: unknown[]
   methodName?: string
+  // Owner of a new proxy's ProxyAdmin. Defaults to GOVERNOR, or the deployer on local networks
+  owner?: string
   // If true, doesn't add upgrade tx to batch but requires multi sig to run it immediately
   // It's needed when a later script must execute after this upgrade
   force?: boolean
@@ -63,6 +65,7 @@ export const deployUpgradable = async ({
   contractConfig,
   initializeArgs,
   methodName = 'initialize',
+  owner: initialOwner,
   force,
 }: DeployUpgradableFunctionProps): Promise<{
   address: string
@@ -77,7 +80,7 @@ export const deployUpgradable = async ({
   const {alias, contract} = contractConfig
 
   // Use deployer as owner on local networks, GOVERNOR on production
-  const owner = ['hardhat', 'localhost'].includes(hre.network.name) ? deployer : GOVERNOR || deployer
+  const owner = initialOwner ?? (['hardhat', 'localhost'].includes(hre.network.name) ? deployer : GOVERNOR || deployer)
 
   const implementationAlias = `${contract}_Implementation`
   const proxyAlias = `${alias}_Proxy`

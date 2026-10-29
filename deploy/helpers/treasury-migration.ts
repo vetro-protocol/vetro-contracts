@@ -2,6 +2,8 @@ import chalk from 'chalk'
 import {BigNumber, Contract, ethers} from 'ethers'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import Address from './address'
+import {getImplementation, getProxyAdmin} from './eip1967'
+import {deployUpgradable} from '.'
 import {assertNoStaleBatch, queuedMultiSigTxs, saveForMultiSigBatchExecution} from './gnosis-safe'
 
 const {log} = console
@@ -28,7 +30,6 @@ const TREASURY_ABI = [
   'function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_)',
   'function grantRole(bytes32 role, address account)',
   'function revokeRole(bytes32 role, address account)',
-  'function renounceRole(bytes32 role, address callerConfirmation)',
   'function updatePriceTolerance(uint256 newPriceTolerance_)',
   'function updateSwapper(address swapper_)',
   'function setDepositActive(address token_, bool active_)',
@@ -431,7 +432,7 @@ const buildMirrorBatch = async (
     call(newTreasury, 'revokeRole', [role, safe], `${target}.revokeRole(${roleName(role)}, Safe)`)
   }
 
-  // 5. Roles the new Treasury holds but the live one does not, e.g. the deployer's constructor grants
+  // 5. Roles the new Treasury holds but the live one does not
   for (const role of allRoles) {
     for (const account of current(role)) {
       if (!holds(desired(role), account)) {
@@ -609,8 +610,8 @@ const checkPendingBatch = async (
     oldTreasury,
     oldState,
     newDeployment,
+    newFromBlock,
     record,
-    stale,
   }: {
     treasuryAlias: string
     safe: string
@@ -618,9 +619,9 @@ const checkPendingBatch = async (
     peggedTokenAlias: string
     oldTreasury: Contract
     oldState: TreasuryState
-    newDeployment: {address: string; receipt?: {blockNumber: number}}
+    newDeployment: {address: string}
+    newFromBlock: number
     record?: MigrationRecord
-    stale: boolean
   }
 ) => {
   const rebuild = `set ${MIGRATE_TREASURY_ENV}=true to rebuild the batch, and replace the Safe proposal with it`
@@ -631,7 +632,7 @@ const checkPendingBatch = async (
     )
   }
   const newTreasury = await hre.ethers.getContractAt(TREASURY_ABI, newDeployment.address)
-  const newState = await readState(hre, newTreasury, newDeployment.receipt?.blockNumber ?? 0)
+  const newState = await readState(hre, newTreasury, newFromBlock)
   const calls = await buildMirrorBatch(hre, {
     safe,
     peggedToken,
@@ -648,11 +649,6 @@ const checkPendingBatch = async (
         `  Recorded:\n${listCalls(record.calls).join('\n')}\n  Live state now needs:\n${listCalls(calls).join('\n')}`
     )
   }
-  if (stale) {
-    log(
-      chalk.yellow(`${treasuryAlias}: the pending Treasury no longer matches the compiled code, see docs/OPERATIONS.md`)
-    )
-  }
   log(
     chalk.yellow(
       `${treasuryAlias}: migration to ${newDeployment.address} is pending, its ${calls.length}-call batch still ` +
@@ -664,10 +660,10 @@ const checkPendingBatch = async (
 /**
  * Move a PeggedToken onto a freshly deployed Treasury that mirrors its live one.
  *
- * With MIGRATE_TREASURY=true and the compiled Treasury differing from the live one, the deployer deploys the new
- * Treasury, gives up the roles its constructor granted, and the Safe batch gets every call that copies the live
- * config and roles onto it, then `updateTreasury`, `migrate` and the old Treasury's removal from the yield vaults.
- * The batch must execute as one Safe transaction.
+ * With MIGRATE_TREASURY=true and a live Treasury that is not behind a proxy, the deployer deploys a Treasury proxy
+ * whose ProxyAdmin the live admin owns, and the Safe batch gets every call that copies the live config and roles onto
+ * it, then `updateTreasury`, `migrate` and the old Treasury's removal from the yield vaults. The batch must execute as
+ * one Safe transaction. A Treasury behind a proxy changes code through an upgrade instead.
  *
  * While the batch is pending, a run without the flag rebuilds it from live state and fails if it no longer matches
  * the recorded one, so a change made after the build (a revoked role, a pause) cannot be undone by executing it. The
@@ -677,9 +673,8 @@ export const migrateTreasuryIfRequested = async (
   hre: HardhatRuntimeEnvironment,
   {peggedTokenAlias, treasuryAlias}: MigrateTreasuryProps
 ): Promise<void> => {
-  const {deployments, getNamedAccounts, ethers} = hre
-  const {get, getOrNull, save, deploy, execute} = deployments
-  const {deployer} = await getNamedAccounts()
+  const {deployments, ethers} = hre
+  const {get, getOrNull, save} = deployments
   const requested = process.env[MIGRATE_TREASURY_ENV] === 'true'
   const safe = Address.GNOSIS_SAFE_ADDRESS
 
@@ -691,11 +686,10 @@ export const migrateTreasuryIfRequested = async (
   const artifact = await get(treasuryAlias)
   const previous = await getOrNull(previousAlias(treasuryAlias))
   const fromBlock = (d: {receipt?: {blockNumber: number}}) => d.receipt?.blockNumber ?? 0
+  // Where the new Treasury's events start. Its alias record carries the current implementation's receipt, which every
+  // upgrade moves forward, so the proxy's own record counts
+  const newFromBlock = async () => fromBlock((await getOrNull(`${treasuryAlias}_Proxy`)) ?? (await get(treasuryAlias)))
   const oldTreasury = await ethers.getContractAt(TREASURY_ABI, live)
-  const differsFromCompiled = async () =>
-    // Compared with the deployment's own args: the live one named the deployer as admin, a new one gets the live admin
-    (await deployments.fetchIfDifferent(treasuryAlias, {contract: 'Treasury', from: deployer, args: artifact.args}))
-      .differences
 
   let oldState: TreasuryState
   if (sameAddress(artifact.address, live)) {
@@ -707,15 +701,15 @@ export const migrateTreasuryIfRequested = async (
         oldTreasury: await ethers.getContractAt(TREASURY_ABI, previous.address),
         newTreasury: oldTreasury,
         oldFromBlock: fromBlock(previous),
-        newFromBlock: fromBlock(artifact),
+        newFromBlock: await newFromBlock(),
       })
       await deployments.delete(previousAlias(treasuryAlias))
       log(chalk.green(`  retired ${previousAlias(treasuryAlias)}, git history keeps its record`))
       return
     }
     if (!requested) return
-    if (!(await differsFromCompiled())) {
-      log(chalk.blue(`${treasuryAlias}: the compiled Treasury matches the live one, nothing to migrate`))
+    if (!sameAddress(await getImplementation(ethers.provider, live), ZERO_ADDRESS)) {
+      log(chalk.blue(`${treasuryAlias}: the live Treasury is behind a proxy, it changes code through an upgrade`))
       return
     }
 
@@ -725,12 +719,19 @@ export const migrateTreasuryIfRequested = async (
 
     // Kept before deploying: deploying under the alias overwrites the live Treasury's record
     await save(previousAlias(treasuryAlias), artifact)
-    await deploy(treasuryAlias, {
-      contract: 'Treasury',
-      from: deployer,
-      args: [peggedTokenDeployment.address, oldState.admin],
-      log: true,
+    await deployUpgradable({
+      hre,
+      contractConfig: {alias: treasuryAlias, contract: 'Treasury'},
+      initializeArgs: [peggedTokenDeployment.address, oldState.admin],
+      owner: oldState.admin,
     })
+    if (sameAddress((await get(treasuryAlias)).address, live)) {
+      throw Error(
+        `${treasuryAlias}_Proxy exists but ${treasuryAlias} still records the live Treasury: an earlier run stopped ` +
+          `after deploying the proxy. Delete ${treasuryAlias}_Proxy.json and ${treasuryAlias}_ProxyAdmin.json and ` +
+          're-run; the orphaned proxy holds nothing.'
+      )
+    }
   } else if (!previous || !sameAddress(previous.address, live)) {
     throw Error(
       `${treasuryAlias} artifact ${artifact.address} is neither the live Treasury ${live} nor a migration from it`
@@ -746,16 +747,10 @@ export const migrateTreasuryIfRequested = async (
         oldTreasury,
         oldState,
         newDeployment: artifact,
+        newFromBlock: await newFromBlock(),
         record: previous.linkedData,
-        stale: await differsFromCompiled(),
       })
       return
-    }
-    if (await differsFromCompiled()) {
-      throw Error(
-        `The pending ${treasuryAlias} ${artifact.address} no longer matches the compiled Treasury. Abandon the pending ` +
-          'migration (docs/OPERATIONS.md) and start a new one.'
-      )
     }
     await assertSafeCanSign(hre, {safe, peggedToken, oldTreasury, oldState})
     assertNothingQueuedFor([live, artifact.address])
@@ -765,21 +760,21 @@ export const migrateTreasuryIfRequested = async (
   const newTreasury = await ethers.getContractAt(TREASURY_ABI, newDeployment.address)
   log(chalk.yellow(`${treasuryAlias}: migrating ${live} -> ${newTreasury.address}`))
 
-  // The constructor makes the deployer KEEPER and MAINTAINER. Until the batch executes they would let it change what
-  // the Safe copies onto, so it gives them up; the batch grants back any it holds on the live Treasury
-  for (const role of ROLE_NAMES.keys()) {
-    if (await newTreasury.hasRole(role, deployer)) {
-      await execute(treasuryAlias, {from: deployer, log: true}, 'renounceRole', role, deployer)
-    }
-  }
-
-  const newState = await readState(hre, newTreasury, fromBlock(newDeployment))
+  const newState = await readState(hre, newTreasury, await newFromBlock())
   if (!sameAddress(oldState.peggedToken, newState.peggedToken)) throw Error('The two Treasuries back different tokens')
   if (oldState.adminDelay !== newState.adminDelay) {
     throw Error(
       `The new Treasury's admin delay is ${newState.adminDelay}s, the live one's ${oldState.adminDelay}s. A delay ` +
         'change is itself delayed, so the batch cannot copy it.'
     )
+  }
+  const proxyAdmin = await ethers.getContractAt(
+    ['function owner() view returns (address)'],
+    await getProxyAdmin(ethers.provider, newTreasury.address)
+  )
+  const proxyAdminOwner: string = await proxyAdmin.owner()
+  if (!sameAddress(proxyAdminOwner, oldState.admin)) {
+    throw Error(`The new Treasury's ProxyAdmin is owned by ${proxyAdminOwner}, not the live admin ${oldState.admin}`)
   }
 
   const calls = await buildMirrorBatch(hre, {

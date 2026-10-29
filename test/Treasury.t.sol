@@ -3,7 +3,12 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {IAccessControlDefaultAdminRules} from
+    "@openzeppelin/contracts/access/extensions/IAccessControlDefaultAdminRules.sol";
 import {Treasury} from "src/Treasury.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
@@ -37,8 +42,11 @@ contract TreasuryTest is Test {
     function setUp() public {
         owner = address(this);
         VUSD = new PeggedToken("VUSD", "VUSD", owner);
-        treasury = new Treasury(address(VUSD), owner);
+        treasury = deployTreasury(address(VUSD), owner);
         VUSD.updateTreasury(address(treasury));
+        // The tests act as keeper and maintainer
+        treasury.grantRole(treasury.KEEPER_ROLE(), address(this));
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), address(this));
         VUSD.updateGateway(gateway);
         // Mock the amoSupply() call to return 0
         vm.mockCall(gateway, abi.encodeWithSignature("amoSupply()"), abi.encode(0));
@@ -52,6 +60,44 @@ contract TreasuryTest is Test {
         ummRole = treasury.UMM_ROLE();
         defaultAdminRole = treasury.DEFAULT_ADMIN_ROLE();
         treasury.grantRole(treasury.MAINTAINER_ROLE(), maintainer);
+    }
+
+    // --- initialize ---
+    function test_initialize_success() public {
+        Treasury _treasury = deployTreasury(address(VUSD), owner);
+        assertEq(address(_treasury.PEGGED_TOKEN()), address(VUSD));
+        assertEq(_treasury.NAME(), "VUSD-Treasury");
+        assertEq(_treasury.priceTolerance(), 100);
+        assertEq(_treasury.defaultAdmin(), owner);
+        assertEq(_treasury.defaultAdminDelay(), 3 days);
+        // The deployer gets no operational role: the admin grants every one
+        assertFalse(_treasury.hasRole(keeperRole, address(this)));
+        assertFalse(_treasury.hasRole(_treasury.MAINTAINER_ROLE(), address(this)));
+    }
+
+    function test_initialize_revertOnZeroPeggedToken() public {
+        Treasury _implementation = new Treasury();
+        vm.expectRevert(Treasury.AddressIsZero.selector);
+        new ERC1967Proxy(address(_implementation), abi.encodeCall(Treasury.initialize, (address(0), owner)));
+    }
+
+    function test_initialize_revertOnZeroAdmin() public {
+        Treasury _implementation = new Treasury();
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControlDefaultAdminRules.AccessControlInvalidDefaultAdmin.selector, address(0))
+        );
+        new ERC1967Proxy(address(_implementation), abi.encodeCall(Treasury.initialize, (address(VUSD), address(0))));
+    }
+
+    function test_initialize_revertIfAlreadyInitialized() public {
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        treasury.initialize(address(VUSD), owner);
+    }
+
+    function test_initialize_revertOnImplementation() public {
+        Treasury _implementation = new Treasury();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        _implementation.initialize(address(VUSD), owner);
     }
 
     // --- addToWhitelist ---
@@ -160,47 +206,6 @@ contract TreasuryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
         vm.prank(alice);
         treasury.removeFromWhitelist(address(token));
-    }
-
-    // --- migrate ---
-    function test_migrate_success() public {
-        Treasury _newTreasury = new Treasury(address(VUSD), owner);
-        uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
-        uint256 _vaultShares = 50 * VAULT_UNIT; // 50 shares
-        deal(address(token), address(treasury), _tokenAmount);
-        deal(address(mockVault), address(treasury), _vaultShares);
-        // Update PeggedToken treasury pointer to new treasury before migrating
-        VUSD.updateTreasury(address(_newTreasury));
-        // Migrate
-        treasury.migrate(address(_newTreasury));
-        assertEq(token.balanceOf(address(_newTreasury)), _tokenAmount);
-        assertEq(mockVault.balanceOf(address(_newTreasury)), _vaultShares);
-    }
-
-    function test_migrate_revertOnZeroAddress() public {
-        vm.expectRevert(Treasury.AddressIsZero.selector);
-        treasury.migrate(address(0));
-    }
-
-    function test_migrate_revertOnPeggedTokenMismatch() public {
-        PeggedToken _fakePeggedToken = new PeggedToken("fakeVUSD", "fakeVUSD", owner);
-        Treasury _newTreasury = new Treasury(address(_fakePeggedToken), owner);
-        vm.expectRevert(Treasury.PeggedTokenMismatch.selector);
-        treasury.migrate(address(_newTreasury));
-    }
-
-    function test_migrate_revertIfTreasuryNotMigrated() public {
-        Treasury _newTreasury = new Treasury(address(VUSD), owner);
-        // PeggedToken.treasury() still points to old treasury, not newTreasury
-        vm.expectRevert(Treasury.TreasuryNotMigrated.selector);
-        treasury.migrate(address(_newTreasury));
-    }
-
-    function test_migrate_revertIfNotDefaultAdmin() public {
-        Treasury _newTreasury = new Treasury(address(VUSD), owner);
-        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
-        vm.prank(alice);
-        treasury.migrate(address(_newTreasury));
     }
 
     // --- sweep ---

@@ -9,7 +9,7 @@ This guide covers the deployment process for Vetro contracts using Hardhat Deplo
 | Contract | Type | Proxy Pattern |
 |----------|------|---------------|
 | PeggedToken | Non-upgradeable | None |
-| Treasury | Non-upgradeable | None |
+| Treasury | Upgradeable | OZ v5 TransparentUpgradeableProxy |
 | Gateway | Upgradeable | OZ v5 TransparentUpgradeableProxy |
 | StakingVault | Upgradeable | OZ v5 TransparentUpgradeableProxy |
 | YieldDistributor | Upgradeable | OZ v5 TransparentUpgradeableProxy |
@@ -275,7 +275,7 @@ deploy/
 └── scripts/
     └── mainnet/
         ├── 00_pegged_token.ts       # PeggedToken deployment
-        ├── 01_treasury.ts           # Treasury deployment
+        ├── 01_treasury.ts           # Treasury deployment (upgradeable)
         ├── 02_gateway.ts            # Gateway deployment (upgradeable)
         ├── 03_staking_vault.ts      # StakingVault deployment (upgradeable)
         ├── 04_yield_distributor.ts  # YieldDistributor deployment (upgradeable)
@@ -304,7 +304,10 @@ After deployment, artifacts are saved in `deployments/<network>/`:
 ```
 deployments/mainnet/
 ├── PeggedToken.json
-├── Treasury.json
+├── Treasury.json                   # Points to proxy address
+├── Treasury_Implementation.json
+├── Treasury_Proxy.json
+├── Treasury_ProxyAdmin.json
 ├── Gateway.json                    # Points to proxy address
 ├── Gateway_Implementation.json     # Implementation contract
 ├── Gateway_Proxy.json              # Proxy contract

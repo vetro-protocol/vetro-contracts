@@ -10,6 +10,7 @@ import {AggregatorV2V3Interface} from "@chainlink/contracts/interfaces/feeds/Agg
 import {PeggedToken} from "src/PeggedToken.sol";
 import {Gateway} from "src/Gateway.sol";
 import {Treasury} from "src/Treasury.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {DerivedPriceFeedAdapter} from "src/DerivedPriceFeedAdapter.sol";
 import {cbBTC, CBBTC_USD_FEED, BTC_USD_FEED} from "test/helpers/Address.ethereum.sol";
 
@@ -42,8 +43,11 @@ contract vetBTC_E2E_Test is Test {
 
         // Deploy core contracts
         vetBTC = new PeggedToken("Vetro BTC", "vetBTC", owner);
-        treasury = new Treasury(address(vetBTC), owner);
+        treasury = deployTreasury(address(vetBTC), owner);
         vetBTC.updateTreasury(address(treasury));
+        // The tests act as keeper and maintainer
+        treasury.grantRole(treasury.KEEPER_ROLE(), address(this));
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), address(this));
 
         Gateway implementation = new Gateway();
         bytes memory initData =

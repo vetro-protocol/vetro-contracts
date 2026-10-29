@@ -9,6 +9,7 @@ import {Gateway} from "src/Gateway.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {StakingVault} from "src/StakingVault.sol";
 import {Treasury} from "src/Treasury.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {YieldDistributor} from "src/YieldDistributor.sol";
 import {YieldManager} from "src/YieldManager.sol";
 import {IPeggedToken} from "src/interfaces/IPeggedToken.sol";
@@ -176,7 +177,7 @@ contract YieldManagerInvariantTest is Test {
 
     function setUp() public {
         peggedToken = new PeggedToken("VUSD", "VUSD", address(this));
-        treasury = new Treasury(address(peggedToken), admin);
+        treasury = deployTreasury(address(peggedToken), admin);
         peggedToken.updateTreasury(address(treasury));
 
         Gateway gatewayImpl = new Gateway();

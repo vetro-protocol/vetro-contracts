@@ -14,7 +14,13 @@ task('validate-upgrades', "Check each proxy can be upgraded to this repo's imple
     for (const alias of aliases) {
       const config = UpgradableContracts[alias]
       if (!config) throw new Error(`Unknown upgradeable alias ${alias}`)
-      const {address: proxy} = await hre.deployments.get(`${config.alias}_Proxy`)
+      const proxyDeployment = await hre.deployments.getOrNull(`${config.alias}_Proxy`)
+      // Nothing live to break yet: the first deploy creates the proxy with this layout
+      if (!proxyDeployment) {
+        console.log(`${chalk.yellow('- skipped')}  ${alias} (no proxy deployed yet)`)
+        continue
+      }
+      const proxy = proxyDeployment.address
 
       // An error on one proxy (e.g. live source not found) must not hide the result of the others
       try {

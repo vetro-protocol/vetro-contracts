@@ -98,7 +98,7 @@ All roles for Gateway and Treasury operations are managed on the **Treasury** co
 
 | Role | Constant | Managed On | Purpose |
 |------|----------|------------|---------|
-| DEFAULT_ADMIN_ROLE | `0x00` | Treasury, YieldDistributor | Protocol governance: whitelist tokens, set limits, migrate |
+| DEFAULT_ADMIN_ROLE | `0x00` | Treasury, YieldDistributor | Protocol governance: whitelist tokens, set limits |
 | MAINTAINER_ROLE | `keccak256("MAINTAINER_ROLE")` | Treasury | Configuration: fees, oracles, whitelists, withdrawal settings |
 | KEEPER_ROLE | `keccak256("KEEPER_ROLE")` | Treasury | Vault operations: push/pull, pause/unpause, swap |
 | UMM_ROLE | `keccak256("UMM_ROLE")` | Treasury | AMO operations: mint/burn VUSD, harvest yield |
@@ -340,13 +340,9 @@ Gateway.updatePegBand(address token_, uint256 newPegBandBps_)
 
 #### 5.6 Migrate Treasury
 
-```
-Treasury.migrate(address newTreasury_)
-```
-
-- Transfers all tokens and vault shares to new Treasury
-- New Treasury must have same VUSD configured
-- **Irreversible** - use with extreme caution
+The upgradeable Treasury has no `migrate`: it changes code through upgrades. The live Treasuries, which are not
+behind a proxy, still have `migrate(address newTreasury_)`, called only by the migration batch (see
+[Migrating a Treasury](#migrating-a-treasury)).
 
 #### 5.7 Sweep Non-Reserved Tokens
 
@@ -630,9 +626,10 @@ per contract (`<Contract>_Implementation`), though the live ones can differ unti
 
 ## Migrating a Treasury
 
-The Treasury is not upgradeable: a change to its code ships as a new Treasury that takes over the collateral.
-`09_migrate_treasury.ts` (VUSD) and `vetbtc/10_vetbtc_migrate_treasury.ts` do this, and only when asked to with
-`MIGRATE_TREASURY=true`, so a routine deploy never starts a migration.
+The live Treasuries are not behind a proxy, so moving to the upgradeable Treasury means deploying one and handing
+the collateral over. `09_migrate_treasury.ts` (VUSD) and `vetbtc/10_vetbtc_migrate_treasury.ts` do this, and only
+when asked to with `MIGRATE_TREASURY=true`, so a routine deploy never starts a migration. Once a Treasury is behind a
+proxy, the script has nothing to migrate: code changes ship as upgrades, like the Gateway's.
 
 1. **Dry run on a fork.** Fork with anvil (`--gas-limit 16777216 --base-fee 0 --chain-id 1`: mainnet caps a tx at
    2^24 gas, and the fork's base fee outruns the deploy's fee estimate), copy `deployments/ethereum` to
@@ -651,9 +648,9 @@ The Treasury is not upgradeable: a change to its code ships as a new Treasury th
    Before deploying anything, the script checks that the Safe is the live Treasury's admin, the token's owner and a
    maintainer of every yield vault, that no admin transfer or delay change is pending on the live Treasury, and that
    no batch file is left over. It refuses if this run already queued a call to the live Treasury (it would run before
-   the copy and not be in it). The deployer then deploys the compiled Treasury with the live Treasury's admin and
-   renounces the KEEPER and MAINTAINER roles its constructor gave it; the live Treasury's record is kept as
-   `<alias>_Previous`.
+   the copy and not be in it). The deployer then deploys a Treasury proxy initialized with the live Treasury's admin,
+   whose ProxyAdmin that admin owns; `initialize` grants no other role, so nothing can change the new Treasury before
+   the batch. The live Treasury's record is kept as `<alias>_Previous`.
 
    Everything else is a Safe call, read from the live Treasury and printed as a numbered list:
    - whitelist the new Treasury on each yield vault
@@ -686,6 +683,9 @@ The Treasury is not upgradeable: a change to its code ships as a new Treasury th
    the live Treasury, and do not migrate during an incident: the batch would undo a change it does not know about.
    A keeper action after the check is caught by step 4, which is why it follows the execution right away.
 
+   A Treasury code change made while the batch is pending ships as an ordinary upgrade of the new proxy, before or
+   after the migration executes.
+
 4. **Right after the Safe executes**, re-run the deploy without the flag. The migration script finds the block
    `migrate` executed in and compares both Treasuries at that block: collateral list and order, configs, flags,
    tolerance, swapper, admin, admin delay and every role's holders. It checks that the old Treasury held no
@@ -693,7 +693,8 @@ The Treasury is not upgradeable: a change to its code ships as a new Treasury th
    each vault whitelisted the new Treasury, then that the vaults no longer whitelist the old one. It fails listing
    every difference. On success it deletes `<alias>_Previous`. Then:
    - commit the artifacts (git keeps the deleted `_Previous` record)
-   - update the Treasury addresses in this file and in `test/helpers/Address.ethereum.sol`
+   - update the Treasury addresses (and their type, now a proxy) in this file and in
+     `test/helpers/Address.ethereum.sol`
    - repoint keeper bots and monitoring at the new Treasury
    - cut a release (major bump)
 
@@ -703,9 +704,9 @@ The Treasury is not upgradeable: a change to its code ships as a new Treasury th
    block never changes. Once every reported difference is explained or applied again, delete
    `<alias>_Previous.json` by hand and commit.
 
-5. **To abandon a pending migration** (never executed, e.g. the Treasury code changed and the script now refuses to
-   rebuild), copy `<alias>_Previous.json` back over `<alias>.json`, remove its `linkedData` field, and delete
-   `<alias>_Previous.json`. Then reject the Safe proposal. The abandoned Treasury holds nothing and no roles but the
+5. **To abandon a pending migration** (never executed), copy `<alias>_Previous.json` back over `<alias>.json`,
+   remove its `linkedData` field, and delete `<alias>_Previous.json`, `<alias>_Proxy.json` and
+   `<alias>_ProxyAdmin.json`. Then reject the Safe proposal. The abandoned Treasury holds nothing and no roles but the
    Safe's admin, so it can stay.
 
 ---

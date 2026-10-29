@@ -81,7 +81,7 @@ export const VetBTCConfig = {
 
 export const TreasuryConfig = {
   // Admin transfer delay is hardcoded in contract as 3 days
-  // Initial roles granted to deployer: KEEPER_ROLE, MAINTAINER_ROLE
+  // No role is granted to the deployer: the admin grants KEEPER_ROLE, MAINTAINER_ROLE and UMM_ROLE
 }
 
 // =============================================================================
@@ -186,6 +186,10 @@ interface ContractConfig {
 
 export const UpgradableContracts: {[key: string]: ContractConfig} = {
   // VUSD ecosystem
+  Treasury: {
+    alias: 'Treasury',
+    contract: 'Treasury',
+  },
   Gateway: {
     alias: 'Gateway',
     contract: 'Gateway',
@@ -200,6 +204,10 @@ export const UpgradableContracts: {[key: string]: ContractConfig} = {
   },
 
   // vetBTC ecosystem
+  VetBTCTreasury: {
+    alias: ContractAliases.VetBTCTreasury,
+    contract: 'Treasury',
+  },
   VetBTCGateway: {
     alias: ContractAliases.VetBTCGateway,
     contract: 'Gateway',
