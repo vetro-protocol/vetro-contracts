@@ -214,7 +214,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         }
 
         IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
-        uint256 _assets = _vault.convertToAssets(_vault.balanceOf(address(this)));
+        uint256 _assets = _vault.maxWithdraw(address(this));
         if (_assets > 0) {
             uint256 _toWithdraw = Math.min(_excess, _assets);
             _vault.withdraw(_toWithdraw, receiver_, address(this));
@@ -470,7 +470,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /**
      * @notice Current withdrawable for given token.
      * If token is not supported by treasury it will return 0.
-     * @dev Book value, not liquidity: a withdrawal reverts if idle plus what the vault can free at once falls short.
+     * @dev Idle balance plus the vault's `maxWithdraw` for the Treasury. The yield vaults report book value there, not
+     * liquidity: a withdrawal reverts if idle plus what the vault can free at once falls short.
      * @param token_ token address
      */
     function withdrawable(address token_) external view returns (uint256) {
@@ -478,8 +479,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         // Token is not supported
         if (address(_vault) == address(0)) return 0;
 
-        uint256 _shares = _vault.balanceOf(address(this));
-        return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
+        return IERC20(token_).balanceOf(address(this)) + _vault.maxWithdraw(address(this));
     }
 
     /*/////////////////////////////////////////////////////////////

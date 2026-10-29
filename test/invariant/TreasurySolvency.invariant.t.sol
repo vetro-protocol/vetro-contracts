@@ -69,6 +69,11 @@ contract TreasurySolvencyHandler is Test {
         ghost_minted += amount;
     }
 
+    /// @dev Book value: idle balance plus the value of the vault shares
+    function holdings() public view returns (uint256) {
+        return collateral.balanceOf(address(treasury)) + vault.convertToAssets(vault.balanceOf(address(treasury)));
+    }
+
     function userRedeem(uint256 seed, uint256 amount) external useActor(seed) {
         uint256 _bal = vusd.balanceOf(currentActor);
         if (_bal == 0) return;
@@ -188,7 +193,7 @@ contract TreasurySolvencyInvariantTest is Test {
     ///      has 18 decimals, so its token count is its par value.
     function invariant_collateralization() public view {
         uint256 _backedSupply = vusd.totalSupply() - gateway.amoSupply();
-        assertGe(treasury.withdrawable(address(collateral)), _backedSupply, "par backing below backed supply");
+        assertGe(handler.holdings(), _backedSupply, "par backing below backed supply");
 
         // At or above par reserve() takes the capped path, so it must still cover the backed supply
         (uint256 _price, uint256 _unitPrice) = treasury.getPrice(address(collateral));

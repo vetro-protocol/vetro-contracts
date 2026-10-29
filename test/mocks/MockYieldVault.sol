@@ -30,6 +30,10 @@ contract MockYieldVault {
         return 18;
     }
 
+    function maxWithdraw(address owner) external view returns (uint256) {
+        return convertToAssets(balances[owner]);
+    }
+
     function deposit(uint256 assets, address receiver) external returns (uint256) {
         IERC20(asset).transferFrom(msg.sender, address(this), assets);
         uint256 _shares = convertToShares(assets);

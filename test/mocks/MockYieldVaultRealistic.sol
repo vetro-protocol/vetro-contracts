@@ -5,10 +5,11 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
-/// @notice ERC4626-style mock with a drifting price-per-share and an optional illiquid strategy.
+/// @notice ERC4626-style mock with a drifting price-per-share, an optional illiquid strategy and a shutdown switch.
 /// @dev MockYieldVault is fixed 1:1 and always fully liquid, so it can never exercise reserve
 ///      accounting under share appreciation, nor the redeem-under-illiquidity path where
 ///      convertToAssets(shares) exceeds what withdraw() can actually deliver. This mock can.
+///      Its views follow yield-vault main: maxWithdraw is book value and reads 0 while shut down.
 /// forge-lint: disable-next-item(erc20-unchecked-transfer)
 contract MockYieldVaultRealistic {
     using Math for uint256;
@@ -21,6 +22,8 @@ contract MockYieldVaultRealistic {
     uint256 public totalShares;
     uint256 public totalManagedAssets; // NAV in asset units; drifts with yield
     uint256 public liquidCap; // per-call withdraw ceiling; 0 leaves the vault fully liquid
+    bool public shutdown; // deposits and withdrawals revert, maxDeposit and maxWithdraw read 0
+    bool public liquidityAwareMaxWithdraw; // caps maxWithdraw at what withdraw() can deliver, unlike the yield vaults
 
     constructor(address asset_) {
         asset = asset_;
@@ -53,13 +56,21 @@ contract MockYieldVaultRealistic {
         return shares.mulDiv(totalManagedAssets, totalShares);
     }
 
+    function maxDeposit(address) external view returns (uint256) {
+        return shutdown ? 0 : type(uint256).max;
+    }
+
+    /// @dev Book value, not liquidity, as the yield vaults report it: withdraw() reverts past the liquid cap instead
     function maxWithdraw(address owner_) external view returns (uint256) {
+        if (shutdown) return 0;
         uint256 _assets = convertToAssets(balances[owner_]);
+        if (!liquidityAwareMaxWithdraw) return _assets;
         uint256 _available = _liquidAvailable();
         return _assets < _available ? _assets : _available;
     }
 
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
+        require(!shutdown, "MockYieldVaultRealistic: shutdown");
         IERC20(asset).transferFrom(msg.sender, address(this), assets);
         shares = convertToShares(assets);
         balances[receiver] += shares;
@@ -68,6 +79,7 @@ contract MockYieldVaultRealistic {
     }
 
     function withdraw(uint256 assets, address receiver, address owner_) external returns (uint256 shares) {
+        require(!shutdown, "MockYieldVaultRealistic: shutdown");
         require(assets <= _liquidAvailable(), "MockYieldVaultRealistic: illiquid");
         shares = convertToShares(assets);
         require(balances[owner_] >= shares, "MockYieldVaultRealistic: insufficient shares");
@@ -78,6 +90,7 @@ contract MockYieldVaultRealistic {
     }
 
     function redeem(uint256 shares, address receiver, address owner_) external returns (uint256 assets) {
+        require(!shutdown, "MockYieldVaultRealistic: shutdown");
         assets = convertToAssets(shares);
         require(assets <= _liquidAvailable(), "MockYieldVaultRealistic: illiquid");
         require(balances[owner_] >= shares, "MockYieldVaultRealistic: insufficient shares");
@@ -103,6 +116,16 @@ contract MockYieldVaultRealistic {
     /// @notice Cap assets withdrawable per call to model an illiquid strategy; 0 restores full liquidity.
     function setLiquidCap(uint256 cap) external {
         liquidCap = cap;
+    }
+
+    /// @notice Model yield-vault main's shutdown: no deposits or withdrawals, and both max views read 0.
+    function setShutdown(bool shutdown_) external {
+        shutdown = shutdown_;
+    }
+
+    /// @notice Cap maxWithdraw at what one withdraw() can deliver, as a liquidity-aware vault would.
+    function setLiquidityAwareMaxWithdraw(bool on_) external {
+        liquidityAwareMaxWithdraw = on_;
     }
 
     function _liquidAvailable() private view returns (uint256) {
