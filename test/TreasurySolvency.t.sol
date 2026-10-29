@@ -101,6 +101,27 @@ contract TreasurySolvencyTest is Test {
         assertApproxEqAbs(treasury.reserve(), vusd.totalSupply() + 60e18, 1, "the rest stays harvestable");
     }
 
+    function test_harvest_liquidityAwareVault_reducesNetDepositedByWhatItPays() public {
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(100e18);
+
+        vault.setLiquidityAwareMaxWithdraw(true);
+        vault.setLiquidCap(40e18);
+        assertEq(treasury.harvest(address(collateral), owner), 40e18);
+        assertEq(treasury.netDeposited(address(collateral)), 960e18, "the 40 paid, not the 100 of excess");
+    }
+
+    function test_redeem_afterVaultYield_reducesNetDepositedByAssets() public {
+        _mint(alice, 100e18);
+        // Each share is now worth 2 collateral
+        _simulateVaultYield(100e18);
+
+        vm.prank(alice);
+        gateway.redeem(address(collateral), 40e18, 0, alice);
+        assertEq(collateral.balanceOf(alice), 40e18);
+        assertEq(treasury.netDeposited(address(collateral)), 60e18, "the 40 paid out, not the 20 shares");
+    }
+
     function test_harvest_revertsWhenTheVaultCannotRelease() public {
         _mint(alice, 1_000e18);
         _simulateVaultYield(100e18);
@@ -309,9 +330,10 @@ contract TreasurySolvencyTest is Test {
         _mint(alice, 1_000e18);
         deal(address(collateral), address(treasury), 100e18);
 
-        // A shut-down vault (yield-vault main) reports nothing withdrawable
+        // A shut-down vault (yield-vault main) reports nothing withdrawable and takes no deposits
         vault.setShutdown(true);
         assertEq(treasury.withdrawable(address(collateral)), 100e18, "only the idle balance is withdrawable");
+        assertEq(gateway.maxDeposit(address(collateral)), 0, "the vault takes no deposits");
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Gateway.ExceededMaxWithdraw.selector, 150e18, 100e18));

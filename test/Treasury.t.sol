@@ -180,6 +180,10 @@ contract TreasuryTest is Test {
         treasury.addToWhitelist(address(_extra), address(_extraVault), address(_extraOracle), 1 hours);
     }
 
+    function test_addToWhitelist_depositUncapped() public view {
+        assertEq(treasury.depositCap(address(token)), type(uint256).max);
+    }
+
     // --- removeFromWhitelist ---
     function test_removeFromWhitelist_success() public {
         treasury.removeFromWhitelist(address(token));
@@ -206,6 +210,28 @@ contract TreasuryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
         vm.prank(alice);
         treasury.removeFromWhitelist(address(token));
+    }
+
+    function test_removeFromWhitelist_clearsDepositCap() public {
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        treasury.removeFromWhitelist(address(token));
+        assertEq(treasury.depositCap(address(token)), 0);
+    }
+
+    function test_removeFromWhitelist_readdedTokenIsUncapped() public {
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 100 * TOKEN_UNIT);
+        // Empty the vault so the token can be removed; the idle balance may stay
+        treasury.pull(address(token), 100 * TOKEN_UNIT);
+        treasury.removeFromWhitelist(address(token));
+
+        treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
+        assertEq(treasury.depositCap(address(token)), type(uint256).max);
+        assertEq(treasury.netDeposited(address(token)), 0);
     }
 
     // --- sweep ---
@@ -238,6 +264,28 @@ contract TreasuryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
         vm.prank(alice);
         treasury.sweep(address(_other), alice);
+    }
+
+    // --- updateDepositCap ---
+    function test_updateDepositCap_success() public {
+        vm.expectEmit(address(treasury));
+        emit Treasury.UpdatedDepositCap(address(token), type(uint256).max, 100 * TOKEN_UNIT);
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        assertEq(treasury.depositCap(address(token)), 100 * TOKEN_UNIT);
+    }
+
+    function test_updateDepositCap_revertIfNotMaintainer() public {
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, treasury.MAINTAINER_ROLE()));
+        vm.prank(alice);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+    }
+
+    function test_updateDepositCap_revertIfNotWhitelisted() public {
+        MockERC20 _token2 = new MockERC20();
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(_token2), 100 * TOKEN_UNIT);
     }
 
     // --- updateOracle ---
@@ -345,7 +393,111 @@ contract TreasuryTest is Test {
         treasury.deposit(address(token), _tokenAmount);
     }
 
+    function test_deposit_onlyGateway_atDepositCap() public {
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        deal(address(token), address(treasury), 60 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 60 * TOKEN_UNIT);
+        deal(address(token), address(treasury), 40 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 40 * TOKEN_UNIT);
+        assertEq(treasury.netDeposited(address(token)), 100 * TOKEN_UNIT);
+        assertEq(treasury.maxDeposit(address(token)), 0);
+    }
+
+    function test_deposit_onlyGateway_revertIfDepositCapExceeded() public {
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        deal(address(token), address(treasury), 60 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 60 * TOKEN_UNIT);
+
+        deal(address(token), address(treasury), 40 * TOKEN_UNIT + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Treasury.ExceededDepositCap.selector, address(token), 100 * TOKEN_UNIT + 1, 100 * TOKEN_UNIT
+            )
+        );
+        vm.prank(gateway);
+        treasury.deposit(address(token), 40 * TOKEN_UNIT + 1);
+    }
+
+    function test_deposit_onlyGateway_holdingsDoNotCount() public {
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        // Collateral that arrived outside a deposit, like yield or a migration, takes no room
+        deal(address(token), address(treasury), 500 * TOKEN_UNIT);
+        assertEq(treasury.maxDeposit(address(token)), 100 * TOKEN_UNIT);
+
+        deal(address(token), address(treasury), 600 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 100 * TOKEN_UNIT);
+        assertEq(treasury.netDeposited(address(token)), 100 * TOKEN_UNIT);
+
+        deal(address(token), address(treasury), 500 * TOKEN_UNIT + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Treasury.ExceededDepositCap.selector, address(token), 100 * TOKEN_UNIT + 1, 100 * TOKEN_UNIT
+            )
+        );
+        vm.prank(gateway);
+        treasury.deposit(address(token), 1);
+    }
+
+    function test_deposit_onlyGateway_vaultLossOpensNoRoom() public {
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 100 * TOKEN_UNIT);
+
+        // The vault's shares lose half their value
+        uint256 _shares = mockVault.balanceOf(address(treasury));
+        vm.mockCall(
+            address(mockVault), abi.encodeCall(mockVault.convertToAssets, (_shares)), abi.encode(50 * TOKEN_UNIT)
+        );
+        assertEq(treasury.maxDeposit(address(token)), 0);
+
+        deal(address(token), address(treasury), 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Treasury.ExceededDepositCap.selector, address(token), 100 * TOKEN_UNIT + 1, 100 * TOKEN_UNIT
+            )
+        );
+        vm.prank(gateway);
+        treasury.deposit(address(token), 1);
+    }
+
     // --- withdraw onlyGateway ---
+    function test_withdraw_onlyGateway_idleAndVault_reducesFullAmount() public {
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 100 * TOKEN_UNIT);
+
+        // 10 idle and 30 from the vault
+        deal(address(token), address(treasury), 10 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.withdraw(address(token), 40 * TOKEN_UNIT, alice);
+        assertEq(token.balanceOf(alice), 40 * TOKEN_UNIT);
+        assertEq(treasury.netDeposited(address(token)), 60 * TOKEN_UNIT);
+    }
+
+    function test_withdraw_onlyGateway_reducesNetDeposited() public {
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.withdraw(address(token), 40 * TOKEN_UNIT, alice);
+        assertEq(treasury.netDeposited(address(token)), 60 * TOKEN_UNIT);
+
+        // Never below 0: collateral that arrived outside a deposit redeems too
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.withdraw(address(token), 100 * TOKEN_UNIT, alice);
+        assertEq(treasury.netDeposited(address(token)), 0);
+    }
+
     function test_withdraw_onlyGateway_withdrawFromVault() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT;
         deal(address(token), address(treasury), _tokenAmount);
@@ -393,6 +545,20 @@ contract TreasuryTest is Test {
         vm.expectRevert(abi.encodeWithSignature("WithdrawIsPaused(address)", token));
         vm.prank(gateway);
         treasury.withdraw(address(token), 10 * TOKEN_UNIT, alice);
+    }
+
+    function test_withdraw_onlyGateway_revertIfReceiverIsTreasuryOrVault() public {
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 100 * TOKEN_UNIT);
+
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidReceiver.selector, address(treasury)));
+        vm.prank(gateway);
+        treasury.withdraw(address(token), 10 * TOKEN_UNIT, address(treasury));
+
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidReceiver.selector, address(mockVault)));
+        vm.prank(gateway);
+        treasury.withdraw(address(token), 10 * TOKEN_UNIT, address(mockVault));
     }
 
     // --- push ---
@@ -684,6 +850,41 @@ contract TreasuryTest is Test {
         assertEq(treasury.withdrawable(address(_token2)), 0);
     }
 
+    // --- maxDeposit ---
+    function test_maxDeposit() public {
+        assertEq(treasury.maxDeposit(address(token)), type(uint256).max);
+
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        deal(address(token), address(treasury), 30 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 30 * TOKEN_UNIT);
+        assertEq(treasury.maxDeposit(address(token)), 70 * TOKEN_UNIT);
+    }
+
+    function test_maxDeposit_returnZeroIfDepositPaused() public {
+        treasury.setDepositActive(address(token), false);
+        assertEq(treasury.maxDeposit(address(token)), 0);
+    }
+
+    function test_maxDeposit_returnZeroIfNotWhitelisted() public {
+        MockERC20 _token2 = new MockERC20();
+        assertEq(treasury.maxDeposit(address(_token2)), 0);
+    }
+
+    function test_maxDeposit_boundedByVault() public {
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 100 * TOKEN_UNIT);
+        vm.mockCall(
+            address(mockVault), abi.encodeCall(mockVault.maxDeposit, (address(treasury))), abi.encode(5 * TOKEN_UNIT)
+        );
+        assertEq(treasury.maxDeposit(address(token)), 5 * TOKEN_UNIT);
+
+        // A paused or shut-down vault takes nothing
+        vm.mockCall(address(mockVault), abi.encodeCall(mockVault.maxDeposit, (address(treasury))), abi.encode(0));
+        assertEq(treasury.maxDeposit(address(token)), 0);
+    }
+
     // --- reserve ---
     function test_reserve_tokenInTreasury() public {
         uint256 _tokenAmount = 100 * TOKEN_UNIT; // 100 tokens
@@ -825,6 +1026,20 @@ contract TreasuryTest is Test {
         assertEq(treasury.withdrawable(address(token)), 600 * TOKEN_UNIT);
     }
 
+    function test_harvest_reducesNetDeposited() public {
+        address umm = makeAddr("UMM");
+        treasury.grantRole(ummRole, umm);
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 1000 * TOKEN_UNIT);
+        vm.prank(gateway);
+        VUSD.mint(alice, 800e18);
+
+        vm.prank(umm);
+        assertEq(treasury.harvest(address(token), umm), 200 * TOKEN_UNIT);
+        assertEq(treasury.netDeposited(address(token)), 800 * TOKEN_UNIT);
+    }
+
     function test_harvest_noExcess() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
@@ -947,5 +1162,17 @@ contract TreasuryTest is Test {
         vm.expectRevert(Treasury.AddressIsZero.selector);
         vm.prank(alice);
         treasury.harvest(address(token), address(0));
+    }
+
+    function test_harvest_revertIfReceiverIsTreasuryOrVault() public {
+        treasury.grantRole(ummRole, alice);
+
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidReceiver.selector, address(treasury)));
+        vm.prank(alice);
+        treasury.harvest(address(token), address(treasury));
+
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidReceiver.selector, address(mockVault)));
+        vm.prank(alice);
+        treasury.harvest(address(token), address(mockVault));
     }
 }

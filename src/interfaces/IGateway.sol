@@ -50,8 +50,12 @@ interface IGateway {
     /// @notice Returns remaining AMO mint capacity
     function maxAmoMint() external view returns (uint256);
 
-    /// @notice Returns maximum deposit amount possible
-    function maxDeposit() external pure returns (uint256);
+    /// @notice Returns the most of a token the Treasury accepts: the room under its deposit cap, bounded by what the
+    /// yield vault accepts
+    /// @dev Not a guarantee that a deposit succeeds: the minted amount must also fit in {maxMint}, and the token's
+    /// price must be fresh and within tolerance
+    /// @param tokenIn_ Token to deposit
+    function maxDeposit(address tokenIn_) external view returns (uint256);
 
     /// @notice Returns remaining mint capacity
     function maxMint() external view returns (uint256);

@@ -35,6 +35,14 @@ contract TreasurySolvencyHandler is Test {
     uint256 public ghost_amoFloatRedeemed;
     uint256 public ghost_harvested;
     uint256 public ghost_priceTicks;
+    uint256 public ghost_donated;
+    uint256 public ghost_capUpdates;
+    uint256 public ghost_capRejections;
+    uint256 public ghost_harvestCapRejections;
+    // A deposit that passed the cap check with net deposits ending above the cap, or was refused while within it
+    uint256 public ghost_capViolations;
+    // Independent model of Treasury.netDeposited: up on deposits, down on what redemptions and harvest pay out
+    uint256 public ghost_netDeposited;
 
     modifier useActor(uint256 seed) {
         currentActor = actors[bound(seed, 0, actors.length - 1)];
@@ -62,11 +70,27 @@ contract TreasurySolvencyHandler is Test {
     function userMint(uint256 seed, uint256 amount) external useActor(seed) {
         amount = bound(amount, 1e12, 1_000_000e18);
         deal(address(collateral), currentActor, amount);
+        bool _overCap = ghost_netDeposited + amount > treasury.depositCap(address(collateral));
         vm.startPrank(currentActor);
         collateral.approve(address(gateway), amount);
-        gateway.deposit(address(collateral), amount, 0, currentActor);
+        try gateway.deposit(address(collateral), amount, 0, currentActor) {
+            ghost_minted += amount;
+            ghost_netDeposited += amount;
+            if (_overCap) ghost_capViolations++;
+        } catch (bytes memory reason) {
+            _revertUnlessCapExceeded(reason);
+            ghost_capRejections++;
+            if (!_overCap) ghost_capViolations++;
+        }
         vm.stopPrank();
-        ghost_minted += amount;
+    }
+
+    // Moves the cap to between half and twice the current net deposits, so deposits both pass and hit it
+    function setCap(uint256 cap) external {
+        uint256 _net = ghost_netDeposited;
+        cap = _net == 0 ? bound(cap, 1, 2_000_000e18) : bound(cap, _net / 2, _net * 2);
+        treasury.updateDepositCap(address(collateral), cap);
+        ghost_capUpdates++;
     }
 
     /// @dev Book value: idle balance plus the value of the vault shares
@@ -79,7 +103,7 @@ contract TreasurySolvencyHandler is Test {
         if (_bal == 0) return;
         amount = bound(amount, 1, _bal);
         vm.prank(currentActor);
-        gateway.redeem(address(collateral), amount, 0, currentActor);
+        _reduceNetDeposited(gateway.redeem(address(collateral), amount, 0, currentActor));
         ghost_redeemed += amount;
     }
 
@@ -89,7 +113,7 @@ contract TreasurySolvencyHandler is Test {
         amount = bound(amount, 1, _held);
         vusd.transfer(currentActor, amount);
         vm.prank(currentActor);
-        gateway.redeem(address(collateral), amount, 0, currentActor);
+        _reduceNetDeposited(gateway.redeem(address(collateral), amount, 0, currentActor));
         ghost_amoFloatRedeemed += amount;
     }
 
@@ -118,6 +142,19 @@ contract TreasurySolvencyHandler is Test {
         ghost_yield += amount;
     }
 
+    // Collateral that arrives outside a deposit: holdings grow, net deposits do not
+    function donateIdle(uint256 amount) external {
+        amount = bound(amount, 1, 100_000e18);
+        deal(address(collateral), address(treasury), collateral.balanceOf(address(treasury)) + amount);
+        ghost_donated += amount;
+    }
+
+    // Caps what one vault withdrawal can deliver (0 is fully liquid), so redemptions and harvest take partial paths
+    function vaultLiquidity(uint256 liquidCap, bool liquidityAware) external {
+        vault.setLiquidCap(bound(liquidCap, 0, 1_000_000e18));
+        vault.setLiquidityAwareMaxWithdraw(liquidityAware);
+    }
+
     // Moves the oracle anywhere inside the Treasury's default 1% priceTolerance
     function priceTick(uint256 price) external {
         price = bound(price, 0.99e8, 1.01e8);
@@ -125,13 +162,35 @@ contract TreasurySolvencyHandler is Test {
         ghost_priceTicks++;
     }
 
-    // Re-mints the harvested collateral through the Gateway, as YieldManager does
+    // Re-mints the harvested collateral through the Gateway, as YieldManager does. The re-deposit is held to the cap
+    // like any deposit; when it is refused, the harvested collateral stays with the handler.
     function harvest() external {
         uint256 _harvested = treasury.harvest(address(collateral), address(this));
         if (_harvested == 0) return;
-        collateral.approve(address(gateway), _harvested);
-        gateway.deposit(address(collateral), _harvested, 0, yieldSink);
         ghost_harvested += _harvested;
+        _reduceNetDeposited(_harvested);
+        bool _overCap = ghost_netDeposited + _harvested > treasury.depositCap(address(collateral));
+        collateral.approve(address(gateway), _harvested);
+        try gateway.deposit(address(collateral), _harvested, 0, yieldSink) {
+            ghost_netDeposited += _harvested;
+            if (_overCap) ghost_capViolations++;
+        } catch (bytes memory reason) {
+            _revertUnlessCapExceeded(reason);
+            ghost_harvestCapRejections++;
+            if (!_overCap) ghost_capViolations++;
+        }
+    }
+
+    function _reduceNetDeposited(uint256 amount) internal {
+        ghost_netDeposited = ghost_netDeposited > amount ? ghost_netDeposited - amount : 0;
+    }
+
+    function _revertUnlessCapExceeded(bytes memory reason) internal pure {
+        if (bytes4(reason) != Treasury.ExceededDepositCap.selector) {
+            assembly {
+                revert(add(reason, 32), mload(reason))
+            }
+        }
     }
 }
 
@@ -178,6 +237,7 @@ contract TreasurySolvencyInvariantTest is Test {
 
         // Gateway role checks resolve against Treasury.hasRole; UMM covers mintToAMO/burnFromAMO/harvest.
         treasury.grantRole(treasury.UMM_ROLE(), address(handler));
+        treasury.grantRole(treasury.MAINTAINER_ROLE(), address(handler)); // setCap
 
         targetContract(address(handler));
         excludeContract(address(gateway));
@@ -200,6 +260,19 @@ contract TreasurySolvencyInvariantTest is Test {
         if (_price >= _unitPrice) assertGe(treasury.reserve(), _backedSupply, "reserve below backed supply");
     }
 
+    /// @notice A deposit succeeds exactly when it leaves the modeled net deposits at or under the cap. Net deposits
+    ///         only pass the cap through a lower cap, never through a deposit.
+    function invariant_depositCap() public view {
+        assertEq(handler.ghost_capViolations(), 0, "a deposit got past the cap, or was refused within it");
+    }
+
+    /// @notice The Treasury's counter matches an independent model of what came in and what was paid out.
+    function invariant_netDepositedMatchesModel() public view {
+        assertEq(
+            treasury.netDeposited(address(collateral)), handler.ghost_netDeposited(), "netDeposited drifted from model"
+        );
+    }
+
     /// @notice AMO supply is always a subset of total supply (so maxMint's subtraction can't underflow).
     function invariant_amoSupplyWithinTotalSupply() public view {
         assertLe(gateway.amoSupply(), vusd.totalSupply(), "amoSupply exceeds totalSupply");
@@ -215,6 +288,11 @@ contract TreasurySolvencyInvariantTest is Test {
         console.log("amoFloatRedeemed:", handler.ghost_amoFloatRedeemed());
         console.log("harvested:", handler.ghost_harvested());
         console.log("priceTicks:", handler.ghost_priceTicks());
+        console.log("capUpdates:", handler.ghost_capUpdates());
+        console.log("capRejections:", handler.ghost_capRejections());
+        console.log("harvestCapRejections:", handler.ghost_harvestCapRejections());
+        console.log("donated:", handler.ghost_donated());
+        console.log("netDeposited:", treasury.netDeposited(address(collateral)));
         console.log("reserve:  ", treasury.reserve());
         console.log("supply:   ", vusd.totalSupply());
         console.log("amoSupply:", gateway.amoSupply());

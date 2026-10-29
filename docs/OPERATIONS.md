@@ -42,6 +42,7 @@ Canonical addresses live in the latest release manifest under [`releases/vusd/`]
 | `priceTolerance` | 100 bps (1%) |
 | `mintFee` / `redeemFee` | 0 bps on all tokens |
 | `pegBand` | 3 bps on USDC and USDT |
+| `depositCap` | Uncapped on all tokens (set after the Treasury migration) |
 
 ---
 
@@ -79,6 +80,7 @@ vault. Without this, every deposit reverts with `CallerIsNotWhitelisted`.
 | `priceTolerance` | 200 bps (2%) |
 | `mintFee` / `redeemFee` | 0 bps on all tokens |
 | `pegBand` | 0 bps on WBTC, cbBTC, hemiBTC |
+| `depositCap` | Uncapped on all tokens (set after the Treasury migration) |
 
 ---
 
@@ -99,7 +101,7 @@ All roles for Gateway and Treasury operations are managed on the **Treasury** co
 | Role | Constant | Managed On | Purpose |
 |------|----------|------------|---------|
 | DEFAULT_ADMIN_ROLE | `0x00` | Treasury, YieldDistributor | Protocol governance: whitelist tokens, set limits |
-| MAINTAINER_ROLE | `keccak256("MAINTAINER_ROLE")` | Treasury | Configuration: fees, oracles, whitelists, withdrawal settings |
+| MAINTAINER_ROLE | `keccak256("MAINTAINER_ROLE")` | Treasury | Configuration: fees, oracles, deposit caps, whitelists, withdrawal settings |
 | KEEPER_ROLE | `keccak256("KEEPER_ROLE")` | Treasury | Vault operations: push/pull, pause/unpause, swap |
 | UMM_ROLE | `keccak256("UMM_ROLE")` | Treasury | AMO operations: mint/burn VUSD, harvest yield |
 | DISTRIBUTOR_ROLE | `keccak256("DISTRIBUTOR_ROLE")` | YieldDistributor | Distribute yield to StakingVault |
@@ -287,6 +289,25 @@ Treasury.updateSwapper(address swapper_)
 ```
 
 - Sets the address used for `Treasury.swap()` calls
+
+#### 4.9 Update Deposit Cap
+
+```
+Treasury.updateDepositCap(address token_, uint256 newDepositCap_)
+```
+
+- In token units. A user deposit reverts with `ExceededDepositCap` if it would take the token's net deposits
+  (`Treasury.netDeposited(token)`) past the cap
+- Net deposits go up on each deposit and down on each redemption and harvest, never below 0. They gate intake, not
+  holdings: a vault loss opens no room, and yield, keeper swaps and migrated collateral take none
+- Harvest takes off what it pays and the YieldManager's re-deposit adds it back, so net deposits end at the larger of
+  the two. Below the harvested amount (common right after the migration) the yield takes room, and
+  `YieldManager.harvest(token)` reverts if that larger value is over the cap: harvest another token or raise the cap
+- New tokens start uncapped (`type(uint256).max`) with net deposits at 0, and so does a token removed and whitelisted
+  again. AMO mints and keeper operations ignore the cap
+- `Gateway.maxDeposit(token)` returns the room left, bounded by what the yield vault accepts. It is not a guarantee:
+  the deposit must also fit `maxMint` and pass the price checks
+- **When**: Size each cap to the token's exit liquidity and how far its oracle can be trusted, so what users can take by depositing a token the oracle overprices is at most the cap times the depeg
 
 ---
 
@@ -559,10 +580,10 @@ StakingVault.totalAssets()         // should gradually increase
 
 ## Upgrading Proxies
 
-Only `Gateway`, `StakingVault` and `YieldDistributor` (and their vetBTC counterparts) are upgradeable. Each sits
-behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks upgrade to one shared implementation
-per contract (`<Contract>_Implementation`), though the live ones can differ until then: in the 1.1.0 releases VUSD's
-`YieldDistributor` runs `0xe8Ac98555f8815F4c125C871F803DFCaD2101886` and vetBTC's runs
+`Gateway`, `StakingVault`, `YieldDistributor` and, once migrated, `Treasury` (and their vetBTC counterparts) are
+upgradeable. Each sits behind its own OZ v5 `ProxyAdmin`, owned by the governance Safe. Both stacks upgrade to one
+shared implementation per contract (`<Contract>_Implementation`), though the live ones can differ until then: in the
+1.1.0 releases VUSD's `YieldDistributor` runs `0xe8Ac98555f8815F4c125C871F803DFCaD2101886` and vetBTC's runs
 `0x4a6e1AcA9fB0A5d428dFac5127C511a9d5723080`.
 
 1. **Check storage compatibility** against the live implementations:
@@ -683,8 +704,10 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    the live Treasury, and do not migrate during an incident: the batch would undo a change it does not know about.
    A keeper action after the check is caught by step 4, which is why it follows the execution right away.
 
-   A Treasury code change made while the batch is pending ships as an ordinary upgrade of the new proxy, before or
-   after the migration executes.
+   A Treasury code change made while the batch is pending ships as an ordinary upgrade of the new proxy. Ship it
+   before the batch executes: the proxy holds no collateral yet, and the batch's `addToWhitelist` runs the new code.
+   After the migration, a new `TokenConfig` field reads 0 for every token already whitelisted (a `depositCap` of 0
+   blocks every deposit), so an upgrade that adds one must queue its setter calls in the same Safe batch.
 
 4. **Right after the Safe executes**, re-run the deploy without the flag. The migration script finds the block
    `migrate` executed in and compares both Treasuries at that block: collateral list and order, configs, flags,
@@ -696,6 +719,9 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    - update the Treasury addresses (and their type, now a proxy) in this file and in
      `test/helpers/Address.ethereum.sol`
    - repoint keeper bots and monitoring at the new Treasury
+   - set the deposit caps in a Safe batch of `Treasury.updateDepositCap(token, cap)` per token (4.9): the migration
+     copies live state, so every token starts uncapped with net deposits at 0, and the migrated collateral is not
+     counted
    - cut a release (major bump)
 
    If it reports a difference, the batch undid a change made on the old Treasury, typically a keeper pause right

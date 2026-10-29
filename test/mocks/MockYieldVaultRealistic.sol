@@ -79,6 +79,8 @@ contract MockYieldVaultRealistic {
     }
 
     function withdraw(uint256 assets, address receiver, address owner_) external returns (uint256 shares) {
+        // Like the yield vaults, which revert ZeroAssets
+        require(assets > 0, "MockYieldVaultRealistic: zero assets");
         require(!shutdown, "MockYieldVaultRealistic: shutdown");
         require(assets <= _liquidAvailable(), "MockYieldVaultRealistic: illiquid");
         shares = convertToShares(assets);

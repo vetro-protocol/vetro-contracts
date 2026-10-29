@@ -191,6 +191,76 @@ contract GatewayTest is Test {
         assertEq(_token.balanceOf(alice), _dust);
     }
 
+    function test_deposit_revertIfDepositCapExceeded() public {
+        mockOracle.updatePrice(1e8);
+        treasury.updateDepositCap(token, 100e6);
+        deal(token, alice, 101e6);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), 101e6);
+        gateway.deposit(token, 100e6, 0, alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.ExceededDepositCap.selector, token, 101e6, 100e6));
+        gateway.deposit(token, 1e6, 0, alice);
+        vm.stopPrank();
+        assertEq(gateway.maxDeposit(token), 0);
+    }
+
+    function test_mint_revertIfDepositCapExceeded() public {
+        mockOracle.updatePrice(1e8);
+        treasury.updateDepositCap(token, 100e6);
+        deal(token, alice, 101e6);
+
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), 101e6);
+        gateway.mint(token, 100e18, 100e6, alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.ExceededDepositCap.selector, token, 101e6, 100e6));
+        gateway.mint(token, 1e18, 1e6, alice);
+        vm.stopPrank();
+    }
+
+    function test_redeem_freesDepositCap() public {
+        mockOracle.updatePrice(1e8);
+        treasury.updateDepositCap(token, 100e6);
+        mintPeggedToken(alice, 100e18);
+        assertEq(gateway.maxDeposit(token), 0);
+
+        gateway.setWithdrawalDelayEnabled(false);
+        vm.prank(alice);
+        gateway.redeem(token, 40e18, 0, alice);
+        assertEq(gateway.maxDeposit(token), 40e6);
+        mintPeggedToken(bob, 40e18);
+        assertEq(gateway.maxDeposit(token), 0);
+    }
+
+    function test_redeem_afterRequest_freesDepositCap() public {
+        mockOracle.updatePrice(1e8);
+        treasury.updateDepositCap(token, 100e6);
+        mintPeggedToken(alice, 100e18);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), 40e18);
+        gateway.requestRedeem(40e18);
+        vm.stopPrank();
+        assertEq(treasury.netDeposited(token), 100e6, "a request moves only VUSD");
+
+        vm.warp(block.timestamp + gateway.withdrawalDelay());
+        mockOracle.updatePrice(1e8); // refresh after warp
+        vm.prank(alice);
+        gateway.redeem(token, 40e18, 0, alice);
+        assertEq(treasury.netDeposited(token), 60e6);
+        assertEq(gateway.maxDeposit(token), 40e6);
+    }
+
+    function test_mintToAMO_ignoresDepositCap() public {
+        mockOracle.updatePrice(1e8);
+        treasury.updateDepositCap(token, 100e6);
+        mintPeggedToken(alice, 100e18);
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(10e18);
+        gateway.mintToAMO(10e18, bob);
+        assertEq(VUSD.balanceOf(bob), 10e18);
+    }
+
     // --- mint only UMM role ---
     function test_mintToAMO_onlyUMMRole() public {
         // add tokens in Treasury to build reserve. Token has 6 decimals.
@@ -1298,8 +1368,36 @@ contract GatewayTest is Test {
         assertApproxEqAbs(IERC20(token).balanceOf(alice), expected, 1);
     }
 
-    function test_maxDeposit() public view {
-        assertEq(gateway.maxDeposit(), type(uint256).max);
+    function test_maxDeposit() public {
+        mockOracle.updatePrice(1e8);
+        assertEq(gateway.maxDeposit(token), type(uint256).max);
+        treasury.updateDepositCap(token, 100e6);
+        mintPeggedToken(alice, 30e18);
+        assertEq(gateway.maxDeposit(token), 70e6);
+    }
+
+    function test_maxDeposit_returnZeroIfDepositPaused() public {
+        treasury.setDepositActive(token, false);
+        assertEq(gateway.maxDeposit(token), 0);
+    }
+
+    function test_maxDeposit_returnZeroIfNotWhitelisted() public {
+        assertEq(gateway.maxDeposit(address(new MockERC20())), 0);
+    }
+
+    function test_maxDeposit_capBelowNetDeposited() public {
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(alice, 100e18);
+
+        // A cap below net deposits stops deposits, not redemptions
+        treasury.updateDepositCap(token, 50e6);
+        assertEq(gateway.maxDeposit(token), 0);
+        gateway.setWithdrawalDelayEnabled(false);
+        vm.prank(alice);
+        gateway.redeem(token, 10e18, 0, alice);
+        assertEq(IERC20(token).balanceOf(alice), 10e6);
+        assertEq(treasury.netDeposited(token), 90e6);
+        assertEq(gateway.maxDeposit(token), 0, "90 net deposited is still past the cap");
     }
 
     function test_maxMint() public {
