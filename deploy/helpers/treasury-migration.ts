@@ -30,6 +30,8 @@ const TREASURY_ABI = [
   'function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_)',
   'function grantRole(bytes32 role, address account)',
   'function revokeRole(bytes32 role, address account)',
+  'function pegBand(address token_) view returns (uint256)',
+  'function updatePegBand(address token_, uint256 newPegBand_)',
   'function updatePriceTolerance(uint256 newPriceTolerance_)',
   'function updateSwapper(address swapper_)',
   'function setDepositActive(address token_, bool active_)',
@@ -41,9 +43,13 @@ const TREASURY_ABI = [
 
 const PEGGED_TOKEN_ABI = [
   'function owner() view returns (address)',
+  'function gateway() view returns (address)',
   'function treasury() view returns (address)',
   'function updateTreasury(address newTreasury_)',
 ]
+
+// A Treasury from before the migration has no peg band: the Gateway held it
+const GATEWAY_ABI = ['function pegBand(address token_) view returns (uint256)']
 
 const YIELD_VAULT_ABI = [
   'function isWhitelisted(address account_) view returns (bool)',
@@ -65,6 +71,7 @@ interface TokenState {
   stalePeriod: BigNumber
   depositActive: boolean
   withdrawActive: boolean
+  pegBand: BigNumber
 }
 
 interface TreasuryState {
@@ -166,16 +173,23 @@ const readRoles = async (
   return roles
 }
 
+/** The Gateway a live Treasury's peg bands are read from */
+const bandsOf = async (hre: HardhatRuntimeEnvironment, peggedToken: Contract, blockTag: BlockTag = 'latest') =>
+  hre.ethers.getContractAt(GATEWAY_ABI, await peggedToken.gateway({blockTag}))
+
+/** `bands` holds the peg bands: the Gateway for a Treasury from before the migration, else the Treasury itself */
 const readState = async (
   hre: HardhatRuntimeEnvironment,
   treasury: Contract,
+  bands: Contract,
   fromBlock: number,
   blockTag: BlockTag = 'latest'
 ) => {
   const tokens: TokenState[] = []
   for (const token of (await treasury.whitelistedTokens({blockTag})) as string[]) {
     const {vault, oracle, stalePeriod, depositActive, withdrawActive} = await treasury.tokenConfig(token, {blockTag})
-    tokens.push({token, vault, oracle, stalePeriod, depositActive, withdrawActive})
+    const pegBand: BigNumber = await bands.pegBand(token, {blockTag})
+    tokens.push({token, vault, oracle, stalePeriod, depositActive, withdrawActive, pegBand})
   }
   const [pendingAdmin, adminSchedule] = await treasury.pendingDefaultAdmin({blockTag})
   const [pendingDelay, delaySchedule] = await treasury.pendingDefaultAdminDelay({blockTag})
@@ -402,6 +416,19 @@ const buildMirrorBatch = async (
     needs.add(maintainerRole)
     setting('updateSwapper', [oldState.swapper], `${target}.updateSwapper(${oldState.swapper})`)
   }
+  // The Safe is the new Treasury's admin. A band must be below priceTolerance, which is set above
+  for (const t of oldState.tokens) {
+    const current = newState.tokens.find((n) => sameAddress(n.token, t.token))?.pegBand ?? BigNumber.from(0)
+    if (current.eq(t.pegBand)) continue
+    const symbol = await symbolOf(hre, t.token)
+    if (t.pegBand.gte(oldState.priceTolerance)) {
+      throw Error(
+        `The live ${symbol} peg band ${t.pegBand} is not below priceTolerance ${oldState.priceTolerance}, so the ` +
+          'Gateway ignores it and the new Treasury would refuse it. Lower it on the Gateway first.'
+      )
+    }
+    setting('updatePegBand', [t.token, t.pegBand], `${target}.updatePegBand(${symbol}, ${t.pegBand})`)
+  }
   for (const t of oldState.tokens) {
     const {depositActive, withdrawActive} = flags.get(t.token)!
     const symbol = await symbolOf(hre, t.token)
@@ -497,8 +524,8 @@ const verifyMigrated = async (
   log(chalk.blue(`  reading both Treasuries at block ${blockTag}, where the migration executed`))
 
   const problems: string[] = []
-  const oldState = await readState(hre, oldTreasury, oldFromBlock, blockTag)
-  const newState = await readState(hre, newTreasury, newFromBlock, blockTag)
+  const oldState = await readState(hre, oldTreasury, await bandsOf(hre, peggedToken, blockTag), oldFromBlock, blockTag)
+  const newState = await readState(hre, newTreasury, newTreasury, newFromBlock, blockTag)
 
   const pointsAt: string = await peggedToken.treasury({blockTag})
   if (!sameAddress(pointsAt, newTreasury.address)) problems.push(`the PeggedToken pointed at ${pointsAt}`)
@@ -514,6 +541,7 @@ const verifyMigrated = async (
       if (!sameAddress(o[key], n[key])) problems.push(`${o.token} ${key}: ${o[key]} vs ${n[key]}`)
     }
     if (!o.stalePeriod.eq(n.stalePeriod)) problems.push(`${o.token} stalePeriod: ${o.stalePeriod} vs ${n.stalePeriod}`)
+    if (!o.pegBand.eq(n.pegBand)) problems.push(`${o.token} pegBand: ${o.pegBand} vs ${n.pegBand}`)
     for (const key of ['depositActive', 'withdrawActive'] as const) {
       if (o[key] !== n[key]) problems.push(`${o.token} ${key}: ${o[key]} vs ${n[key]}`)
     }
@@ -597,6 +625,16 @@ export const isTreasuryMigrationPending = async (
 }
 
 /**
+ * Whether the PeggedToken's live Treasury is behind a proxy, or not set yet. The Gateway prices through the Treasury's
+ * peg band, which a Treasury from before the migration does not have, so the Gateway upgrades only after it.
+ */
+export const isTreasuryMigrated = async (hre: HardhatRuntimeEnvironment, peggedTokenAlias: string) => {
+  const treasury: string = await hre.deployments.read(peggedTokenAlias, 'treasury')
+  if (sameAddress(treasury, ZERO_ADDRESS)) return true
+  return !sameAddress(await getImplementation(hre.ethers.provider, treasury), ZERO_ADDRESS)
+}
+
+/**
  * The recorded batch must still be what live state calls for: anything changed on either Treasury since the build,
  * such as a revoked role or a paused token, would be undone by executing it.
  */
@@ -632,7 +670,7 @@ const checkPendingBatch = async (
     )
   }
   const newTreasury = await hre.ethers.getContractAt(TREASURY_ABI, newDeployment.address)
-  const newState = await readState(hre, newTreasury, newFromBlock)
+  const newState = await readState(hre, newTreasury, newTreasury, newFromBlock)
   const calls = await buildMirrorBatch(hre, {
     safe,
     peggedToken,
@@ -713,7 +751,7 @@ export const migrateTreasuryIfRequested = async (
       return
     }
 
-    oldState = await readState(hre, oldTreasury, fromBlock(artifact))
+    oldState = await readState(hre, oldTreasury, await bandsOf(hre, peggedToken), fromBlock(artifact))
     await assertSafeCanSign(hre, {safe, peggedToken, oldTreasury, oldState})
     assertNothingQueuedFor([live])
 
@@ -737,7 +775,7 @@ export const migrateTreasuryIfRequested = async (
       `${treasuryAlias} artifact ${artifact.address} is neither the live Treasury ${live} nor a migration from it`
     )
   } else {
-    oldState = await readState(hre, oldTreasury, fromBlock(previous))
+    oldState = await readState(hre, oldTreasury, await bandsOf(hre, peggedToken), fromBlock(previous))
     if (!requested) {
       await checkPendingBatch(hre, {
         treasuryAlias,
@@ -760,7 +798,7 @@ export const migrateTreasuryIfRequested = async (
   const newTreasury = await ethers.getContractAt(TREASURY_ABI, newDeployment.address)
   log(chalk.yellow(`${treasuryAlias}: migrating ${live} -> ${newTreasury.address}`))
 
-  const newState = await readState(hre, newTreasury, await newFromBlock())
+  const newState = await readState(hre, newTreasury, newTreasury, await newFromBlock())
   if (!sameAddress(oldState.peggedToken, newState.peggedToken)) throw Error('The two Treasuries back different tokens')
   if (oldState.adminDelay !== newState.adminDelay) {
     throw Error(

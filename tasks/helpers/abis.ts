@@ -15,4 +15,5 @@ export const TREASURY_ABI = [
   'function reserve() view returns (uint256)',
   'function withdrawable(address) view returns (uint256)',
   'function getPrice(address) view returns (uint256 latestPrice, uint256 unitPrice)',
+  'function pegBand(address) view returns (uint256)',
 ]
