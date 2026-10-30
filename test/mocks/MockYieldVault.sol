@@ -30,6 +30,14 @@ contract MockYieldVault {
         return 18;
     }
 
+    function maxDeposit(address) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    function maxWithdraw(address owner) external view returns (uint256) {
+        return convertToAssets(balances[owner]);
+    }
+
     function deposit(uint256 assets, address receiver) external returns (uint256) {
         IERC20(asset).transferFrom(msg.sender, address(this), assets);
         uint256 _shares = convertToShares(assets);
@@ -55,6 +63,8 @@ contract MockYieldVault {
     }
 
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256) {
+        // Like the yield vaults, which revert ZeroAssets
+        require(assets > 0, "Zero assets");
         require(IERC20(asset).balanceOf(address(this)) >= assets, "Insufficient assets");
         uint256 _shares = convertToShares(assets);
         require(balances[owner] >= _shares, "Insufficient share balance");

@@ -46,6 +46,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         bool depositActive;
         bool withdrawActive;
         uint8 decimals;
+        uint256 depositCap;
+        uint256 netDeposited;
     }
 
     /// @custom:storage-location erc7201:vetro.storage.treasury
@@ -71,8 +73,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     error BalanceShouldBeZero();
     error CallerIsNotAuthorized(address caller);
     error DepositIsPaused(address);
+    error ExceededDepositCap(address token, uint256 newNetDeposited, uint256 depositCap);
     error InvalidOraclePrice();
     error InvalidPriceTolerance();
+    error InvalidReceiver(address receiver);
     error InvalidStalePeriod();
     error InvalidTokenDecimals(uint8);
     error MaxWhitelistedTokensReached();
@@ -96,6 +100,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     event SetWithdrawActive(address indexed token, bool newValue);
     event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
+    event UpdatedDepositCap(address indexed token, uint256 previousDepositCap, uint256 newDepositCap);
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
@@ -164,7 +169,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
             stalePeriod: stalePeriod_,
             depositActive: true,
             withdrawActive: true,
-            decimals: _decimals
+            decimals: _decimals,
+            depositCap: type(uint256).max,
+            netDeposited: 0
         });
         IERC20(token_).forceApprove(vault_, type(uint256).max);
 
@@ -173,16 +180,20 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
 
     /**
      * @notice onlyGateway: Deposit token to yield vault
-     * @dev `depositActive` must be true to call deposit.
+     * @dev `depositActive` must be true to call deposit, and the token's net deposits may not exceed its deposit cap.
      * @param token_ token to deposit, must be one of the whitelisted tokens.
      * @param amount_  token amount
      */
     function deposit(address token_, uint256 amount_) external nonReentrant onlyGateway {
         TreasuryStorage storage $ = _getTreasuryStorage();
         if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (!$.tokenConfig[token_].depositActive) revert DepositIsPaused(token_);
+        TokenConfig storage _config = $.tokenConfig[token_];
+        if (!_config.depositActive) revert DepositIsPaused(token_);
+        uint256 _netDeposited = _config.netDeposited + amount_;
+        if (_netDeposited > _config.depositCap) revert ExceededDepositCap(token_, _netDeposited, _config.depositCap);
+        _config.netDeposited = _netDeposited;
 
-        if (IERC4626($.tokenConfig[token_].vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
+        if (IERC4626(_config.vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
     }
 
     /**
@@ -190,13 +201,14 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
      * Note: As treasury reserve is in multiple tokens, there is no guarantee
      * that this function will withdraw all of the excess in given token.
      * @param token_ Token address to withdraw excess
-     * @param receiver_ Address to receive the withdrawn tokens
+     * @param receiver_ Address to receive the withdrawn tokens, not this Treasury or its vault
      * @return Amount of tokens withdrawn
      */
     function harvest(address token_, address receiver_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
         TreasuryStorage storage $ = _getTreasuryStorage();
         if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (receiver_ == address(0)) revert AddressIsZero();
+        if (receiver_ == address(this) || receiver_ == $.tokenConfig[token_].vault) revert InvalidReceiver(receiver_);
         uint256 _excess = _excessTokens(token_);
         if (_excess == 0) return 0;
 
@@ -206,20 +218,20 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
             uint256 _toPay = Math.min(_balance, _excess);
             IERC20(token_).safeTransfer(receiver_, _toPay);
             _paid = _toPay;
-            if (_paid == _excess) {
-                emit ExcessWithdrawn(token_, _paid);
-                return _paid;
-            }
             _excess -= _paid;
         }
 
-        IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
-        uint256 _assets = _vault.convertToAssets(_vault.balanceOf(address(this)));
-        if (_assets > 0) {
-            uint256 _toWithdraw = Math.min(_excess, _assets);
-            _vault.withdraw(_toWithdraw, receiver_, address(this));
-            _paid += _toWithdraw;
+        if (_excess > 0) {
+            IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
+            uint256 _assets = _vault.maxWithdraw(address(this));
+            if (_assets > 0) {
+                uint256 _toWithdraw = Math.min(_excess, _assets);
+                _vault.withdraw(_toWithdraw, receiver_, address(this));
+                _paid += _toWithdraw;
+            }
         }
+
+        _reduceNetDeposited($.tokenConfig[token_], _paid);
 
         emit ExcessWithdrawn(token_, _paid);
         return _paid;
@@ -331,6 +343,21 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     }
 
     /**
+     * @notice MAINTAINER_ROLE: Update the most of a token that may be deposited net of what has left
+     * @dev Gates intake, so a vault loss or a depeg the oracle misses does not open room. Net deposits go up on
+     * {deposit} and down on {withdraw} and {harvest}, never below 0, and start at 0 when the token is whitelisted.
+     * type(uint256).max means no cap.
+     * @param token_ Token to update deposit cap for
+     * @param newDepositCap_ New deposit cap in token units
+     */
+    function updateDepositCap(address token_, uint256 newDepositCap_) external onlyRole(MAINTAINER_ROLE) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        emit UpdatedDepositCap(token_, $.tokenConfig[token_].depositCap, newDepositCap_);
+        $.tokenConfig[token_].depositCap = newDepositCap_;
+    }
+
+    /**
      * @notice MAINTAINER_ROLE: Update oracle and stale period
      * @param token_ Token to update oracle configuration for
      * @param oracle_ New Chainlink oracle address
@@ -372,7 +399,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
 
     /**
      * @notice onlyGateway: Withdraw given amount of token.
-     * @dev `withdrawActive` must be true to call withdraw.
+     * @dev `withdrawActive` must be true to call withdraw, and the receiver may not be this Treasury or its vault.
      * @param token_ token to withdraw, must be one of the whitelisted tokens.
      * @param amount_ token amount to withdraw
      * @param tokenReceiver_ address of token receiver
@@ -383,6 +410,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
 
         TokenConfig memory config = $.tokenConfig[token_];
         if (!config.withdrawActive) revert WithdrawIsPaused(token_);
+        if (tokenReceiver_ == address(this) || tokenReceiver_ == config.vault) revert InvalidReceiver(tokenReceiver_);
+        _reduceNetDeposited($.tokenConfig[token_], amount_);
 
         uint256 _tokenBalance = IERC20(token_).balanceOf(address(this));
         if (_tokenBalance >= amount_) {
@@ -402,6 +431,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
                     EXTERNAL VIEW FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
+    /// @notice Returns the most of a token that may be deposited net of what has left, 0 if it is not whitelisted
+    function depositCap(address token_) external view returns (uint256) {
+        return _getTreasuryStorage().tokenConfig[token_].depositCap;
+    }
+
     function gateway() external view returns (address) {
         return _getTreasuryStorage().peggedToken.gateway();
     }
@@ -418,9 +452,27 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         return _getTreasuryStorage().whitelistedTokens.contains(token_);
     }
 
+    /**
+     * @notice Token amount that can still be deposited: the room under the deposit cap, bounded by what the vault
+     * accepts
+     * @dev 0 when the token is not whitelisted or its deposits are paused.
+     * @param token_ token address
+     */
+    function maxDeposit(address token_) external view returns (uint256) {
+        TokenConfig storage _config = _getTreasuryStorage().tokenConfig[token_];
+        if (!_config.depositActive) return 0;
+        if (_config.depositCap <= _config.netDeposited) return 0;
+        return Math.min(_config.depositCap - _config.netDeposited, IERC4626(_config.vault).maxDeposit(address(this)));
+    }
+
     /// @notice Returns the name of the Treasury
     function NAME() external view returns (string memory) {
         return _getTreasuryStorage().name;
+    }
+
+    /// @notice Returns what has been deposited of a token net of what has left, as counted against its deposit cap
+    function netDeposited(address token_) external view returns (uint256) {
+        return _getTreasuryStorage().tokenConfig[token_].netDeposited;
     }
 
     /// @notice Returns the PeggedToken this Treasury backs
@@ -470,7 +522,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /**
      * @notice Current withdrawable for given token.
      * If token is not supported by treasury it will return 0.
-     * @dev Book value, not liquidity: a withdrawal reverts if idle plus what the vault can free at once falls short.
+     * @dev Idle balance plus the vault's `maxWithdraw` for the Treasury. The yield vaults report book value there, not
+     * liquidity: a withdrawal reverts if idle plus what the vault can free at once falls short.
      * @param token_ token address
      */
     function withdrawable(address token_) external view returns (uint256) {
@@ -478,8 +531,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         // Token is not supported
         if (address(_vault) == address(0)) return 0;
 
-        uint256 _shares = _vault.balanceOf(address(this));
-        return IERC20(token_).balanceOf(address(this)) + (_shares > 0 ? _vault.convertToAssets(_shares) : 0);
+        return IERC20(token_).balanceOf(address(this)) + _vault.maxWithdraw(address(this));
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -580,5 +632,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         assembly {
             $.slot := _location
         }
+    }
+
+    /// @dev Never below 0: redemptions can exceed deposits, e.g. of migrated collateral or of another token's deposit
+    function _reduceNetDeposited(TokenConfig storage config_, uint256 amount_) private {
+        uint256 _netDeposited = config_.netDeposited;
+        config_.netDeposited = _netDeposited > amount_ ? _netDeposited - amount_ : 0;
     }
 }

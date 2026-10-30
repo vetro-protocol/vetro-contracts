@@ -9,6 +9,7 @@ import {IPeggedToken} from "./IPeggedToken.sol";
 interface ITreasury {
     function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_) external;
     function deposit(address token_, uint256 amount_) external;
+    function depositCap(address token_) external view returns (uint256);
     function gateway() external view returns (address);
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice);
     function harvest(address token_, address receiver_) external returns (uint256);
@@ -16,6 +17,8 @@ interface ITreasury {
     function isWhitelistedToken(address token_) external view returns (bool);
     // solhint-disable-next-line func-name-mixedcase
     function MAINTAINER_ROLE() external view returns (bytes32);
+    function maxDeposit(address token_) external view returns (uint256);
+    function netDeposited(address token_) external view returns (uint256);
     function owner() external view returns (address);
     // solhint-disable-next-line func-name-mixedcase
     function PEGGED_TOKEN() external view returns (IPeggedToken);
@@ -32,6 +35,7 @@ interface ITreasury {
     function sweep(address fromToken_, address receiver_) external;
     // solhint-disable-next-line func-name-mixedcase
     function UMM_ROLE() external view returns (bytes32);
+    function updateDepositCap(address token_, uint256 newDepositCap_) external;
     function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external;
     function updatePriceTolerance(uint256 newPriceTolerance_) external;
     function updateSwapper(address swapper_) external;

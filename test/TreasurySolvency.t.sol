@@ -88,6 +88,50 @@ contract TreasurySolvencyTest is Test {
         assertApproxEqAbs(treasury.reserve(), vusd.totalSupply(), 1, "reserve returns to backed supply");
     }
 
+    function test_harvest_liquidityAwareVault_paysWhatTheVaultCanRelease() public {
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(100e18);
+
+        // The vault reports only part of the excess as withdrawable: harvest takes that much instead of reverting
+        vault.setLiquidityAwareMaxWithdraw(true);
+        vault.setLiquidCap(40e18);
+        uint256 harvested = treasury.harvest(address(collateral), owner);
+        assertEq(harvested, 40e18, "harvest pays what the vault can release");
+        assertEq(collateral.balanceOf(owner), 40e18);
+        assertApproxEqAbs(treasury.reserve(), vusd.totalSupply() + 60e18, 1, "the rest stays harvestable");
+    }
+
+    function test_harvest_liquidityAwareVault_reducesNetDepositedByWhatItPays() public {
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(100e18);
+
+        vault.setLiquidityAwareMaxWithdraw(true);
+        vault.setLiquidCap(40e18);
+        assertEq(treasury.harvest(address(collateral), owner), 40e18);
+        assertEq(treasury.netDeposited(address(collateral)), 960e18, "the 40 paid, not the 100 of excess");
+    }
+
+    function test_redeem_afterVaultYield_reducesNetDepositedByAssets() public {
+        _mint(alice, 100e18);
+        // Each share is now worth 2 collateral
+        _simulateVaultYield(100e18);
+
+        vm.prank(alice);
+        gateway.redeem(address(collateral), 40e18, 0, alice);
+        assertEq(collateral.balanceOf(alice), 40e18);
+        assertEq(treasury.netDeposited(address(collateral)), 60e18, "the 40 paid out, not the 20 shares");
+    }
+
+    function test_harvest_revertsWhenTheVaultCannotRelease() public {
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(100e18);
+
+        // maxWithdraw is book value, so harvest asks for the whole excess and the vault reverts
+        vault.setLiquidCap(40e18);
+        vm.expectRevert("MockYieldVaultRealistic: illiquid");
+        treasury.harvest(address(collateral), owner);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         RESERVE UNDER ABOVE-PAR ORACLE
     //////////////////////////////////////////////////////////////*/
@@ -169,6 +213,38 @@ contract TreasurySolvencyTest is Test {
         assertEq(collateral.balanceOf(alice), liquid, "liquid portion redeems normally");
     }
 
+    function test_illiquidInstantRedeem_liquidityAwareVault_revertsAtGateway() public {
+        uint256 amount = 1_000e18;
+        _mint(alice, amount);
+
+        uint256 liquid = 400e18;
+        vault.setLiquidityAwareMaxWithdraw(true);
+        vault.setLiquidCap(liquid); // strategy can only release 400 of the 1000 backing per call
+
+        // withdrawable() follows the vault's maxWithdraw, which this vault caps at what it can deliver
+        assertEq(treasury.withdrawable(address(collateral)), liquid, "withdrawable reports deliverable liquidity");
+        assertEq(treasury.reserve(), amount, "reserve still counts the full accounting value");
+
+        uint256 supplyBefore = vusd.totalSupply();
+        uint256 aliceVusdBefore = vusd.balanceOf(alice);
+        uint256 reserveBefore = treasury.reserve();
+
+        // Redeeming beyond the liquid cap reverts at the Gateway...
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.ExceededMaxWithdraw.selector, 600e18, liquid));
+        gateway.redeem(address(collateral), 600e18, 0, alice);
+
+        // ...and the whole tx unwinds: no VUSD burned, no reserve change. Clean revert, no fund loss.
+        assertEq(vusd.totalSupply(), supplyBefore, "no VUSD burned on the failed redeem");
+        assertEq(vusd.balanceOf(alice), aliceVusdBefore, "alice keeps her VUSD");
+        assertEq(treasury.reserve(), reserveBefore, "reserve unchanged");
+
+        // A redeem within the liquid cap still settles.
+        vm.prank(alice);
+        gateway.redeem(address(collateral), liquid, 0, alice);
+        assertEq(collateral.balanceOf(alice), liquid, "liquid portion redeems normally");
+    }
+
     function test_illiquidLockedRedeem_revertsCleanly_escrowIntact() public {
         uint256 amount = 1_000e18;
         _mint(alice, amount);
@@ -207,5 +283,75 @@ contract TreasurySolvencyTest is Test {
         assertEq(collateral.balanceOf(alice), lockAmount, "claim settles once liquid");
         (uint256 finalLocked,) = gateway.getRedeemRequest(alice);
         assertEq(finalLocked, 0, "request cleared after successful claim");
+    }
+
+    function test_illiquidLockedRedeem_liquidityAwareVault_escrowIntact() public {
+        uint256 amount = 1_000e18;
+        _mint(alice, amount);
+
+        gateway.setWithdrawalDelayEnabled(true); // force the request -> claim (escrow) path
+
+        uint256 lockAmount = 600e18;
+        vm.startPrank(alice);
+        vusd.approve(address(gateway), lockAmount); // requestRedeem pulls VUSD via transferFrom
+        gateway.requestRedeem(lockAmount);
+        vm.stopPrank();
+
+        // VUSD is escrowed in the gateway, not burned yet.
+        assertEq(vusd.balanceOf(address(gateway)), lockAmount, "locked VUSD held in gateway");
+        uint256 supplyBefore = vusd.totalSupply();
+
+        vault.setLiquidityAwareMaxWithdraw(true);
+        vault.setLiquidCap(400e18);
+        (, uint256 claimableAt) = gateway.getRedeemRequest(alice);
+        vm.warp(claimableAt);
+        oracle.updatePrice(1e8); // refresh after warp so the revert is illiquidity, not staleness
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.ExceededMaxWithdraw.selector, lockAmount, 400e18));
+        gateway.redeem(address(collateral), lockAmount, 0, alice);
+
+        // Escrow intact: nothing burned, request still claimable later. No stuck-burn / fund loss.
+        (uint256 stillLocked,) = gateway.getRedeemRequest(alice);
+        assertEq(stillLocked, lockAmount, "request still fully locked");
+        assertEq(vusd.balanceOf(address(gateway)), lockAmount, "escrowed VUSD untouched");
+        assertEq(vusd.totalSupply(), supplyBefore, "no VUSD burned");
+
+        // When liquidity returns the same claim settles.
+        vault.setLiquidCap(0);
+        vm.prank(alice);
+        gateway.redeem(address(collateral), lockAmount, 0, alice);
+        assertEq(collateral.balanceOf(alice), lockAmount, "claim settles once liquid");
+        (uint256 finalLocked,) = gateway.getRedeemRequest(alice);
+        assertEq(finalLocked, 0, "request cleared after successful claim");
+    }
+
+    function test_shutdownVault_limitsRedeemToIdle() public {
+        _mint(alice, 1_000e18);
+        deal(address(collateral), address(treasury), 100e18);
+
+        // A shut-down vault (yield-vault main) reports nothing withdrawable and takes no deposits
+        vault.setShutdown(true);
+        assertEq(treasury.withdrawable(address(collateral)), 100e18, "only the idle balance is withdrawable");
+        assertEq(gateway.maxDeposit(address(collateral)), 0, "the vault takes no deposits");
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.ExceededMaxWithdraw.selector, 150e18, 100e18));
+        gateway.redeem(address(collateral), 150e18, 0, alice);
+
+        vm.prank(alice);
+        gateway.redeem(address(collateral), 100e18, 0, alice);
+        assertEq(collateral.balanceOf(alice), 100e18, "the idle balance still redeems");
+    }
+
+    function test_shutdownVault_harvestPaysFromIdle() public {
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(100e18);
+        deal(address(collateral), address(treasury), 50e18);
+
+        // 150 excess, 50 of it idle: harvest skips the shut-down vault and pays the idle part
+        vault.setShutdown(true);
+        assertEq(treasury.harvest(address(collateral), owner), 50e18);
+        assertEq(collateral.balanceOf(owner), 50e18);
     }
 }

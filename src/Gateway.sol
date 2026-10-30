@@ -419,8 +419,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    function maxDeposit() external pure returns (uint256) {
-        return type(uint256).max;
+    function maxDeposit(address tokenIn_) external view returns (uint256) {
+        return ITreasury(treasury()).maxDeposit(tokenIn_);
     }
 
     /// @inheritdoc IGateway
