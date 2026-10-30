@@ -15,6 +15,9 @@ interface IGateway {
     /// @notice Returns current AMO-minted supply tracked by treasury
     function amoSupply() external view returns (uint256);
 
+    /// @notice Returns the peg band in BPS the Gateway applies to `token_`
+    function effectivePegBand(address token_) external view returns (uint256);
+
     /// @notice Burns AMO-minted PeggedToken to reduce AMO supply
     /// @param amount_ Amount of PeggedToken to burn
     function burnFromAMO(uint256 amount_) external;

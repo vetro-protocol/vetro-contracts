@@ -594,8 +594,9 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         TokenConfig storage _config = $.tokenConfig[token_];
         (uint256 _price, uint256 _unitPrice) =
             _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, $.priceTolerance);
-        // Convert at the same par-capped price reserve() measured the excess with
-        if (_price > _unitPrice) _price = _unitPrice;
+        // Convert at the price the Gateway re-mints at: par from the peg floor up, else the oracle price
+        uint256 _pegBand = IGateway(_peggedToken.gateway()).effectivePegBand(token_);
+        if (_price >= _unitPrice - (_unitPrice * _pegBand / MAX_BPS)) _price = _unitPrice;
         uint256 _tokens = _excess.mulDiv(_unitPrice, _price) / (10 ** (18 - _config.decimals));
 
         return _tokens;

@@ -179,6 +179,92 @@ contract TreasurySolvencyTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
+                        HARVEST UNDER PEG BAND
+    //////////////////////////////////////////////////////////////*/
+
+    function _collateralHeld() internal view returns (uint256) {
+        return collateral.balanceOf(address(treasury)) + vault.convertToAssets(vault.balanceOf(address(treasury)));
+    }
+
+    // Harvest and re-mint the collateral through the Gateway, as YieldManager does
+    function _harvestAndRemint() internal returns (uint256 excessBefore, uint256 minted) {
+        uint256 _reserve = treasury.reserve();
+        uint256 _supply = vusd.totalSupply();
+        excessBefore = _reserve > _supply ? _reserve - _supply : 0;
+        uint256 _harvested = treasury.harvest(address(collateral), owner);
+        if (_harvested > 0) {
+            collateral.approve(address(gateway), _harvested);
+            minted = gateway.deposit(address(collateral), _harvested, 0, owner);
+        }
+    }
+
+    // Inside the band the Gateway mints at par, so harvest must convert the excess at par too
+    function test_inBandPrice_harvestAndRemint_mintsAtMostExcess() public {
+        gateway.updatePegBand(address(collateral), 50);
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(10e18);
+        oracle.updatePrice(0.997e8);
+
+        (uint256 excess, uint256 minted) = _harvestAndRemint();
+        assertLe(minted, excess, "remint must not exceed the excess");
+        assertGe(treasury.reserve(), vusd.totalSupply(), "supply must stay backed at the same price");
+    }
+
+    function testFuzz_pegBand_harvestAndRemint_mintsAtMostExcess(
+        uint256 price_,
+        uint256 band_,
+        uint256 yield_,
+        uint256 mintFee_
+    ) public {
+        price_ = bound(price_, 0.99e8, 1.01e8);
+        band_ = bound(band_, 0, 99);
+        yield_ = bound(yield_, 0, 100e18);
+        mintFee_ = bound(mintFee_, 0, 100);
+        gateway.updatePegBand(address(collateral), band_);
+        _mint(alice, 1_000e18);
+        if (mintFee_ > 0) gateway.updateMintFee(address(collateral), mintFee_);
+        _simulateVaultYield(yield_);
+        oracle.updatePrice(int256(price_));
+
+        (uint256 excess, uint256 minted) = _harvestAndRemint();
+        assertLe(minted, excess + 2, "remint must not exceed the excess");
+        if (excess > 0) {
+            assertGe(treasury.reserve() + 2, vusd.totalSupply(), "supply must stay backed at the same price");
+        }
+        assertGe(_collateralHeld() + 2, vusd.totalSupply(), "collateral held must cover supply");
+
+        oracle.updatePrice(1e8);
+        assertGe(treasury.reserve() + 2, vusd.totalSupply(), "supply must stay backed once the price returns to par");
+    }
+
+    // Below the floor the Gateway mints at the oracle price, so one harvest takes the whole excess
+    function test_belowFloorPrice_harvestAndRemint_takesWholeExcess() public {
+        gateway.updatePegBand(address(collateral), 10);
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(10e18);
+        oracle.updatePrice(0.995e8);
+
+        (uint256 excess, uint256 minted) = _harvestAndRemint();
+        assertApproxEqAbs(minted, excess, 2, "remint should mint the whole excess");
+        assertApproxEqAbs(treasury.reserve(), vusd.totalSupply(), 10, "no excess should be left behind");
+    }
+
+    // A receiver that keeps the collateral instead of re-minting it
+    function testFuzz_harvestWithoutRemint_keepsSupplyBacked(uint256 price_, uint256 yield_) public {
+        price_ = bound(price_, 0.99e8, 1.01e8);
+        yield_ = bound(yield_, 0, 100e18);
+        _mint(alice, 1_000e18);
+        _simulateVaultYield(yield_);
+        oracle.updatePrice(int256(price_));
+
+        bool hadExcess = treasury.reserve() > vusd.totalSupply();
+        treasury.harvest(address(collateral), owner);
+        if (hadExcess) {
+            assertGe(treasury.reserve() + 2, vusd.totalSupply(), "supply must stay backed at the same price");
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
                         REDEEM UNDER ILLIQUIDITY
     //////////////////////////////////////////////////////////////*/
 
