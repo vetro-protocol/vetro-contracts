@@ -1242,63 +1242,6 @@ contract GatewayTest is Test {
         assertEq(IERC20(token).balanceOf(alice), expectedTokens);
     }
 
-    // --- peg band exceeding price tolerance falls back to oracle pricing ---
-
-    function test_deposit_pegBandAboveTolerance_mintsAtDiscount() public {
-        // updatePegBand enforces pegBand < priceTolerance, but lowering priceTolerance afterwards
-        // has no reverse check, so pegBand can end up >= tolerance. It must then be ignored, or a
-        // sub-peg deposit inside tolerance would mint at par instead of the oracle price.
-        treasury.updatePriceTolerance(500); // 5%
-        vm.prank(admin);
-        treasury.updatePegBand(token, 300); // 3% < 5%
-        treasury.updatePriceTolerance(200); // 2% < pegBand 3% → pegBand now exceeds tolerance
-
-        // Price = 0.99 (1% below peg, inside the 2% tolerance)
-        mockOracle.updatePrice(0.99e8);
-
-        uint256 depositAmount = 1000 * 10 ** MockERC20(token).decimals();
-        deal(token, alice, depositAmount);
-
-        vm.startPrank(alice);
-        IERC20(token).forceApprove(address(gateway), depositAmount);
-        uint256 peggedTokenOut = gateway.previewDeposit(token, depositAmount);
-        gateway.deposit(token, depositAmount, peggedTokenOut, alice);
-        vm.stopPrank();
-
-        // Discounted at the oracle price: 1000 * 0.99 = 990 VUSD, not par
-        assertEq(VUSD.balanceOf(alice), 990e18);
-    }
-
-    function test_redeem_pegBandAboveTolerance_redeemsAtDiscount() public {
-        gateway.setWithdrawalDelayEnabled(false);
-
-        // Mint at peg first
-        mockOracle.updatePrice(1e8);
-        mintPeggedToken(alice, 1000e18);
-
-        // Same setter-ordering gap on the redeem side: pegBand left above tolerance must be ignored
-        treasury.updatePriceTolerance(500);
-        vm.prank(admin);
-        treasury.updatePegBand(token, 300);
-        treasury.updatePriceTolerance(200);
-
-        // Price = 1.01 (1% above peg, inside the 2% tolerance)
-        mockOracle.updatePrice(1.01e8);
-
-        uint256 redeemAmount = 1000e18;
-        uint256 expectedTokenOut = gateway.previewRedeem(token, redeemAmount);
-
-        vm.startPrank(alice);
-        VUSD.approve(address(gateway), redeemAmount);
-        gateway.redeem(token, redeemAmount, expectedTokenOut, alice);
-        vm.stopPrank();
-
-        // Band ignored → discounted at the oracle price (no redeem fee set)
-        uint256 discounted = redeemAmount * 1e8 / 1.01e8;
-        uint256 expected = discounted / 10 ** (18 - MockERC20(token).decimals());
-        assertApproxEqAbs(IERC20(token).balanceOf(alice), expected, 1);
-    }
-
     function test_maxDeposit() public {
         mockOracle.updatePrice(1e8);
         assertEq(gateway.maxDeposit(token), type(uint256).max);

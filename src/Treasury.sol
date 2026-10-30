@@ -384,7 +384,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
 
     /**
      * @notice DEFAULT_ADMIN_ROLE: Update the band around par in which the Gateway mints and redeems at par
-     * @dev Must be below priceTolerance. A band later left at or above it, by a lowered tolerance, counts as no band.
+     * @dev A band other than 0 must be below priceTolerance, or it would par-price the entire accepted range
      * @param token_ Token to update peg band for
      * @param newPegBand_ New peg band in BPS
      */
@@ -392,15 +392,21 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         TreasuryStorage storage $ = _getTreasuryStorage();
         if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         uint256 _priceTolerance = $.priceTolerance;
-        if (newPegBand_ >= _priceTolerance) revert InvalidPegBand(newPegBand_, _priceTolerance);
+        if (newPegBand_ > 0 && newPegBand_ >= _priceTolerance) revert InvalidPegBand(newPegBand_, _priceTolerance);
         emit UpdatedPegBand(token_, $.tokenConfig[token_].pegBand, newPegBand_);
         $.tokenConfig[token_].pegBand = newPegBand_;
     }
 
     /// @notice MAINTAINER_ROLE: Update oracle price tolerance
+    /// @dev Must stay above every peg band other than 0, so a band blocking it is lowered first
     function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
         if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
         TreasuryStorage storage $ = _getTreasuryStorage();
+        uint256 _len = $.whitelistedTokens.length();
+        for (uint256 i; i < _len; ++i) {
+            uint256 _pegBand = $.tokenConfig[$.whitelistedTokens.at(i)].pegBand;
+            if (_pegBand > 0 && _pegBand >= newPriceTolerance_) revert InvalidPegBand(_pegBand, newPriceTolerance_);
+        }
         emit UpdatedPriceTolerance($.priceTolerance, newPriceTolerance_);
         $.priceTolerance = newPriceTolerance_;
     }
@@ -485,9 +491,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         TreasuryStorage storage $ = _getTreasuryStorage();
         TokenConfig storage _config = $.tokenConfig[token_];
         if (_config.oracle == address(0)) revert UnsupportedToken(token_);
-        uint256 _priceTolerance = $.priceTolerance;
-        (_redeemPrice, _unitPrice) = _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, _priceTolerance);
-        uint256 _pegCeiling = _unitPrice + (_unitPrice * _effectivePegBand(_config.pegBand, _priceTolerance) / MAX_BPS);
+        (_redeemPrice, _unitPrice) = _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, $.priceTolerance);
+        uint256 _pegCeiling = _unitPrice + (_unitPrice * _config.pegBand / MAX_BPS);
         if (_redeemPrice <= _pegCeiling) _redeemPrice = _unitPrice;
     }
 
@@ -647,18 +652,13 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         return _tokens;
     }
 
-    /// @dev A band at or above priceTolerance would par-price the entire accepted band, so it counts as no band
-    function _effectivePegBand(uint256 pegBand_, uint256 priceToleranceBps_) private pure returns (uint256) {
-        return pegBand_ < priceToleranceBps_ ? pegBand_ : 0;
-    }
-
     function _getMintPrice(TokenConfig storage config_, uint256 priceToleranceBps_)
         private
         view
         returns (uint256 _mintPrice, uint256 _unitPrice)
     {
         (_mintPrice, _unitPrice) = _getPrice(IAggregatorV3(config_.oracle), config_.stalePeriod, priceToleranceBps_);
-        uint256 _pegFloor = _unitPrice - (_unitPrice * _effectivePegBand(config_.pegBand, priceToleranceBps_) / MAX_BPS);
+        uint256 _pegFloor = _unitPrice - (_unitPrice * config_.pegBand / MAX_BPS);
         if (_mintPrice >= _pegFloor) _mintPrice = _unitPrice;
     }
 

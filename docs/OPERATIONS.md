@@ -281,6 +281,7 @@ Treasury.updatePriceTolerance(uint256 newPriceTolerance_)
 
 - In BPS, max 10000 (100%)
 - Default: 100 (1%). Prices outside 1 +/- tolerance will revert
+- Must stay above every peg band other than 0 (5.5): to go to or below a band, DEFAULT_ADMIN lowers that band first
 
 #### 4.8 Update Swapper
 
@@ -356,7 +357,7 @@ Treasury.updatePegBand(address token_, uint256 newPegBand_)
 ```
 
 - Token must be whitelisted; removing it from the whitelist clears its band
-- Must be less than Treasury's `priceTolerance`
+- Other than 0, must be less than Treasury's `priceTolerance`, which in turn cannot be lowered to or below it (4.7)
 - When price is within peg band, deposit/redeem uses 1:1 rate, and harvest converts the excess at par
 - When outside peg band, uses oracle price (discount/premium)
 - Before the Treasury migration the band lives on the Gateway (`Gateway.updatePegBand`); the migration copies it

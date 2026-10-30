@@ -367,6 +367,15 @@ contract TreasuryTest is Test {
         treasury.updatePegBand(address(token), 200);
     }
 
+    function test_updatePegBand_zeroAllowedAtZeroPriceTolerance() public {
+        treasury.updatePegBand(address(token), 50);
+        treasury.updatePegBand(address(token), 0);
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(0);
+        treasury.updatePegBand(address(token), 0);
+        assertEq(treasury.pegBand(address(token)), 0);
+    }
+
     function test_updatePegBand_clearedByRemoveFromWhitelist() public {
         treasury.updatePegBand(address(token), 50);
         treasury.removeFromWhitelist(address(token));
@@ -380,6 +389,28 @@ contract TreasuryTest is Test {
         vm.prank(maintainer);
         treasury.updatePriceTolerance(500);
         assertEq(treasury.priceTolerance(), 500);
+    }
+
+    function test_updatePriceTolerance_revertIfNotAbovePegBand() public {
+        treasury.updatePegBand(address(token), 50);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidPegBand.selector, 50, 50));
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(50);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidPegBand.selector, 50, 40));
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(40);
+
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(51);
+        assertEq(treasury.priceTolerance(), 51);
+    }
+
+    function test_updatePriceTolerance_bandLoweredFirst() public {
+        treasury.updatePegBand(address(token), 50);
+        treasury.updatePegBand(address(token), 30);
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(40);
+        assertEq(treasury.priceTolerance(), 40);
     }
 
     function test_updatePriceTolerance_revertIfTooHigh() public {
@@ -945,30 +976,6 @@ contract TreasuryTest is Test {
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
         treasury.getRedeemPrice(address(_token2));
-    }
-
-    function test_pegBand_atOrAbovePriceTolerance_countsAsNoBand() public {
-        treasury.updatePegBand(address(token), 50);
-
-        // Tolerance lowered to the band: the band no longer applies, but stays configured
-        vm.prank(maintainer);
-        treasury.updatePriceTolerance(50);
-        assertEq(treasury.pegBand(address(token)), 50);
-        mockOracle.updatePrice(0.996e8);
-        (uint256 _price,) = treasury.getMintPrice(address(token));
-        assertEq(_price, 0.996e8, "mint at oracle");
-        mockOracle.updatePrice(1.004e8);
-        (_price,) = treasury.getRedeemPrice(address(token));
-        assertEq(_price, 1.004e8, "redeem at oracle");
-
-        // Tolerance raised back above the band: it applies again
-        vm.prank(maintainer);
-        treasury.updatePriceTolerance(100);
-        (_price,) = treasury.getRedeemPrice(address(token));
-        assertEq(_price, 1e8, "redeem at par");
-        mockOracle.updatePrice(0.996e8);
-        (_price,) = treasury.getMintPrice(address(token));
-        assertEq(_price, 1e8, "mint at par");
     }
 
     // --- maxDeposit ---
