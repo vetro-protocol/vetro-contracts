@@ -200,7 +200,7 @@ contract TreasurySolvencyTest is Test {
 
     // Inside the band the Gateway mints at par, so harvest must convert the excess at par too
     function test_inBandPrice_harvestAndRemint_mintsAtMostExcess() public {
-        gateway.updatePegBand(address(collateral), 50);
+        treasury.updatePegBand(address(collateral), 50);
         _mint(alice, 1_000e18);
         _simulateVaultYield(10e18);
         oracle.updatePrice(0.997e8);
@@ -220,7 +220,7 @@ contract TreasurySolvencyTest is Test {
         band_ = bound(band_, 0, 99);
         yield_ = bound(yield_, 0, 100e18);
         mintFee_ = bound(mintFee_, 0, 100);
-        gateway.updatePegBand(address(collateral), band_);
+        treasury.updatePegBand(address(collateral), band_);
         _mint(alice, 1_000e18);
         if (mintFee_ > 0) gateway.updateMintFee(address(collateral), mintFee_);
         _simulateVaultYield(yield_);
@@ -239,7 +239,7 @@ contract TreasurySolvencyTest is Test {
 
     // Below the floor the Gateway mints at the oracle price, so one harvest takes the whole excess
     function test_belowFloorPrice_harvestAndRemint_takesWholeExcess() public {
-        gateway.updatePegBand(address(collateral), 10);
+        treasury.updatePegBand(address(collateral), 10);
         _mint(alice, 1_000e18);
         _simulateVaultYield(10e18);
         oracle.updatePrice(0.995e8);

@@ -1,6 +1,7 @@
 import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {deployUpgradable, UpgradableContracts, ContractAliases} from '../../helpers'
+import {isTreasuryMigrated} from '../../helpers/treasury-migration'
 import {GatewayConfig} from '../../config'
 
 const {PeggedToken, Gateway} = ContractAliases
@@ -32,6 +33,12 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
 
   // Get the deployed PeggedToken address
   const {address: peggedTokenAddress} = await get(PeggedToken)
+
+  // The Gateway prices through the Treasury's peg band, which a Treasury from before the migration does not have
+  if (!(await isTreasuryMigrated(hre, PeggedToken))) {
+    console.log(`${Gateway}: the live Treasury predates the migration, leaving the Gateway upgrade until it has run`)
+    return
+  }
 
   await deployUpgradable({
     hre,

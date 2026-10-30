@@ -8,7 +8,6 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {IAccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/IAccessControlDefaultAdminRules.sol";
 import {Treasury} from "src/Treasury.sol";
-import {IGateway} from "src/interfaces/IGateway.sol";
 import {deployTreasury} from "test/helpers/Deploy.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
@@ -51,8 +50,6 @@ contract TreasuryTest is Test {
         VUSD.updateGateway(gateway);
         // Mock the amoSupply() call to return 0
         vm.mockCall(gateway, abi.encodeWithSignature("amoSupply()"), abi.encode(0));
-        // No peg band, so harvest converts at the oracle price below par
-        vm.mockCall(gateway, abi.encodeWithSelector(IGateway.effectivePegBand.selector), abi.encode(0));
 
         token = new MockERC20();
         mockVault = new MockYieldVault(address(token));
@@ -331,11 +328,89 @@ contract TreasuryTest is Test {
         treasury.updateOracle(address(token), address(_newOracle), 72 hours + 1);
     }
 
+    // --- updatePegBand ---
+    function test_updatePegBand_success() public {
+        // priceTolerance is 100 BPS, so the band can go up to 99
+        treasury.updatePegBand(address(token), 50);
+        assertEq(treasury.pegBand(address(token)), 50);
+    }
+
+    function test_updatePegBand_defaultIsZero() public view {
+        assertEq(treasury.pegBand(address(token)), 0);
+    }
+
+    function test_updatePegBand_emitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit Treasury.UpdatedPegBand(address(token), 0, 50);
+        treasury.updatePegBand(address(token), 50);
+    }
+
+    function test_updatePegBand_revertIfNotDefaultAdmin() public {
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, maintainer, defaultAdminRole));
+        vm.prank(maintainer);
+        treasury.updatePegBand(address(token), 50);
+    }
+
+    function test_updatePegBand_revertIfNotWhitelisted() public {
+        MockERC20 _token2 = new MockERC20();
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        treasury.updatePegBand(address(_token2), 50);
+    }
+
+    function test_updatePegBand_revertIfEqualToPriceTolerance() public {
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidPegBand.selector, 100, 100));
+        treasury.updatePegBand(address(token), 100);
+    }
+
+    function test_updatePegBand_revertIfExceedsPriceTolerance() public {
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidPegBand.selector, 200, 100));
+        treasury.updatePegBand(address(token), 200);
+    }
+
+    function test_updatePegBand_zeroAllowedAtZeroPriceTolerance() public {
+        treasury.updatePegBand(address(token), 50);
+        treasury.updatePegBand(address(token), 0);
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(0);
+        treasury.updatePegBand(address(token), 0);
+        assertEq(treasury.pegBand(address(token)), 0);
+    }
+
+    function test_updatePegBand_clearedByRemoveFromWhitelist() public {
+        treasury.updatePegBand(address(token), 50);
+        treasury.removeFromWhitelist(address(token));
+        assertEq(treasury.pegBand(address(token)), 0);
+        treasury.addToWhitelist(address(token), address(mockVault), address(mockOracle), 1 hours);
+        assertEq(treasury.pegBand(address(token)), 0);
+    }
+
     // --- updatePriceTolerance ---
     function test_updatePriceTolerance_success() public {
         vm.prank(maintainer);
         treasury.updatePriceTolerance(500);
         assertEq(treasury.priceTolerance(), 500);
+    }
+
+    function test_updatePriceTolerance_revertIfNotAbovePegBand() public {
+        treasury.updatePegBand(address(token), 50);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidPegBand.selector, 50, 50));
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(50);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.InvalidPegBand.selector, 50, 40));
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(40);
+
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(51);
+        assertEq(treasury.priceTolerance(), 51);
+    }
+
+    function test_updatePriceTolerance_bandLoweredFirst() public {
+        treasury.updatePegBand(address(token), 50);
+        treasury.updatePegBand(address(token), 30);
+        vm.prank(maintainer);
+        treasury.updatePriceTolerance(40);
+        assertEq(treasury.priceTolerance(), 40);
     }
 
     function test_updatePriceTolerance_revertIfTooHigh() public {
@@ -851,6 +926,56 @@ contract TreasuryTest is Test {
     function test_withdrawable_returnZeroIfNotWhitelisted() public {
         MockERC20 _token2 = new MockERC20();
         assertEq(treasury.withdrawable(address(_token2)), 0);
+    }
+
+    function test_getMintPrice_parFromPegFloorUp() public {
+        treasury.updatePegBand(address(token), 50);
+        // Peg floor is 0.995
+        mockOracle.updatePrice(0.995e8);
+        (uint256 _price, uint256 _unitPrice) = treasury.getMintPrice(address(token));
+        assertEq(_price, 1e8);
+        assertEq(_unitPrice, 1e8);
+        mockOracle.updatePrice(1.005e8);
+        (_price,) = treasury.getMintPrice(address(token));
+        assertEq(_price, 1e8);
+    }
+
+    function test_getMintPrice_oracleBelowPegFloor() public {
+        treasury.updatePegBand(address(token), 50);
+        mockOracle.updatePrice(0.9949e8);
+        (uint256 _price,) = treasury.getMintPrice(address(token));
+        assertEq(_price, 0.9949e8);
+    }
+
+    function test_getMintPrice_revertIfUnsupportedToken() public {
+        MockERC20 _token2 = new MockERC20();
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        treasury.getMintPrice(address(_token2));
+    }
+
+    function test_getRedeemPrice_parUpToPegCeiling() public {
+        treasury.updatePegBand(address(token), 50);
+        // Peg ceiling is 1.005
+        mockOracle.updatePrice(1.005e8);
+        (uint256 _price, uint256 _unitPrice) = treasury.getRedeemPrice(address(token));
+        assertEq(_price, 1e8);
+        assertEq(_unitPrice, 1e8);
+        mockOracle.updatePrice(0.995e8);
+        (_price,) = treasury.getRedeemPrice(address(token));
+        assertEq(_price, 1e8);
+    }
+
+    function test_getRedeemPrice_oracleAbovePegCeiling() public {
+        treasury.updatePegBand(address(token), 50);
+        mockOracle.updatePrice(1.0051e8);
+        (uint256 _price,) = treasury.getRedeemPrice(address(token));
+        assertEq(_price, 1.0051e8);
+    }
+
+    function test_getRedeemPrice_revertIfUnsupportedToken() public {
+        MockERC20 _token2 = new MockERC20();
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        treasury.getRedeemPrice(address(_token2));
     }
 
     // --- maxDeposit ---

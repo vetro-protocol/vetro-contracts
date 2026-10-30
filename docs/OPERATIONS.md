@@ -281,6 +281,7 @@ Treasury.updatePriceTolerance(uint256 newPriceTolerance_)
 
 - In BPS, max 10000 (100%)
 - Default: 100 (1%). Prices outside 1 +/- tolerance will revert
+- Must stay above every peg band other than 0 (5.5): to go to or below a band, DEFAULT_ADMIN lowers that band first
 
 #### 4.8 Update Swapper
 
@@ -352,12 +353,14 @@ Gateway.updateAmoMintLimit(uint256 newAmoMintLimit_)
 #### 5.5 Update Peg Band (per token)
 
 ```
-Gateway.updatePegBand(address token_, uint256 newPegBandBps_)
+Treasury.updatePegBand(address token_, uint256 newPegBand_)
 ```
 
-- Must be less than Treasury's `priceTolerance`
-- When price is within peg band, deposit/redeem uses 1:1 rate
+- Token must be whitelisted; removing it from the whitelist clears its band
+- Other than 0, must be less than Treasury's `priceTolerance`, which in turn cannot be lowered to or below it (4.7)
+- When price is within peg band, deposit/redeem uses 1:1 rate, and harvest converts the excess at par
 - When outside peg band, uses oracle price (discount/premium)
+- Before the Treasury migration the band lives on the Gateway (`Gateway.updatePegBand`); the migration copies it
 
 #### 5.6 Migrate Treasury
 
@@ -679,6 +682,8 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    - grant every live role holder (found from `RoleGranted` events, kept only if `hasRole`)
    - copy the price tolerance, swapper and pause flags, granting the Safe a role for the batch only when it needs one
      it does not hold
+   - copy each token's peg band from the live Gateway (`updatePegBand`, after the price tolerance). A live band not
+     below the tolerance, which the Gateway ignores, fails the build: lower it on the Gateway first
    - revoke anything the live Treasury does not have
    - `updateTreasury`, then `migrate`
    - remove the old Treasury from each yield vault's whitelist (shares move by plain transfer, so `migrate` does not
@@ -711,7 +716,7 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
 
 4. **Right after the Safe executes**, re-run the deploy without the flag. The migration script finds the block
    `migrate` executed in and compares both Treasuries at that block: collateral list and order, configs, flags,
-   tolerance, swapper, admin, admin delay and every role's holders. It checks that the old Treasury held no
+   tolerance, swapper, admin, admin delay, every role's holders, and each peg band against the Gateway's. It checks that the old Treasury held no
    collateral or vault shares right after `migrate` (transfers sent to it later in the block do not count) and that
    each vault whitelisted the new Treasury, then that the vaults no longer whitelist the old one. It fails listing
    every difference. On success it deletes `<alias>_Previous`. Then:
@@ -723,6 +728,9 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
      copies live state, so every token starts uncapped with net deposits at 0, and the migrated collateral is not
      counted
    - cut a release (major bump)
+   - upgrade the Gateways: the new Gateway prices through the Treasury's peg band, so the Gateway deploy scripts skip
+     its upgrade until the Treasury is migrated. Until then the old Gateway prices with its own band, the same values
+     the batch copied, so a band change in between must be made on both
 
    If it reports a difference, the batch undid a change made on the old Treasury, typically a keeper pause right
    before execution: apply the change again on the new Treasury, whose role holders are the old one's. A change made
@@ -781,9 +789,9 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
 
 ### Depeg Event
 1. **KEEPER**: Pause deposits for the depegging token
-2. **MAINTAINER**: Adjust peg band if needed
+2. **DEFAULT_ADMIN**: Adjust peg band if needed
    ```
-   Gateway.updatePegBand(token, newBandBps)
+   Treasury.updatePegBand(token, newPegBand)
    ```
 3. Monitor oracle price and re-enable when stable
 

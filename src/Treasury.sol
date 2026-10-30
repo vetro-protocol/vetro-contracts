@@ -48,6 +48,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         uint8 decimals;
         uint256 depositCap;
         uint256 netDeposited;
+        uint256 pegBand;
     }
 
     /// @custom:storage-location erc7201:vetro.storage.treasury
@@ -75,6 +76,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     error DepositIsPaused(address);
     error ExceededDepositCap(address token, uint256 newNetDeposited, uint256 depositCap);
     error InvalidOraclePrice();
+    error InvalidPegBand(uint256 pegBand, uint256 priceTolerance);
     error InvalidPriceTolerance();
     error InvalidReceiver(address receiver);
     error InvalidStalePeriod();
@@ -102,6 +104,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     event Swept(address indexed token, uint256 amount, address indexed receiver);
     event UpdatedDepositCap(address indexed token, uint256 previousDepositCap, uint256 newDepositCap);
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
+    event UpdatedPegBand(address indexed token, uint256 previousPegBand, uint256 newPegBand);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
 
@@ -171,7 +174,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
             withdrawActive: true,
             decimals: _decimals,
             depositCap: type(uint256).max,
-            netDeposited: 0
+            netDeposited: 0,
+            pegBand: 0
         });
         IERC20(token_).forceApprove(vault_, type(uint256).max);
 
@@ -378,10 +382,31 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         emit UpdatedOracle(token_, oracle_, newStalePeriod_);
     }
 
+    /**
+     * @notice DEFAULT_ADMIN_ROLE: Update the band around par in which the Gateway mints and redeems at par
+     * @dev A band other than 0 must be below priceTolerance, or it would par-price the entire accepted range
+     * @param token_ Token to update peg band for
+     * @param newPegBand_ New peg band in BPS
+     */
+    function updatePegBand(address token_, uint256 newPegBand_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        uint256 _priceTolerance = $.priceTolerance;
+        if (newPegBand_ > 0 && newPegBand_ >= _priceTolerance) revert InvalidPegBand(newPegBand_, _priceTolerance);
+        emit UpdatedPegBand(token_, $.tokenConfig[token_].pegBand, newPegBand_);
+        $.tokenConfig[token_].pegBand = newPegBand_;
+    }
+
     /// @notice MAINTAINER_ROLE: Update oracle price tolerance
+    /// @dev Must stay above every peg band other than 0, so a band blocking it is lowered first
     function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
         if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
         TreasuryStorage storage $ = _getTreasuryStorage();
+        uint256 _len = $.whitelistedTokens.length();
+        for (uint256 i; i < _len; ++i) {
+            uint256 _pegBand = $.tokenConfig[$.whitelistedTokens.at(i)].pegBand;
+            if (_pegBand > 0 && _pegBand >= newPriceTolerance_) revert InvalidPegBand(_pegBand, newPriceTolerance_);
+        }
         emit UpdatedPriceTolerance($.priceTolerance, newPriceTolerance_);
         $.priceTolerance = newPriceTolerance_;
     }
@@ -447,6 +472,30 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         return _getPrice(_oracle, $.tokenConfig[token_].stalePeriod, $.priceTolerance);
     }
 
+    /**
+     * @notice Returns the price the Gateway mints PeggedToken at for `token_`
+     * @dev Par from the peg floor up, else the oracle price
+     */
+    function getMintPrice(address token_) external view returns (uint256 _mintPrice, uint256 _unitPrice) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        TokenConfig storage _config = $.tokenConfig[token_];
+        if (_config.oracle == address(0)) revert UnsupportedToken(token_);
+        return _getMintPrice(_config, $.priceTolerance);
+    }
+
+    /**
+     * @notice Returns the price the Gateway redeems PeggedToken at for `token_`
+     * @dev Par up to the peg ceiling, else the oracle price
+     */
+    function getRedeemPrice(address token_) external view returns (uint256 _redeemPrice, uint256 _unitPrice) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        TokenConfig storage _config = $.tokenConfig[token_];
+        if (_config.oracle == address(0)) revert UnsupportedToken(token_);
+        (_redeemPrice, _unitPrice) = _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, $.priceTolerance);
+        uint256 _pegCeiling = _unitPrice + (_unitPrice * _config.pegBand / MAX_BPS);
+        if (_redeemPrice <= _pegCeiling) _redeemPrice = _unitPrice;
+    }
+
     /// @notice Returns whether given token is whitelisted
     function isWhitelistedToken(address token_) external view returns (bool) {
         return _getTreasuryStorage().whitelistedTokens.contains(token_);
@@ -473,6 +522,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /// @notice Returns what has been deposited of a token net of what has left, as counted against its deposit cap
     function netDeposited(address token_) external view returns (uint256) {
         return _getTreasuryStorage().tokenConfig[token_].netDeposited;
+    }
+
+    /// @notice Returns the configured peg band of a token in BPS, 0 if it is not whitelisted
+    function pegBand(address token_) external view returns (uint256) {
+        return _getTreasuryStorage().tokenConfig[token_].pegBand;
     }
 
     /// @notice Returns the PeggedToken this Treasury backs
@@ -590,16 +644,22 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
             _excess = _reserve - _backedSupply;
         }
 
-        // Convert excess (in PeggedToken decimals) to token amount
+        // Convert excess (in PeggedToken decimals) to token amount, at the price the Gateway re-mints it at
         TokenConfig storage _config = $.tokenConfig[token_];
-        (uint256 _price, uint256 _unitPrice) =
-            _getPrice(IAggregatorV3(_config.oracle), _config.stalePeriod, $.priceTolerance);
-        // Convert at the price the Gateway re-mints at: par from the peg floor up, else the oracle price
-        uint256 _pegBand = IGateway(_peggedToken.gateway()).effectivePegBand(token_);
-        if (_price >= _unitPrice - (_unitPrice * _pegBand / MAX_BPS)) _price = _unitPrice;
+        (uint256 _price, uint256 _unitPrice) = _getMintPrice(_config, $.priceTolerance);
         uint256 _tokens = _excess.mulDiv(_unitPrice, _price) / (10 ** (18 - _config.decimals));
 
         return _tokens;
+    }
+
+    function _getMintPrice(TokenConfig storage config_, uint256 priceToleranceBps_)
+        private
+        view
+        returns (uint256 _mintPrice, uint256 _unitPrice)
+    {
+        (_mintPrice, _unitPrice) = _getPrice(IAggregatorV3(config_.oracle), config_.stalePeriod, priceToleranceBps_);
+        uint256 _pegFloor = _unitPrice - (_unitPrice * config_.pegBand / MAX_BPS);
+        if (_mintPrice >= _pegFloor) _mintPrice = _unitPrice;
     }
 
     function _getPrice(IAggregatorV3 oracle_, uint256 stalePeriod_, uint256 priceToleranceBps_)

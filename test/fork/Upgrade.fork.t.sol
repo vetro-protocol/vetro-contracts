@@ -89,14 +89,18 @@ abstract contract VetroForkBase is Test {
         return [vusd, vetbtc];
     }
 
-    /// @dev Upgrades all six proxies to this repo's implementations, the way the Safe batch does
+    /// @dev Upgrades the proxies to this repo's implementations, the way the Safe batch does
     function _upgradeAll() internal {
         address _gateway = address(new Gateway());
         address _vault = address(new StakingVault());
         address _distributor = address(new YieldDistributor());
         Stack[2] memory _s = _stacks();
         for (uint256 i; i < _s.length; ++i) {
-            _upgrade(address(_s[i].gateway), _gateway);
+            // The Gateway prices through the Treasury's peg band, so like the deploy scripts it waits for the Treasury
+            // migration
+            if (_slotAddress(address(_s[i].treasury), IMPLEMENTATION_SLOT) != address(0)) {
+                _upgrade(address(_s[i].gateway), _gateway);
+            }
             _upgrade(address(_s[i].vault), _vault);
             _upgrade(address(_s[i].distributor), _distributor);
         }
@@ -225,7 +229,6 @@ contract UpgradeStateForkTest is VetroForkBase {
         uint256 _unit = 10 ** IERC20Metadata(collateral_).decimals();
         _add(p_, gateway_, abi.encodeCall(Gateway.mintFee, (collateral_)), string.concat("gateway.mintFee.", _l));
         _add(p_, gateway_, abi.encodeCall(Gateway.redeemFee, (collateral_)), string.concat("gateway.redeemFee.", _l));
-        _add(p_, gateway_, abi.encodeCall(Gateway.pegBand, (collateral_)), string.concat("gateway.pegBand.", _l));
         _add(
             p_, gateway_, abi.encodeCall(Gateway.maxWithdraw, (collateral_)), string.concat("gateway.maxWithdraw.", _l)
         );
