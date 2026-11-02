@@ -608,10 +608,13 @@ shared implementation per contract (`<Contract>_Implementation`), though the liv
    ./scripts/test-upgrade-on-fork.sh
    ```
 
-   The Foundry fork tests (`test/fork/Upgrade.fork.t.sol`) also run on their own: `UpgradeStateForkTest` compares
-   every stored value (config, whitelists, roles, balances, cooldown requests) before and after an in-test upgrade
-   in the same block, and `LiveForkTest` / `UpgradedForkTest` run the user, keeper and integrator flows on both
-   stacks before and after.
+   The Foundry fork tests (`test/fork/Upgrade.fork.t.sol`) also run on their own. A Treasury not migrated yet is
+   migrated in-test first, as the migration batch would, since the Gateway prices through the Treasury's peg band.
+   `UpgradeStateForkTest` compares every stored value (config, whitelists, roles, balances, cooldown requests) before
+   and after an in-test upgrade in the same block, and `MigrationPriceForkTest` requires every deposit, mint, redeem
+   and withdraw quote to survive the migration and the Gateway upgrade unchanged. `LiveForkTest`, `MigratedForkTest`
+   and `UpgradedForkTest` run the user, keeper and integrator flows on both stacks as deployed, after the migration
+   alone, and after the upgrade.
 
 3. **Deploy** with `npx hardhat deploy --network ethereum`. The storage check runs before each contract's
    implementation is deployed, so a failure on a later contract leaves the earlier implementations deployed: run

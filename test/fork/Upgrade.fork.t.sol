@@ -12,6 +12,7 @@ import {PeggedToken} from "src/PeggedToken.sol";
 import {StakingVault} from "src/StakingVault.sol";
 import {Treasury} from "src/Treasury.sol";
 import {YieldDistributor} from "src/YieldDistributor.sol";
+import {deployTreasury} from "test/helpers/Deploy.sol";
 import {
     VETRO_GOVERNOR,
     VUSD,
@@ -25,6 +26,18 @@ import {
     VETBTC_YIELD_DISTRIBUTOR,
     VETBTC_YIELD_MANAGER
 } from "test/helpers/Address.ethereum.sol";
+
+/// @dev The live Treasuries, which are not behind a proxy, hand their collateral over through `migrate`
+interface ILiveTreasury {
+    function migrate(address newTreasury_) external;
+}
+
+/// @dev The gated yield vaults take deposits and withdrawals from whitelisted callers only
+interface IWhitelistedYieldVault {
+    function isWhitelisted(address account_) external view returns (bool);
+    function addToWhitelist(address account_) external;
+    function removeFromWhitelist(address account_) external;
+}
 
 /// @dev Forks mainnet and loads the deployed VUSD and vetBTC stacks. Pin the fork with ETHEREUM_FORK_BLOCK_NUMBER.
 /// Each Treasury is the one its token points at, so the flows also run on a fork that migrated it.
@@ -89,20 +102,85 @@ abstract contract VetroForkBase is Test {
         return [vusd, vetbtc];
     }
 
-    /// @dev Upgrades the proxies to this repo's implementations, the way the Safe batch does
+    /// @dev Upgrades the proxies to this repo's implementations, the way the Safe batch does. The Gateway prices
+    /// through the Treasury's peg band, so a Treasury not migrated yet is migrated first, as on mainnet.
     function _upgradeAll() internal {
+        _migrateAll();
         address _gateway = address(new Gateway());
         address _vault = address(new StakingVault());
         address _distributor = address(new YieldDistributor());
         Stack[2] memory _s = _stacks();
         for (uint256 i; i < _s.length; ++i) {
-            // The Gateway prices through the Treasury's peg band, so like the deploy scripts it waits for the Treasury
-            // migration
-            if (_slotAddress(address(_s[i].treasury), IMPLEMENTATION_SLOT) != address(0)) {
-                _upgrade(address(_s[i].gateway), _gateway);
-            }
+            _upgrade(address(_s[i].gateway), _gateway);
             _upgrade(address(_s[i].vault), _vault);
             _upgrade(address(_s[i].distributor), _distributor);
+        }
+    }
+
+    /// @dev Moves each stack whose Treasury is not behind a proxy yet onto one, as the migration batch does
+    function _migrateAll() internal {
+        if (_slotAddress(address(vusd.treasury), IMPLEMENTATION_SLOT) == address(0)) _migrate(vusd);
+        if (_slotAddress(address(vetbtc.treasury), IMPLEMENTATION_SLOT) == address(0)) _migrate(vetbtc);
+    }
+
+    /// @dev Leaves the Treasury the migration batch would (deploy/helpers/treasury-migration.ts), which is verified
+    /// against the live one after it executes. Roles are copied for the known accounts, which cover what the flows use.
+    function _migrate(Stack storage s_) private {
+        Treasury _old = s_.treasury;
+        address _safe = _old.defaultAdmin();
+        Treasury _new = deployTreasury(address(s_.token), _safe);
+        address[] memory _tokens = _old.whitelistedTokens();
+        address[] memory _vaults = new address[](_tokens.length);
+
+        vm.startPrank(_safe);
+        for (uint256 i; i < _tokens.length; ++i) {
+            (address _vault, address _oracle, uint256 _stalePeriod,,,) = _old.tokenConfig(_tokens[i]);
+            _vaults[i] = _vault;
+            if (_isGated(_vault)) IWhitelistedYieldVault(_vault).addToWhitelist(address(_new));
+            _new.addToWhitelist(_tokens[i], _vault, _oracle, _stalePeriod);
+        }
+
+        bytes32[3] memory _roles = [_old.KEEPER_ROLE(), _old.MAINTAINER_ROLE(), _old.UMM_ROLE()];
+        address[] memory _accounts = _knownAccounts();
+        for (uint256 i; i < _roles.length; ++i) {
+            for (uint256 j; j < _accounts.length; ++j) {
+                if (_old.hasRole(_roles[i], _accounts[j])) _new.grantRole(_roles[i], _accounts[j]);
+            }
+        }
+
+        // The settings need the keeper and maintainer roles, held by the Safe for this batch only
+        _new.grantRole(_roles[0], _safe);
+        bool _safeMaintains = _new.hasRole(_roles[1], _safe);
+        if (!_safeMaintains) _new.grantRole(_roles[1], _safe);
+        _new.updatePriceTolerance(_old.priceTolerance());
+        if (_old.swapper() != address(0)) _new.updateSwapper(_old.swapper());
+        for (uint256 i; i < _tokens.length; ++i) {
+            // The band moves from the Gateway, after the tolerance it must stay below
+            (bool _success, bytes memory _band) =
+                address(s_.gateway).staticcall(abi.encodeWithSignature("pegBand(address)", _tokens[i]));
+            assertTrue(_success, "live Gateway has no peg band");
+            if (abi.decode(_band, (uint256)) > 0) _new.updatePegBand(_tokens[i], abi.decode(_band, (uint256)));
+            (,,, bool _depositActive, bool _withdrawActive,) = _old.tokenConfig(_tokens[i]);
+            if (!_depositActive) _new.setDepositActive(_tokens[i], false);
+            if (!_withdrawActive) _new.setWithdrawActive(_tokens[i], false);
+        }
+        if (!_old.hasRole(_roles[0], _safe)) _new.revokeRole(_roles[0], _safe);
+        if (!_safeMaintains) _new.revokeRole(_roles[1], _safe);
+
+        s_.token.updateTreasury(address(_new));
+        ILiveTreasury(address(_old)).migrate(address(_new));
+        for (uint256 i; i < _vaults.length; ++i) {
+            if (_isGated(_vaults[i])) IWhitelistedYieldVault(_vaults[i]).removeFromWhitelist(address(_old));
+        }
+        vm.stopPrank();
+        s_.treasury = _new;
+    }
+
+    function _isGated(address vault_) private view returns (bool) {
+        try IWhitelistedYieldVault(vault_).isWhitelisted(address(0)) returns (bool) {
+            return true;
+        } catch {
+            return false;
         }
     }
 
@@ -160,6 +238,12 @@ contract UpgradeStateForkTest is VetroForkBase {
         Probe[] items;
         uint256 length;
         string stack;
+    }
+
+    /// @dev Compares the Gateway upgrade alone: the move of the peg band is covered by `MigrationPriceForkTest`
+    function setUp() public override {
+        super.setUp();
+        _migrateAll();
     }
 
     function test_upgrade_preservesState() public {
@@ -723,9 +807,53 @@ abstract contract VetroFlowsForkTest is VetroForkBase {
 
 contract LiveForkTest is VetroFlowsForkTest {}
 
+/// @dev Between the two Safe batches: the old Gateway, pricing with its own peg band, on the migrated Treasury
+contract MigratedForkTest is VetroFlowsForkTest {
+    function setUp() public override {
+        super.setUp();
+        _migrateAll();
+    }
+}
+
 contract UpgradedForkTest is VetroFlowsForkTest {
     function setUp() public override {
         super.setUp();
         _upgradeAll();
+    }
+}
+
+/// @dev The peg band moves from the Gateway to the Treasury, so the whole rollout, migration then Gateway upgrade,
+///      must leave every quote unchanged in the same block
+contract MigrationPriceForkTest is VetroForkBase {
+    function test_migrateAndUpgrade_preservesPrices() public {
+        Stack[2] memory _s = _stacks();
+        uint256[][2] memory _before;
+        for (uint256 i; i < _s.length; ++i) {
+            _before[i] = _quotes(_s[i]);
+        }
+
+        _upgradeAll();
+
+        _s = _stacks();
+        for (uint256 i; i < _s.length; ++i) {
+            uint256[] memory _after = _quotes(_s[i]);
+            assertEq(_after.length, _before[i].length, "collateral list changed");
+            for (uint256 j; j < _after.length; ++j) {
+                assertEq(_after[j], _before[i][j], string.concat(_s[i].name, " quote ", vm.toString(j)));
+            }
+        }
+    }
+
+    /// @dev Deposit, mint, redeem and withdraw quotes for one whole unit of each collateral and of the pegged token
+    function _quotes(Stack memory s_) private view returns (uint256[] memory quotes_) {
+        address[] memory _tokens = s_.treasury.whitelistedTokens();
+        quotes_ = new uint256[](_tokens.length * 4);
+        for (uint256 i; i < _tokens.length; ++i) {
+            uint256 _unit = 10 ** IERC20Metadata(_tokens[i]).decimals();
+            quotes_[i * 4] = s_.gateway.previewDeposit(_tokens[i], _unit);
+            quotes_[i * 4 + 1] = s_.gateway.previewMint(_tokens[i], 1e18);
+            quotes_[i * 4 + 2] = s_.gateway.previewRedeem(_tokens[i], 1e18);
+            quotes_[i * 4 + 3] = s_.gateway.previewWithdraw(_tokens[i], _unit);
+        }
     }
 }
