@@ -111,6 +111,15 @@ contract TreasurySolvencyTest is Test {
         assertEq(treasury.netDeposited(address(collateral)), 1_000e18);
     }
 
+    function test_seedNetDeposited_afterVaultYield_countsSharesAtTheirPrice() public {
+        _mint(alice, 100e18);
+        // Each share is now worth 2 collateral
+        _simulateVaultYield(100e18);
+
+        treasury.seedNetDeposited(address(collateral));
+        assertEq(treasury.netDeposited(address(collateral)), 200e18);
+    }
+
     function test_redeem_afterVaultYield_reducesNetDepositedByAssets() public {
         _mint(alice, 100e18);
         // Each share is now worth 2 collateral

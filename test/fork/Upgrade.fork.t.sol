@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -854,6 +855,35 @@ contract MigrationPriceForkTest is VetroForkBase {
             quotes_[i * 4 + 1] = s_.gateway.previewMint(_tokens[i], 1e18);
             quotes_[i * 4 + 2] = s_.gateway.previewRedeem(_tokens[i], 1e18);
             quotes_[i * 4 + 3] = s_.gateway.previewWithdraw(_tokens[i], _unit);
+        }
+    }
+}
+
+/// @dev The batch after the rollout: each token's net deposits seeded to its holdings, then capped one unit above
+contract SeedForkTest is VetroForkBase {
+    function test_seedThenCap_countsMigratedHoldings() public {
+        _upgradeAll();
+        Stack[2] memory _s = _stacks();
+        for (uint256 i; i < _s.length; ++i) {
+            Treasury _treasury = _s[i].treasury;
+            address _safe = _treasury.defaultAdmin();
+            address[] memory _tokens = _treasury.whitelistedTokens();
+            for (uint256 j; j < _tokens.length; ++j) {
+                (address _vault,,,,,) = _treasury.tokenConfig(_tokens[j]);
+                uint256 _holdings = IERC20(_tokens[j]).balanceOf(address(_treasury))
+                    + IERC4626(_vault).convertToAssets(IERC4626(_vault).balanceOf(address(_treasury)));
+                uint256 _unit = 10 ** IERC20Metadata(_tokens[j]).decimals();
+
+                vm.startPrank(_safe);
+                _treasury.seedNetDeposited(_tokens[j]);
+                _treasury.updateDepositCap(_tokens[j], _holdings + _unit);
+                vm.stopPrank();
+
+                string memory _label = string.concat(_s[i].name, " collateral ", vm.toString(j));
+                assertEq(_treasury.netDeposited(_tokens[j]), _holdings, _label);
+                uint256 _vaultRoom = IERC4626(_vault).maxDeposit(address(_treasury));
+                assertEq(_s[i].gateway.maxDeposit(_tokens[j]), _unit < _vaultRoom ? _unit : _vaultRoom, _label);
+            }
         }
     }
 }

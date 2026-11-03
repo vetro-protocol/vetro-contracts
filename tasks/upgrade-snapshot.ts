@@ -188,6 +188,13 @@ const snapshotStack = async (
       ...(await readAll(treasury, ['NAME', 'gateway', 'swapper', 'priceTolerance', 'defaultAdmin'])),
       whitelistedTokens: tokens,
       tokenConfig: await perAccount(tokens, (t) => read(treasury, 'tokenConfig', t)),
+      // Only the migrated Treasury counts deposits against a cap; the old one would revert on both sides
+      ...(migrated
+        ? {
+            depositCap: await perAccount(tokens, (t) => read(treasury, 'depositCap', t)),
+            netDeposited: await perAccount(tokens, (t) => read(treasury, 'netDeposited', t)),
+          }
+        : {}),
       roles: Object.fromEntries(
         await Promise.all(
           Object.entries(treasuryRoles).map(async ([name, role]) => [
