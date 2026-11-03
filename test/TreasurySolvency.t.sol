@@ -101,14 +101,14 @@ contract TreasurySolvencyTest is Test {
         assertApproxEqAbs(treasury.reserve(), vusd.totalSupply() + 60e18, 1, "the rest stays harvestable");
     }
 
-    function test_harvest_liquidityAwareVault_reducesNetDepositedByWhatItPays() public {
+    function test_harvest_liquidityAwareVault_paysWhatItCanAndKeepsNetDeposited() public {
         _mint(alice, 1_000e18);
         _simulateVaultYield(100e18);
 
         vault.setLiquidityAwareMaxWithdraw(true);
         vault.setLiquidCap(40e18);
         assertEq(treasury.harvest(address(collateral), owner), 40e18);
-        assertEq(treasury.netDeposited(address(collateral)), 960e18, "the 40 paid, not the 100 of excess");
+        assertEq(treasury.netDeposited(address(collateral)), 1_000e18);
     }
 
     function test_redeem_afterVaultYield_reducesNetDepositedByAssets() public {

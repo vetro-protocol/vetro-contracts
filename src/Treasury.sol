@@ -235,8 +235,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
             }
         }
 
-        _reduceNetDeposited($.tokenConfig[token_], _paid);
-
         emit ExcessWithdrawn(token_, _paid);
         return _paid;
     }
@@ -347,9 +345,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     }
 
     /**
-     * @notice MAINTAINER_ROLE: Update the most of a token that may be deposited net of what has left
+     * @notice MAINTAINER_ROLE: Update the most of a token that may be deposited net of what has been redeemed
      * @dev Gates intake, so a vault loss or a depeg the oracle misses does not open room. Net deposits go up on
-     * {deposit} and down on {withdraw} and {harvest}, never below 0, and start at 0 when the token is whitelisted.
+     * {deposit} and down on {withdraw}, never below 0, and start at 0 when the token is whitelisted. {harvest}
+     * leaves them alone: the yield was never counted, and minting it back through the Gateway takes room.
      * type(uint256).max means no cap.
      * @param token_ Token to update deposit cap for
      * @param newDepositCap_ New deposit cap in token units
@@ -519,7 +518,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         return _getTreasuryStorage().name;
     }
 
-    /// @notice Returns what has been deposited of a token net of what has left, as counted against its deposit cap
+    /// @notice Returns what has been deposited of a token net of what has been redeemed, as counted against its cap
     function netDeposited(address token_) external view returns (uint256) {
         return _getTreasuryStorage().tokenConfig[token_].netDeposited;
     }

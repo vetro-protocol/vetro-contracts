@@ -1154,7 +1154,7 @@ contract TreasuryTest is Test {
         assertEq(treasury.withdrawable(address(token)), 600 * TOKEN_UNIT);
     }
 
-    function test_harvest_reducesNetDeposited() public {
+    function test_harvest_keepsNetDeposited() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
         deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
@@ -1165,7 +1165,7 @@ contract TreasuryTest is Test {
 
         vm.prank(umm);
         assertEq(treasury.harvest(address(token), umm), 200 * TOKEN_UNIT);
-        assertEq(treasury.netDeposited(address(token)), 800 * TOKEN_UNIT);
+        assertEq(treasury.netDeposited(address(token)), 1000 * TOKEN_UNIT);
     }
 
     function test_harvest_noExcess() public {

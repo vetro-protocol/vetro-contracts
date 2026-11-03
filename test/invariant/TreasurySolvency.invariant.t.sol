@@ -41,7 +41,7 @@ contract TreasurySolvencyHandler is Test {
     uint256 public ghost_harvestCapRejections;
     // A deposit that passed the cap check with net deposits ending above the cap, or was refused while within it
     uint256 public ghost_capViolations;
-    // Independent model of Treasury.netDeposited: up on deposits, down on what redemptions and harvest pay out
+    // Independent model of Treasury.netDeposited: up on deposits, down on what redemptions pay out
     uint256 public ghost_netDeposited;
 
     modifier useActor(uint256 seed) {
@@ -168,7 +168,6 @@ contract TreasurySolvencyHandler is Test {
         uint256 _harvested = treasury.harvest(address(collateral), address(this));
         if (_harvested == 0) return;
         ghost_harvested += _harvested;
-        _reduceNetDeposited(_harvested);
         bool _overCap = ghost_netDeposited + _harvested > treasury.depositCap(address(collateral));
         collateral.approve(address(gateway), _harvested);
         try gateway.deposit(address(collateral), _harvested, 0, yieldSink) {

@@ -299,11 +299,11 @@ Treasury.updateDepositCap(address token_, uint256 newDepositCap_)
 
 - In token units. A user deposit reverts with `ExceededDepositCap` if it would take the token's net deposits
   (`Treasury.netDeposited(token)`) past the cap
-- Net deposits go up on each deposit and down on each redemption and harvest, never below 0. They gate intake, not
-  holdings: a vault loss opens no room, and yield, keeper swaps and migrated collateral take none
-- Harvest takes off what it pays and the YieldManager's re-deposit adds it back, so net deposits end at the larger of
-  the two. Below the harvested amount (common right after the migration) the yield takes room, and
-  `YieldManager.harvest(token)` reverts if that larger value is over the cap: harvest another token or raise the cap
+- Net deposits go up on each deposit and down on each redemption, never below 0. They gate intake, not holdings: a
+  vault loss opens no room, and keeper swaps and migrated collateral take none
+- Harvest leaves net deposits alone, and the YieldManager's re-deposit adds what it paid, so yield takes room. Once
+  that would pass the cap, `YieldManager.harvest(token)` reverts and the yield stays in the Treasury: harvest another
+  token or raise the cap. Size caps with room for the yield
 - New tokens start uncapped (`type(uint256).max`) with net deposits at 0, and so does a token removed and whitelisted
   again. AMO mints and keeper operations ignore the cap
 - `Gateway.maxDeposit(token)` returns the room left, bounded by what the yield vault accepts. It is not a guarantee:
