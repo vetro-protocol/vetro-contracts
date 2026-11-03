@@ -427,6 +427,8 @@ const buildMirrorBatch = async (
           'Gateway ignores it and the new Treasury would refuse it. Lower it on the Gateway first.'
       )
     }
+    // Lowering a band is the maintainer's, raising it the admin's
+    if (t.pegBand.lt(current)) needs.add(maintainerRole)
     setting('updatePegBand', [t.token, t.pegBand], `${target}.updatePegBand(${symbol}, ${t.pegBand})`)
   }
   for (const t of oldState.tokens) {

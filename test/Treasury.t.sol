@@ -351,6 +351,33 @@ contract TreasuryTest is Test {
         treasury.updatePegBand(address(token), 50);
     }
 
+    function test_updatePegBand_maintainerLowers() public {
+        treasury.updatePegBand(address(token), 50);
+        vm.prank(maintainer);
+        treasury.updatePegBand(address(token), 30);
+        assertEq(treasury.pegBand(address(token)), 30);
+    }
+
+    function test_updatePegBand_revertIfMaintainerRaises() public {
+        treasury.updatePegBand(address(token), 30);
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, maintainer, defaultAdminRole));
+        vm.prank(maintainer);
+        treasury.updatePegBand(address(token), 50);
+    }
+
+    function test_updatePegBand_revertIfLoweredByNonMaintainer() public {
+        treasury.updatePegBand(address(token), 50);
+        bytes32 _maintainerRole = treasury.MAINTAINER_ROLE();
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, _maintainerRole));
+        vm.prank(alice);
+        treasury.updatePegBand(address(token), 30);
+
+        // The admin lowers as a maintainer too: without the role it cannot
+        treasury.revokeRole(_maintainerRole, address(this));
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, address(this), _maintainerRole));
+        treasury.updatePegBand(address(token), 30);
+    }
+
     function test_updatePegBand_revertIfNotWhitelisted() public {
         MockERC20 _token2 = new MockERC20();
         vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
@@ -405,11 +432,12 @@ contract TreasuryTest is Test {
         assertEq(treasury.priceTolerance(), 51);
     }
 
-    function test_updatePriceTolerance_bandLoweredFirst() public {
+    function test_updatePriceTolerance_maintainerLowersBandFirst() public {
         treasury.updatePegBand(address(token), 50);
+        vm.startPrank(maintainer);
         treasury.updatePegBand(address(token), 30);
-        vm.prank(maintainer);
         treasury.updatePriceTolerance(40);
+        vm.stopPrank();
         assertEq(treasury.priceTolerance(), 40);
     }
 
