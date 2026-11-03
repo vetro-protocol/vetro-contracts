@@ -7,13 +7,8 @@ import {
     AggregatorV3Interface,
     AggregatorV2V3Interface
 } from "@chainlink/contracts/interfaces/feeds/AggregatorV2V3Interface.sol";
-
-interface ICurveStableSwapNG {
-    function coins(uint256 i) external view returns (address);
-
-    /// @dev EMA price of coin `i + 1` in coin 0, 1e18 precision.
-    function price_oracle(uint256 i) external view returns (uint256);
-}
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {ICurveStableSwapNG} from "./interfaces/curve/ICurveStableSwapNG.sol";
 
 /// @title CurveStableSwapNGEmaFeedAdapter
 /// @notice Market price of one Curve StableSwap-NG pool coin in the peg unit, quoted through another coin of
@@ -21,19 +16,21 @@ interface ICurveStableSwapNG {
 ///         base/peg = EMA(base/quote) * quote/peg,  EMA(base/quote) = P_base / P_quote
 ///         where P_k is the pool's EMA price of coin k in coin 0 (P_0 = 1).
 ///         E.g. hemiBTC/BTC from the WBTC/cbBTC/hemiBTC pool as EMA(hemiBTC/WBTC) x Chainlink WBTC/BTC.
-///         Uses the pool's EMA, never spot: Curve folds a trade into the EMA only on the first interaction of a
-///         later block, so a same-block sandwich cannot move this price.
+///         Uses the pool's EMA, never spot: a trade's price enters the EMA only as time passes after its block
+///         (no later interaction needed), so a same-block sandwich cannot move this price.
 ///         Meant to be paired with the token's primary feed through `MinPriceFeedAdapter`: the EMA lags a real
 ///         move by roughly the pool's `ma_exp_time`, so on its own it only lowers a price, it does not bound it.
 ///         Historical round queries are not supported.
-/// @dev Only for plain-coin pools: with a rate-oracle or ERC-4626 coin (e.g. weETH) the NG EMA is in
-///      rate-adjusted terms and would read ~1.0 instead of the market price. The EMA is 1e18 per whole token
-///      whatever the coin decimals.
+/// @dev Only for plain-coin pools, enforced at deployment: with a rate-oracle or ERC-4626 coin (e.g. weETH) the
+///      NG EMA is in rate-adjusted terms and would read ~1.0 instead of the market price. The check reads the rates
+///      once, so an oracle or ERC-4626 coin whose rate is exactly 1.0 at deployment still passes it. The EMA is 1e18
+///      per whole token whatever the coin decimals.
 contract CurveStableSwapNGEmaFeedAdapter is AggregatorV2V3Interface {
     error ZeroAddress();
     error InvalidPrice();
     error SameCoin();
     error CoinMismatch();
+    error NotPlainCoin();
     error HistoricalRoundsNotSupported();
 
     /// @notice Curve StableSwap-NG pool holding both coins.
@@ -54,7 +51,7 @@ contract CurveStableSwapNGEmaFeedAdapter is AggregatorV2V3Interface {
     /// @param baseToken_   Coin to price; must be `pool_.coins(baseIndex_)`.
     /// @param baseIndex_   Index of `baseToken_` in the pool.
     /// @param quoteToken_  Coin the EMA is quoted in; must be `pool_.coins(quoteIndex_)` and be what `quoteFeed_`
-    ///                     prices.
+    ///                     prices. Both coins must be plain, with no rate oracle.
     /// @param quoteIndex_  Index of `quoteToken_` in the pool.
     /// @param quoteFeed_   Chainlink feed for the quote coin in the peg unit.
     constructor(
@@ -72,6 +69,12 @@ contract CurveStableSwapNGEmaFeedAdapter is AggregatorV2V3Interface {
         if (baseIndex_ == quoteIndex_) revert SameCoin();
         // coins() reverts on an index past the last coin
         if (pool_.coins(baseIndex_) != baseToken_ || pool_.coins(quoteIndex_) != quoteToken_) revert CoinMismatch();
+        // Any rate on another coin cancels out of P_base / P_quote, so only these two need to be plain
+        uint256[] memory _rates = pool_.stored_rates();
+        if (
+            _rates[baseIndex_] != 10 ** (36 - uint256(IERC20Metadata(baseToken_).decimals()))
+                || _rates[quoteIndex_] != 10 ** (36 - uint256(IERC20Metadata(quoteToken_).decimals()))
+        ) revert NotPlainCoin();
         pool = pool_;
         baseIndex = baseIndex_;
         quoteIndex = quoteIndex_;
@@ -86,7 +89,14 @@ contract CurveStableSwapNGEmaFeedAdapter is AggregatorV2V3Interface {
 
     /// @inheritdoc AggregatorV3Interface
     function description() external view returns (string memory) {
-        return string.concat("Curve EMA x ", quoteFeed.description());
+        return string.concat(
+            "Curve EMA ",
+            IERC20Metadata(pool.coins(baseIndex)).symbol(),
+            " / ",
+            IERC20Metadata(pool.coins(quoteIndex)).symbol(),
+            " x ",
+            quoteFeed.description()
+        );
     }
 
     /// @inheritdoc AggregatorV3Interface
@@ -96,8 +106,8 @@ contract CurveStableSwapNGEmaFeedAdapter is AggregatorV2V3Interface {
 
     /// @inheritdoc AggregatorV3Interface
     /// @dev roundId and answeredInRound are always 1, as in DerivedPriceFeedAdapter.
-    ///      updatedAt is quoteFeed's: the EMA carries no timestamp of its own (it holds the last traded
-    ///      price while the pool is idle), so staleness is enforced on the Chainlink leg only.
+    ///      updatedAt is quoteFeed's: the EMA carries no timestamp of its own (while the pool is idle it keeps
+    ///      converging to the last traded price), so staleness is enforced on the quote feed only.
     function latestRoundData()
         external
         view

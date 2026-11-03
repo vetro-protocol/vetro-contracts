@@ -4,7 +4,8 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV2V3Interface} from "@chainlink/contracts/interfaces/feeds/AggregatorV2V3Interface.sol";
-import {CurveStableSwapNGEmaFeedAdapter, ICurveStableSwapNG} from "src/CurveStableSwapNGEmaFeedAdapter.sol";
+import {CurveStableSwapNGEmaFeedAdapter} from "src/CurveStableSwapNGEmaFeedAdapter.sol";
+import {ICurveStableSwapNG} from "src/interfaces/curve/ICurveStableSwapNG.sol";
 import {MinPriceFeedAdapter} from "src/MinPriceFeedAdapter.sol";
 import {Treasury} from "src/Treasury.sol";
 import {Gateway} from "src/Gateway.sol";
@@ -28,6 +29,9 @@ contract CurveStableSwapNGEmaFeedAdapterForkTest is Test {
         AggregatorV2V3Interface(0x7Ff41654D1551F01E622e2b1050EA027a3A6C9dc);
     AggregatorV2V3Interface constant CBBTC_BTC_DERIVED_FEED =
         AggregatorV2V3Interface(0x33F1E44DB47400C9BD6221962712D882Adb8fFA6);
+    // Deployed FixedPriceFeedAdapter at 1.0, the quote feed when prices are in WBTC
+    AggregatorV2V3Interface constant WBTC_UNIT_FEED =
+        AggregatorV2V3Interface(0x032A35daDA672B394525881f789a3B4E7734C76C);
 
     // At FORK_BLOCK: EMA vs WBTC x WBTC/BTC 0.99819999
     int256 constant CBBTC_BTC = 0.999800224020324872e18; // 1.001603119651729182 cbBTC/WBTC
@@ -83,10 +87,11 @@ contract CurveStableSwapNGEmaFeedAdapterForkTest is Test {
         new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, AggregatorV2V3Interface(address(0)));
     }
 
-    /// @notice Out of scope by design: with a rate-oracle coin the NG EMA is rate-adjusted, so weETH reads ~1.0 WETH
-    ///         while it trades at ~1.106 WETH.
-    function test_rateOracleCoinIsNotMarketPrice() public {
-        CurveStableSwapNGEmaFeedAdapter _weeth = new CurveStableSwapNGEmaFeedAdapter(
+    /// @notice With a rate-oracle coin the NG EMA is rate-adjusted (weETH would read ~1.0 WETH while it trades at
+    ///         ~1.106 WETH), so such a pool is rejected at deployment.
+    function test_constructor_revertIfRateOracleCoin() public {
+        vm.expectRevert(CurveStableSwapNGEmaFeedAdapter.NotPlainCoin.selector);
+        new CurveStableSwapNGEmaFeedAdapter(
             ICurveStableSwapNG(0xDB74dfDD3BB46bE8Ce6C33dC9D82777BCFc3dEd5),
             0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee,
             1,
@@ -94,7 +99,6 @@ contract CurveStableSwapNGEmaFeedAdapterForkTest is Test {
             0,
             WBTC_BTC_FEED
         );
-        assertApproxEqRel(_weeth.emaRatio(), 1e18, 0.001e18);
     }
 
     function test_metadata() public view {
@@ -104,7 +108,7 @@ contract CurveStableSwapNGEmaFeedAdapterForkTest is Test {
         assertEq(address(hemiBtcEma.quoteFeed()), address(WBTC_BTC_FEED));
         assertEq(cbBtcEma.baseIndex(), 1);
         assertEq(cbBtcEma.decimals(), 18);
-        assertEq(cbBtcEma.description(), string.concat("Curve EMA x ", WBTC_BTC_FEED.description()));
+        assertEq(cbBtcEma.description(), string.concat("Curve EMA cbBTC / WBTC x ", WBTC_BTC_FEED.description()));
         assertEq(cbBtcEma.version(), 1);
         assertEq(cbBtcEma.latestRound(), 1);
     }
@@ -194,6 +198,48 @@ contract CurveStableSwapNGEmaFeedAdapterForkTest is Test {
 
         assertLt(ICurveExchange(_pool).get_p(1), (_spotBefore * 98) / 100, "spot moved > 2%");
         assertEq(_answer(hemiBtcEma), HEMIBTC_BTC, "EMA-based price unchanged in the same block");
+    }
+
+    /// @notice Held after the dump block, the skew drifts into the EMA with time alone, with no later trade, until
+    ///         the price leaves the Treasury's tolerance.
+    function test_heldDumpDriftsEmaOutOfTolerance() public {
+        CurveStableSwapNGEmaFeedAdapter _hemiInWbtc =
+            new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, WBTC_UNIT_FEED);
+        int256 _before = _answer(_hemiInWbtc);
+
+        uint256 _amount = 10e8;
+        deal(HEMIBTC, address(this), _amount);
+        IERC20(HEMIBTC).approve(address(POOL), _amount);
+        ICurveExchange(address(POOL)).exchange(2, 0, _amount, 0);
+        assertEq(_answer(_hemiInWbtc), _before, "unchanged in the dump block");
+
+        vm.roll(block.number + 50);
+        vm.warp(block.timestamp + 600);
+        int256 _after10Min = _answer(_hemiInWbtc);
+        assertLt(_after10Min, _before, "drifts down with time");
+
+        vm.roll(block.number + 150);
+        vm.warp(block.timestamp + 1800);
+        assertLt(_answer(_hemiInWbtc), _after10Min, "keeps drifting");
+        assertLt(_answer(_hemiInWbtc), 0.98e18, "past the 2% tolerance after 40 minutes");
+
+        bytes32 _maintainer = treasury.MAINTAINER_ROLE();
+        vm.prank(treasury.defaultAdmin());
+        treasury.grantRole(_maintainer, address(this));
+        (,, uint256 _hemiStale,,,) = treasury.tokenConfig(HEMIBTC);
+        treasury.updateOracle(HEMIBTC, address(_hemiInWbtc), _hemiStale);
+        vm.expectPartialRevert(Treasury.PriceExceedTolerance.selector);
+        treasury.getPrice(HEMIBTC);
+    }
+
+    // ── priced in WBTC ───────────────────────────────────────────────────────
+
+    function test_wbtcUnit_answerIsEmaAndAlwaysFresh() public {
+        CurveStableSwapNGEmaFeedAdapter _hemiInWbtc =
+            new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, WBTC_UNIT_FEED);
+        (,,, uint256 _updatedAt,) = _hemiInWbtc.latestRoundData();
+        assertEq(_answer(_hemiInWbtc), int256(hemiBtcEma.emaRatio()));
+        assertEq(_updatedAt, block.timestamp);
     }
 
     // ── paired with the primary feeds ────────────────────────────────────────
