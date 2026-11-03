@@ -180,6 +180,9 @@ export const ContractAliases = {
   CbBtcWbtcChainlinkFeed: 'CbBtcWbtcChainlinkFeed',
   CbBtcWbtcCurveEmaFeed: 'CbBtcWbtcCurveEmaFeed',
   CbBtcWbtcPriceFeed: 'CbBtcWbtcPriceFeed',
+  HemiBtcWbtcChainlinkFeed: 'HemiBtcWbtcChainlinkFeed',
+  HemiBtcWbtcCurveEmaFeed: 'HemiBtcWbtcCurveEmaFeed',
+  HemiBtcWbtcPriceFeed: 'HemiBtcWbtcPriceFeed',
 } as const
 
 // =============================================================================

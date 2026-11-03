@@ -26,8 +26,9 @@ contract PassthroughVault is ERC4626 {
 }
 
 /// @dev The feeds as the deploy scripts build them, priced in WBTC, on a Treasury and Gateway from this repo:
-///      WBTC at a fixed 1.0, cbBTC = min(cbBTC/BTC derived / WBTC/BTC, Curve EMA cbBTC/WBTC), hemiBTC = Curve EMA
-///      hemiBTC/WBTC, all with a 90000 s stale period and 2% tolerance.
+///      WBTC at a fixed 1.0, cbBTC = min(cbBTC/BTC derived / WBTC/BTC, Curve EMA cbBTC/WBTC),
+///      hemiBTC = min(HEMIBTC/BTC exchange rate / WBTC/BTC, Curve EMA hemiBTC/WBTC), all with a 90000 s stale period
+///      and 2% tolerance.
 contract WbtcPricedFeedsForkTest is Test {
     uint256 constant FORK_BLOCK = 26279532;
     uint256 constant STALE_PERIOD = 90000;
@@ -40,6 +41,8 @@ contract WbtcPricedFeedsForkTest is Test {
         AggregatorV2V3Interface(0xfdFD9C85aD200c506Cf9e21F1FD8dd01932FBB23);
     AggregatorV2V3Interface constant CBBTC_BTC_DERIVED_FEED =
         AggregatorV2V3Interface(0x33F1E44DB47400C9BD6221962712D882Adb8fFA6);
+    AggregatorV2V3Interface constant HEMIBTC_BTC_RATE_FEED =
+        AggregatorV2V3Interface(0x7Ff41654D1551F01E622e2b1050EA027a3A6C9dc);
     AggregatorV2V3Interface constant WBTC_UNIT_FEED =
         AggregatorV2V3Interface(0x032A35daDA672B394525881f789a3B4E7734C76C);
 
@@ -50,7 +53,8 @@ contract WbtcPricedFeedsForkTest is Test {
     DerivedPriceFeedAdapter cbBtcChainlink;
     CurveStableSwapNGEmaFeedAdapter cbBtcEma;
     MinPriceFeedAdapter cbBtcFeed;
-    CurveStableSwapNGEmaFeedAdapter hemiBtcFeed;
+    DerivedPriceFeedAdapter hemiBtcChainlink;
+    MinPriceFeedAdapter hemiBtcFeed;
 
     PeggedToken vetBTC;
     Treasury treasury;
@@ -63,7 +67,10 @@ contract WbtcPricedFeedsForkTest is Test {
         cbBtcChainlink = new DerivedPriceFeedAdapter(CBBTC_BTC_DERIVED_FEED, WBTC_BTC_FEED, 8);
         cbBtcEma = new CurveStableSwapNGEmaFeedAdapter(POOL, cbBTC, 1, WBTC, 0, WBTC_UNIT_FEED);
         cbBtcFeed = new MinPriceFeedAdapter(cbBtcChainlink, cbBtcEma, 18);
-        hemiBtcFeed = new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, WBTC_UNIT_FEED);
+        hemiBtcChainlink = new DerivedPriceFeedAdapter(HEMIBTC_BTC_RATE_FEED, WBTC_BTC_FEED, 18);
+        hemiBtcFeed = new MinPriceFeedAdapter(
+            hemiBtcChainlink, new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, WBTC_UNIT_FEED), 18
+        );
 
         vetBTC = new PeggedToken("Vetro BTC", "vetBTC", address(this));
         treasury = deployTreasury(address(vetBTC), address(this));
@@ -124,9 +131,16 @@ contract WbtcPricedFeedsForkTest is Test {
         assertEq(_cbBtcAt, _chainlinkLegAt, "cbBTC goes stale with its Chainlink leg");
         assertEq(cbBtcFeed.decimals(), 18);
 
+        (int256 _rate, uint256 _rateAt) = _answer(HEMIBTC_BTC_RATE_FEED);
+        (int256 _hemiChainlinkLeg, uint256 _hemiChainlinkLegAt) = _answer(hemiBtcChainlink);
+        assertEq(_rate, 1e18, "exchange rate reads par");
+        assertEq(_hemiChainlinkLeg, (_rate * 1e8) / _wbtcBtc, "hemiBTC/WBTC = hemiBTC/BTC / WBTC/BTC");
+        assertEq(_hemiChainlinkLegAt, _rateAt < _wbtcBtcAt ? _rateAt : _wbtcBtcAt);
+
         (int256 _hemiBtc, uint256 _hemiBtcAt) = _answer(hemiBtcFeed);
-        assertEq(_hemiBtc, HEMIBTC_EMA);
-        assertEq(_hemiBtcAt, block.timestamp, "hemiBTC always reads fresh");
+        assertGt(_hemiChainlinkLeg, HEMIBTC_EMA, "WBTC below BTC lifts the Chainlink leg above the EMA");
+        assertEq(_hemiBtc, HEMIBTC_EMA, "min picks the EMA");
+        assertEq(_hemiBtcAt, _hemiChainlinkLegAt, "hemiBTC goes stale with its Chainlink leg");
     }
 
     function test_depositAndRedeem_atProductionPrices() public {
@@ -160,19 +174,35 @@ contract WbtcPricedFeedsForkTest is Test {
     }
 
     function test_cbBtc_staleAt90000() public {
-        (, uint256 _updatedAt) = _answer(cbBtcFeed);
-        vm.warp(_updatedAt + STALE_PERIOD - 1);
-        treasury.getPrice(cbBTC);
-
-        vm.warp(_updatedAt + STALE_PERIOD);
-        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(cbBtcFeed)));
-        treasury.getPrice(cbBTC);
+        _assertStaleAt90000(cbBTC, address(cbBtcFeed));
     }
 
-    function test_hemiBtc_neverStale() public {
-        vm.warp(block.timestamp + 30 days);
+    function test_hemiBtc_staleAt90000() public {
+        _assertStaleAt90000(HEMIBTC, address(hemiBtcFeed));
+    }
+
+    function _assertStaleAt90000(address token_, address feed_) private {
+        (, uint256 _updatedAt) = _answer(AggregatorV2V3Interface(feed_));
+        vm.warp(_updatedAt + STALE_PERIOD - 1);
+        treasury.getPrice(token_);
+
+        vm.warp(_updatedAt + STALE_PERIOD);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, feed_));
+        treasury.getPrice(token_);
+    }
+
+    /// @notice A bridge rate cut lowers the hemiBTC price even when nobody trades in the Curve pool
+    function test_hemiBtc_rateCutLowersPrice() public {
+        (uint80 _roundId,,, uint256 _updatedAt, uint80 _answeredInRound) = HEMIBTC_BTC_RATE_FEED.latestRoundData();
+        vm.mockCall(
+            address(HEMIBTC_BTC_RATE_FEED),
+            abi.encodeWithSignature("latestRoundData()"),
+            abi.encode(_roundId, int256(0.99e18), _updatedAt, _updatedAt, _answeredInRound)
+        );
+        (int256 _wbtcBtc,) = _answer(WBTC_BTC_FEED);
         (uint256 _price,) = treasury.getPrice(HEMIBTC);
-        assertGt(_price, 0);
+        assertEq(_price, uint256((int256(0.99e18) * 1e8) / _wbtcBtc));
+        assertLt(gateway.previewDeposit(HEMIBTC, 1e8), 1e18, "mints below par");
     }
 
     /// @notice A held dump first lowers the hemiBTC mint price below par, then takes it out of tolerance
