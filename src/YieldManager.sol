@@ -238,7 +238,8 @@ contract YieldManager is ReentrancyGuardTransient {
     /**
      * @notice The yield available to harvest, i.e. the excess of the treasury reserve over
      *  the pegged token's backed supply: `reserve - (totalSupply - amoSupply)`.
-     * @dev Reverts if any whitelisted token's oracle is stale or out of tolerance.
+     * @dev Reverts if any whitelisted token's oracle is stale. A token priced outside tolerance is valued at its
+     *  oracle price, which can leave nothing to harvest until yield covers its discount.
      * @return _excessPegged Harvestable excess in pegged token units, or 0 if none.
      */
     function harvestable() public view returns (uint256 _excessPegged) {

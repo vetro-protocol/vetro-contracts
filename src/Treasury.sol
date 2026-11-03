@@ -597,11 +597,12 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /////////////////////////////////////////////////////////////*/
 
     /// @notice Returns total reserve value denominated in PeggedToken units
-    /// @dev Each token is valued at its oracle price capped at par
+    /// @dev Each token is valued at its oracle price capped at par. A price outside `priceTolerance` does not revert
+    /// here, so one depegged or pushed token cannot block harvest of every token; its lower price only understates
+    /// the excess.
     function reserve() public view returns (uint256 _reserve) {
         TreasuryStorage storage $ = _getTreasuryStorage();
         uint256 _len = $.whitelistedTokens.length();
-        uint256 _priceToleranceBps = $.priceTolerance;
 
         for (uint256 i; i < _len; ++i) {
             address _token = $.whitelistedTokens.at(i);
@@ -613,9 +614,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
             }
 
             if (_balance > 0) {
-                (uint256 _price, uint256 _unitPrice) = _getPrice(
-                    IAggregatorV3($.tokenConfig[_token].oracle), $.tokenConfig[_token].stalePeriod, _priceToleranceBps
-                );
+                (uint256 _price, uint256 _unitPrice) =
+                    _getOraclePrice(IAggregatorV3($.tokenConfig[_token].oracle), $.tokenConfig[_token].stalePeriod);
                 // Gateway never mints above par, so an above-par price would surface as phantom harvestable excess
                 if (_price > _unitPrice) _price = _unitPrice;
                 // Calculate reserve in token decimals relative to PeggedToken peg
@@ -666,7 +666,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         if (_mintPrice >= _pegFloor) _mintPrice = _unitPrice;
     }
 
-    function _getPrice(IAggregatorV3 oracle_, uint256 stalePeriod_, uint256 priceToleranceBps_)
+    function _getOraclePrice(IAggregatorV3 oracle_, uint256 stalePeriod_)
         private
         view
         returns (uint256 _latestPrice, uint256 _unitPrice)
@@ -681,6 +681,14 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
 
         // Unit oracle price for given token relative to PeggedToken peg.
         _unitPrice = 10 ** oracle_.decimals();
+    }
+
+    function _getPrice(IAggregatorV3 oracle_, uint256 stalePeriod_, uint256 priceToleranceBps_)
+        private
+        view
+        returns (uint256 _latestPrice, uint256 _unitPrice)
+    {
+        (_latestPrice, _unitPrice) = _getOraclePrice(oracle_, stalePeriod_);
         uint256 _priceToleranceValue = (_unitPrice * priceToleranceBps_) / MAX_BPS;
         uint256 _priceUpperBound = _unitPrice + _priceToleranceValue;
         uint256 _priceLowerBound = _unitPrice - _priceToleranceValue;
