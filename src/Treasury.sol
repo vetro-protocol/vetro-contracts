@@ -235,8 +235,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
             }
         }
 
-        _reduceNetDeposited($.tokenConfig[token_], _paid);
-
         emit ExcessWithdrawn(token_, _paid);
         return _paid;
     }
@@ -347,9 +345,10 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     }
 
     /**
-     * @notice MAINTAINER_ROLE: Update the most of a token that may be deposited net of what has left
+     * @notice MAINTAINER_ROLE: Update the most of a token that may be deposited net of what has been redeemed
      * @dev Gates intake, so a vault loss or a depeg the oracle misses does not open room. Net deposits go up on
-     * {deposit} and down on {withdraw} and {harvest}, never below 0, and start at 0 when the token is whitelisted.
+     * {deposit} and down on {withdraw}, never below 0, and start at 0 when the token is whitelisted. {harvest}
+     * leaves them alone: the yield was never counted, and minting it back through the Gateway takes room.
      * type(uint256).max means no cap.
      * @param token_ Token to update deposit cap for
      * @param newDepositCap_ New deposit cap in token units
@@ -383,22 +382,27 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     }
 
     /**
-     * @notice DEFAULT_ADMIN_ROLE: Update the band around par in which the Gateway mints and redeems at par
-     * @dev A band other than 0 must be below priceTolerance, or it would par-price the entire accepted range
+     * @notice MAINTAINER_ROLE lowers, DEFAULT_ADMIN_ROLE raises: Update the band around par in which the Gateway mints
+     * and redeems at par
+     * @dev Inside the band trades are priced at par, so widening it stays with the admin, while the maintainer can
+     * narrow it alone, e.g. to lower priceTolerance below it. A band other than 0 must be below priceTolerance, or it
+     * would par-price the entire accepted range.
      * @param token_ Token to update peg band for
      * @param newPegBand_ New peg band in BPS
      */
-    function updatePegBand(address token_, uint256 newPegBand_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updatePegBand(address token_, uint256 newPegBand_) external {
         TreasuryStorage storage $ = _getTreasuryStorage();
         if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        uint256 _pegBand = $.tokenConfig[token_].pegBand;
+        _checkRole(newPegBand_ < _pegBand ? MAINTAINER_ROLE : DEFAULT_ADMIN_ROLE);
         uint256 _priceTolerance = $.priceTolerance;
         if (newPegBand_ > 0 && newPegBand_ >= _priceTolerance) revert InvalidPegBand(newPegBand_, _priceTolerance);
-        emit UpdatedPegBand(token_, $.tokenConfig[token_].pegBand, newPegBand_);
+        emit UpdatedPegBand(token_, _pegBand, newPegBand_);
         $.tokenConfig[token_].pegBand = newPegBand_;
     }
 
     /// @notice MAINTAINER_ROLE: Update oracle price tolerance
-    /// @dev Must stay above every peg band other than 0, so a band blocking it is lowered first
+    /// @dev Must stay above every peg band other than 0, so a band blocking it is lowered first ({updatePegBand})
     function updatePriceTolerance(uint256 newPriceTolerance_) external onlyRole(MAINTAINER_ROLE) {
         if (newPriceTolerance_ > MAX_BPS) revert InvalidPriceTolerance();
         TreasuryStorage storage $ = _getTreasuryStorage();
@@ -519,7 +523,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         return _getTreasuryStorage().name;
     }
 
-    /// @notice Returns what has been deposited of a token net of what has left, as counted against its deposit cap
+    /// @notice Returns what has been deposited of a token net of what has been redeemed, as counted against its cap
     function netDeposited(address token_) external view returns (uint256) {
         return _getTreasuryStorage().tokenConfig[token_].netDeposited;
     }

@@ -557,38 +557,27 @@ contract YieldManagerTest is Test {
         assertBackingInvariant();
     }
 
-    function test_harvest_atDepositCap() public {
-        // Harvest takes net deposits down by what it pays and the re-deposit puts it back, so it works at a full cap
+    function test_harvest_yieldTakesRoom() public {
+        // Harvest leaves net deposits alone and the re-deposit adds what it paid
+        treasury.updateDepositCap(token, INITIAL_DEPOSIT + 1_000e6);
+        createExcess(1_000e6);
+
+        vm.prank(keeper);
+        yieldManager.harvest(token, 0);
+        assertEq(treasury.netDeposited(token), INITIAL_DEPOSIT + 1_000e6);
+        assertEq(treasury.maxDeposit(token), 0);
+        assertBackingInvariant();
+    }
+
+    function test_harvest_revertAtDepositCap() public {
+        // The yield stays in the Treasury until the cap is raised
         treasury.updateDepositCap(token, INITIAL_DEPOSIT);
         createExcess(1_000e6);
 
-        vm.prank(keeper);
-        yieldManager.harvest(token, 0);
-        assertEq(treasury.netDeposited(token), INITIAL_DEPOSIT);
-        assertBackingInvariant();
-    }
-
-    function test_harvest_netDepositedBelowPaid_takesRoom() public {
-        gateway.setWithdrawalDelayEnabled(false);
-        vm.prank(alice);
-        gateway.redeem(token, 60_000e18, 0, alice);
-        assertEq(treasury.netDeposited(token), 40_000e6);
-
-        // Harvest can take off only the 40k there is, and the re-deposit adds the 50k paid
-        createExcess(50_000e6);
-        vm.prank(keeper);
-        yieldManager.harvest(token, 0);
-        assertEq(treasury.netDeposited(token), 50_000e6);
-        assertBackingInvariant();
-    }
-
-    function test_harvest_revertIfNetDepositedOverCap() public {
-        // A cap lowered below net deposits stops the re-deposit too
-        treasury.updateDepositCap(token, INITIAL_DEPOSIT / 2);
-        createExcess(1_000e6);
-
         vm.expectRevert(
-            abi.encodeWithSelector(Treasury.ExceededDepositCap.selector, token, INITIAL_DEPOSIT, INITIAL_DEPOSIT / 2)
+            abi.encodeWithSelector(
+                Treasury.ExceededDepositCap.selector, token, INITIAL_DEPOSIT + 1_000e6, INITIAL_DEPOSIT
+            )
         );
         vm.prank(keeper);
         yieldManager.harvest(token, 0);

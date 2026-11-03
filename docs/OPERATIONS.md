@@ -101,7 +101,7 @@ All roles for Gateway and Treasury operations are managed on the **Treasury** co
 | Role | Constant | Managed On | Purpose |
 |------|----------|------------|---------|
 | DEFAULT_ADMIN_ROLE | `0x00` | Treasury, YieldDistributor | Protocol governance: whitelist tokens, set limits |
-| MAINTAINER_ROLE | `keccak256("MAINTAINER_ROLE")` | Treasury | Configuration: fees, oracles, deposit caps, whitelists, withdrawal settings |
+| MAINTAINER_ROLE | `keccak256("MAINTAINER_ROLE")` | Treasury | Configuration: fees, oracles, deposit caps, whitelists, withdrawal settings, narrowing peg bands |
 | KEEPER_ROLE | `keccak256("KEEPER_ROLE")` | Treasury | Vault operations: push/pull, pause/unpause, swap |
 | UMM_ROLE | `keccak256("UMM_ROLE")` | Treasury | AMO operations: mint/burn VUSD, harvest yield |
 | DISTRIBUTOR_ROLE | `keccak256("DISTRIBUTOR_ROLE")` | YieldDistributor | Distribute yield to StakingVault |
@@ -281,7 +281,8 @@ Treasury.updatePriceTolerance(uint256 newPriceTolerance_)
 
 - In BPS, max 10000 (100%)
 - Default: 100 (1%). Prices outside 1 +/- tolerance will revert
-- Must stay above every peg band other than 0 (5.5): to go to or below a band, DEFAULT_ADMIN lowers that band first
+- Must stay above every peg band other than 0 (5.5): to go to or below a band, lower that band first with
+  `Treasury.updatePegBand`, which MAINTAINER can do on its own
 
 #### 4.8 Update Swapper
 
@@ -299,11 +300,11 @@ Treasury.updateDepositCap(address token_, uint256 newDepositCap_)
 
 - In token units. A user deposit reverts with `ExceededDepositCap` if it would take the token's net deposits
   (`Treasury.netDeposited(token)`) past the cap
-- Net deposits go up on each deposit and down on each redemption and harvest, never below 0. They gate intake, not
-  holdings: a vault loss opens no room, and yield, keeper swaps and migrated collateral take none
-- Harvest takes off what it pays and the YieldManager's re-deposit adds it back, so net deposits end at the larger of
-  the two. Below the harvested amount (common right after the migration) the yield takes room, and
-  `YieldManager.harvest(token)` reverts if that larger value is over the cap: harvest another token or raise the cap
+- Net deposits go up on each deposit and down on each redemption, never below 0. They gate intake, not holdings: a
+  vault loss opens no room, and keeper swaps and migrated collateral take none
+- Harvest leaves net deposits alone, and the YieldManager's re-deposit adds what it paid, so yield takes room. Once
+  that would pass the cap, `YieldManager.harvest(token)` reverts and the yield stays in the Treasury: harvest another
+  token or raise the cap. Size caps with room for the yield
 - New tokens start uncapped (`type(uint256).max`) with net deposits at 0, and so does a token removed and whitelisted
   again. AMO mints and keeper operations ignore the cap
 - `Gateway.maxDeposit(token)` returns the room left, bounded by what the yield vault accepts. It is not a guarantee:
@@ -355,6 +356,8 @@ Gateway.updateAmoMintLimit(uint256 newAmoMintLimit_)
 ```
 Treasury.updatePegBand(address token_, uint256 newPegBand_)
 ```
+
+- DEFAULT_ADMIN raises a band, MAINTAINER lowers it: widening the par band is governance, narrowing it is not
 
 - Token must be whitelisted; removing it from the whitelist clears its band
 - Other than 0, must be less than Treasury's `priceTolerance`, which in turn cannot be lowered to or below it (4.7)
@@ -792,7 +795,7 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
 
 ### Depeg Event
 1. **KEEPER**: Pause deposits for the depegging token
-2. **DEFAULT_ADMIN**: Adjust peg band if needed
+2. **MAINTAINER**: Narrow the peg band if needed (widening needs DEFAULT_ADMIN)
    ```
    Treasury.updatePegBand(token, newPegBand)
    ```
