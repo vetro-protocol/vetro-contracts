@@ -151,7 +151,7 @@ const candidateAccounts = async (hre: HardhatRuntimeEnvironment, {call}: Reader,
 
 const snapshotStack = async (
   hre: HardhatRuntimeEnvironment,
-  {call, read, readAll}: Reader,
+  {blockTag, call, read, readAll}: Reader,
   aliases: InstanceAliases,
   accounts: string[]
 ) => {
@@ -174,11 +174,16 @@ const snapshotStack = async (
     MAINTAINER_ROLE: await call(treasury, 'MAINTAINER_ROLE'),
   }
   const distributorRole = await call(distributor, 'DISTRIBUTOR_ROLE')
+  // The peg band moves from the Gateway to the Treasury with the migration. Read where it lives at this block, under
+  // a key naming neither, so a compare across the move sees the band pricing uses rather than a getter appearing
+  const migrated = (await getImplementation(provider, treasury.address, blockTag)) !== hre.ethers.constants.AddressZero
+  const bands = migrated ? treasury : gateway
   const decimals: number = await call(vault, 'decimals')
 
   // `state` is what an upgrade must never change; `derived` depends on prices/time and is reported for review
   const state = {
     token: await readAll(token, ['totalSupply', 'gateway', 'treasury', 'getBlacklistedAddresses']),
+    pegBand: await perAccount(tokens, (t) => read(bands, 'pegBand', t)),
     treasury: {
       ...(await readAll(treasury, ['NAME', 'gateway', 'swapper', 'priceTolerance', 'defaultAdmin'])),
       whitelistedTokens: tokens,
@@ -207,7 +212,6 @@ const snapshotStack = async (
       fees: await perAccount(tokens, async (t) => ({
         mintFee: await read(gateway, 'mintFee', t),
         redeemFee: await read(gateway, 'redeemFee', t),
-        pegBand: await read(gateway, 'pegBand', t),
       })),
       redeemRequests: await perAccount(accounts, (a) => read(gateway, 'getRedeemRequest', a)),
     },

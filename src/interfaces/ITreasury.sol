@@ -11,7 +11,9 @@ interface ITreasury {
     function deposit(address token_, uint256 amount_) external;
     function depositCap(address token_) external view returns (uint256);
     function gateway() external view returns (address);
+    function getMintPrice(address token_) external view returns (uint256 _mintPrice, uint256 _unitPrice);
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice);
+    function getRedeemPrice(address token_) external view returns (uint256 _redeemPrice, uint256 _unitPrice);
     function harvest(address token_, address receiver_) external returns (uint256);
     function hasRole(bytes32 role, address account) external view returns (bool);
     function isWhitelistedToken(address token_) external view returns (bool);
@@ -22,6 +24,7 @@ interface ITreasury {
     function owner() external view returns (address);
     // solhint-disable-next-line func-name-mixedcase
     function PEGGED_TOKEN() external view returns (IPeggedToken);
+    function pegBand(address token_) external view returns (uint256);
     function priceTolerance() external view returns (uint256);
     function pull(address token_, uint256 amount_) external;
     function push(address token_, uint256 amount_) external;
@@ -37,6 +40,7 @@ interface ITreasury {
     function UMM_ROLE() external view returns (bytes32);
     function updateDepositCap(address token_, uint256 newDepositCap_) external;
     function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external;
+    function updatePegBand(address token_, uint256 newPegBand_) external;
     function updatePriceTolerance(uint256 newPriceTolerance_) external;
     function updateSwapper(address swapper_) external;
     function whitelistedTokens() external view returns (address[] memory);
