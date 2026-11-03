@@ -416,12 +416,12 @@ const buildMirrorBatch = async (
     needs.add(maintainerRole)
     setting('updateSwapper', [oldState.swapper], `${target}.updateSwapper(${oldState.swapper})`)
   }
-  // The Safe is the new Treasury's admin. A band must be below priceTolerance, which is set above
+  // The Safe is the new Treasury's admin. A band other than 0 must be below priceTolerance, which is set above
   for (const t of oldState.tokens) {
     const current = newState.tokens.find((n) => sameAddress(n.token, t.token))?.pegBand ?? BigNumber.from(0)
     if (current.eq(t.pegBand)) continue
     const symbol = await symbolOf(hre, t.token)
-    if (t.pegBand.gte(oldState.priceTolerance)) {
+    if (t.pegBand.gt(0) && t.pegBand.gte(oldState.priceTolerance)) {
       throw Error(
         `The live ${symbol} peg band ${t.pegBand} is not below priceTolerance ${oldState.priceTolerance}, so the ` +
           'Gateway ignores it and the new Treasury would refuse it. Lower it on the Gateway first.'
@@ -750,6 +750,15 @@ export const migrateTreasuryIfRequested = async (
       log(chalk.blue(`${treasuryAlias}: the live Treasury is behind a proxy, it changes code through an upgrade`))
       return
     }
+    // The alias still records the live Treasury, so a proxy artifact here is left over from a run that stopped after
+    // deploying it, or from an abandoned migration. deployUpgradable would reuse it, and upgrade it if the code changed
+    if (await getOrNull(`${treasuryAlias}_Proxy`)) {
+      throw Error(
+        `${treasuryAlias}_Proxy exists but ${treasuryAlias} still records the live Treasury: an earlier run stopped ` +
+          `after deploying the proxy, or a migration was abandoned. Delete ${treasuryAlias}_Proxy.json and ` +
+          `${treasuryAlias}_ProxyAdmin.json and re-run; the orphaned proxy holds nothing.`
+      )
+    }
 
     oldState = await readState(hre, oldTreasury, await bandsOf(hre, peggedToken), fromBlock(artifact))
     await assertSafeCanSign(hre, {safe, peggedToken, oldTreasury, oldState})
@@ -763,13 +772,6 @@ export const migrateTreasuryIfRequested = async (
       initializeArgs: [peggedTokenDeployment.address, oldState.admin],
       owner: oldState.admin,
     })
-    if (sameAddress((await get(treasuryAlias)).address, live)) {
-      throw Error(
-        `${treasuryAlias}_Proxy exists but ${treasuryAlias} still records the live Treasury: an earlier run stopped ` +
-          `after deploying the proxy. Delete ${treasuryAlias}_Proxy.json and ${treasuryAlias}_ProxyAdmin.json and ` +
-          're-run; the orphaned proxy holds nothing.'
-      )
-    }
   } else if (!previous || !sameAddress(previous.address, live)) {
     throw Error(
       `${treasuryAlias} artifact ${artifact.address} is neither the live Treasury ${live} nor a migration from it`
