@@ -10,8 +10,9 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IYieldDistributor} from "./interfaces/IYieldDistributor.sol";
 import {IVaultRewards} from "./interfaces/IVaultRewards.sol";
-import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {IStakingVault} from "./interfaces/IStakingVault.sol";
+import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
+import {ITreasury} from "./interfaces/ITreasury.sol";
 
 /**
  * @title StakingVault
@@ -56,7 +57,6 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
 
-    error Blacklisted(address account);
     error CooldownEnabled();
     error CooldownNotEnabled();
     error CooldownNotMatured(uint256 requestId, uint256 claimableAt);
@@ -408,6 +408,8 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         returns (uint256)
     {
         if (!_canInstantWithdraw(owner_)) revert CooldownEnabled();
+        // Caller and owner are checked in _update when the shares burn
+        _checkNotSanctioned(receiver_);
         _pullYield();
         return super.redeem(shares_, receiver_, owner_);
     }
@@ -426,6 +428,8 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         returns (uint256)
     {
         if (!_canInstantWithdraw(owner_)) revert CooldownEnabled();
+        // Caller and owner are checked in _update when the shares burn
+        _checkNotSanctioned(receiver_);
         _pullYield();
         return super.withdraw(assets_, receiver_, owner_);
     }
@@ -454,36 +458,36 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     }
 
     /// @notice Max assets depositable for receiver without reverting.
-    /// @dev Returns 0 when the receiver is blacklisted on the pegged token.
+    /// @dev Returns 0 when the receiver is on the sanctions list.
     /// @param receiver_ The share receiver
     function maxDeposit(address receiver_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
-        if (IPeggedToken(asset()).isBlacklisted(receiver_)) return 0;
+        if (_isSanctioned(receiver_)) return 0;
         return super.maxDeposit(receiver_);
     }
 
     /// @notice Max shares mintable for receiver without reverting.
-    /// @dev Returns 0 when the receiver is blacklisted on the pegged token.
+    /// @dev Returns 0 when the receiver is on the sanctions list.
     /// @param receiver_ The share receiver
     function maxMint(address receiver_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
-        if (IPeggedToken(asset()).isBlacklisted(receiver_)) return 0;
+        if (_isSanctioned(receiver_)) return 0;
         return super.maxMint(receiver_);
     }
 
     /// @notice Max shares redeemable via instant redeem() without reverting.
     /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted)
-    ///      or is blacklisted on the pegged token.
+    ///      or is on the sanctions list.
     /// @param owner_ The share owner
     function maxRedeem(address owner_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
-        if (!_canInstantWithdraw(owner_) || IPeggedToken(asset()).isBlacklisted(owner_)) return 0;
+        if (!_canInstantWithdraw(owner_) || _isSanctioned(owner_)) return 0;
         return super.maxRedeem(owner_);
     }
 
     /// @notice Max assets withdrawable via instant withdraw() without reverting.
     /// @dev Returns 0 when the owner cannot instant-withdraw (cooldown enabled and not whitelisted)
-    ///      or is blacklisted on the pegged token.
+    ///      or is on the sanctions list.
     /// @param owner_ The share owner
     function maxWithdraw(address owner_) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
-        if (!_canInstantWithdraw(owner_) || IPeggedToken(asset()).isBlacklisted(owner_)) return 0;
+        if (!_canInstantWithdraw(owner_) || _isSanctioned(owner_)) return 0;
         return super.maxWithdraw(owner_);
     }
 
@@ -513,9 +517,9 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
 
         // Only the request owner can claim
         if (msg.sender != _owner) revert NotRequestOwner();
-        // Shares were burned at request time, so _update() no longer guards this position
-        IPeggedToken _peggedToken = IPeggedToken(asset());
-        if (_peggedToken.isBlacklisted(_owner)) revert Blacklisted(_owner);
+        // Shares were burned at request time, so _update() no longer guards this position; msg.sender is the owner
+        _checkNotSanctioned(_owner);
+        if (receiver_ != _owner) _checkNotSanctioned(receiver_);
 
         // Remove from active set
         $.activeRequestIds[_owner].remove(requestId_);
@@ -524,7 +528,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         $.totalAssetsInCooldown -= assets_;
 
         // Transfer assets to receiver
-        IERC20(_peggedToken).safeTransfer(receiver_, assets_);
+        IERC20(asset()).safeTransfer(receiver_, assets_);
 
         emit WithdrawClaimed(_owner, receiver_, requestId_, assets_);
     }
@@ -597,16 +601,18 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
         requestId_ = _createRequest(assets_, shares_, owner_);
     }
 
-    /// @notice Override ERC20 _update to enforce the asset blacklist and call vault rewards before transfers
-    /// @dev Reverts if from/to is blacklisted on the pegged token (covers transfers, mints and burns).
+    /// @notice Override ERC20 _update to enforce the sanctions list and call vault rewards before transfers
+    /// @dev Reverts if the caller, from or to is on the Treasury's sanctions list. Covers transfers, transferFrom spenders,
+    ///      deposits (caller pays, `to` receives), redeem requests and cancellations.
     ///      Calls updateReward on vault rewards contract for from/to addresses
     /// @param from The address tokens are transferred from
     /// @param to The address tokens are transferred to
     /// @param value The amount of tokens transferred
     function _update(address from, address to, uint256 value) internal override {
-        IPeggedToken _peggedToken = IPeggedToken(asset());
-        if (from != address(0) && _peggedToken.isBlacklisted(from)) revert Blacklisted(from);
-        if (to != address(0) && _peggedToken.isBlacklisted(to)) revert Blacklisted(to);
+        ITreasury _treasury = _getTreasury();
+        _treasury.checkNotSanctioned(msg.sender);
+        if (from != address(0) && from != msg.sender) _treasury.checkNotSanctioned(from);
+        if (to != address(0) && to != msg.sender && to != from) _treasury.checkNotSanctioned(to);
         address _vaultRewards = _getStakingVaultStorage().vaultRewards;
         if (_vaultRewards != address(0)) {
             if (from != address(0)) {
@@ -630,6 +636,20 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
     function _canInstantWithdraw(address account_) internal view returns (bool) {
         StakingVaultStorage storage $ = _getStakingVaultStorage();
         return !$.cooldownEnabled || $.instantWithdrawWhitelist[account_];
+    }
+
+    /// @dev Reverts with Treasury's Sanctioned if `account_` is on the Treasury's sanctions list
+    function _checkNotSanctioned(address account_) private view {
+        _getTreasury().checkNotSanctioned(account_);
+    }
+
+    /// @dev The Treasury of the vault's asset, which holds the sanctions list
+    function _getTreasury() private view returns (ITreasury) {
+        return ITreasury(IPeggedToken(asset()).treasury());
+    }
+
+    function _isSanctioned(address account_) private view returns (bool) {
+        return _getTreasury().isSanctioned(account_);
     }
 
     /*//////////////////////////////////////////////////////////////

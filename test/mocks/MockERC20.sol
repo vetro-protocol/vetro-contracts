@@ -22,6 +22,21 @@ contract MockERC20 is ERC20 {
         isBlacklisted[account_] = status_;
     }
 
+    // Doubles as the pegged token's Treasury for StakingVault, flagging blacklisted accounts as sanctioned
+    error Sanctioned(address account);
+
+    function treasury() external view returns (address) {
+        return address(this);
+    }
+
+    function isSanctioned(address account_) external view returns (bool) {
+        return isBlacklisted[account_];
+    }
+
+    function checkNotSanctioned(address account_) external view {
+        if (isBlacklisted[account_]) revert Sanctioned(account_);
+    }
+
     function setHasFeeOnTransfer(bool hasFeeOnTransfer_) external {
         _hasFeeOnTransfer = hasFeeOnTransfer_;
     }

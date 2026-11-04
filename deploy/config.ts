@@ -31,6 +31,9 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     // Curve StableSwap-NG WBTC/cbBTC/hemiBTC pool (coin indices 0/1/2)
     CURVE_WBTC_CBBTC_HEMIBTC_POOL: '0x66039342C66760874047c36943B1e2d8300363BB',
 
+    // RedStone Sanctions Oracle (Chainalysis-compatible)
+    REDSTONE_SANCTIONS_ORACLE: '0x574Ad490fE8087B580DB227a8Ca7EfB7C19Dc8C4',
+
     // Tokens
     WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     CBBTC: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
@@ -49,6 +52,9 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     // Chainlink feeds
     CHAINLINK_BTC_USD_FEED: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
     CHAINLINK_CBBTC_USD_FEED: '0x0000000000000000000000000000000000000000',
+
+    // RedStone Sanctions Oracle
+    REDSTONE_SANCTIONS_ORACLE: '0x574Ad490fE8087B580DB227a8Ca7EfB7C19Dc8C4',
 
     // Tokens
     WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
@@ -168,6 +174,7 @@ export const ContractAliases = {
   YieldManager: 'YieldManager',
   ChainlinkFeedAdapter: 'ChainlinkFeedAdapter',
   DerivedPriceFeedAdapter: 'DerivedPriceFeedAdapter',
+  SanctionsList: 'SanctionsList',
 
   // vetBTC ecosystem
   VetBTC: 'VetBTC',
@@ -183,6 +190,7 @@ export const ContractAliases = {
   HemiBtcWbtcChainlinkFeed: 'HemiBtcWbtcChainlinkFeed',
   HemiBtcWbtcCurveEmaFeed: 'HemiBtcWbtcCurveEmaFeed',
   HemiBtcWbtcPriceFeed: 'HemiBtcWbtcPriceFeed',
+  VetBTCSanctionsList: 'VetBTCSanctionsList',
 } as const
 
 // =============================================================================

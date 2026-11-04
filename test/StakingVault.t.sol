@@ -7,6 +7,7 @@ import {StakingVault} from "src/StakingVault.sol";
 import {IStakingVault} from "src/interfaces/IStakingVault.sol";
 import {YieldDistributor} from "src/YieldDistributor.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
+import {Treasury} from "src/Treasury.sol";
 
 contract StakingVaultTest is Test {
     StakingVault vault;
@@ -1182,7 +1183,7 @@ contract StakingVaultTest is Test {
         vusd.setBlacklisted(alice, true);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         vault.transfer(bob, 100 * UNIT);
     }
 
@@ -1191,7 +1192,7 @@ contract StakingVaultTest is Test {
         vusd.setBlacklisted(bob, true);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, bob));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
         vault.transfer(bob, 100 * UNIT);
     }
 
@@ -1202,7 +1203,7 @@ contract StakingVaultTest is Test {
         vusd.setBlacklisted(alice, true);
 
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         vault.transferFrom(alice, bob, 100 * UNIT);
     }
 
@@ -1236,7 +1237,7 @@ contract StakingVaultTest is Test {
         vusd.setBlacklisted(alice, true);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         vault.requestRedeem(100 * UNIT, alice);
     }
 
@@ -1248,7 +1249,7 @@ contract StakingVaultTest is Test {
         skip(7 days);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         vault.claimWithdraw(_requestId, bob);
     }
 
@@ -1272,7 +1273,7 @@ contract StakingVaultTest is Test {
         vusd.setBlacklisted(alice, true);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         vault.cancelWithdraw(_requestId);
     }
 
@@ -1304,7 +1305,7 @@ contract StakingVaultTest is Test {
         vusd.setBlacklisted(alice, true);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         vault.requestWithdraw(100 * UNIT, alice);
     }
 
@@ -1319,7 +1320,7 @@ contract StakingVaultTest is Test {
         skip(7 days);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(StakingVault.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         vault.claimWithdrawBatch(_requestIds, bob);
     }
 
@@ -1338,5 +1339,113 @@ contract StakingVaultTest is Test {
         assertEq(vault.maxWithdraw(alice), 0);
         assertEq(vault.maxDeposit(alice), 0);
         assertEq(vault.maxMint(alice), 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       SANCTIONS (TREASURY LIST)
+    //////////////////////////////////////////////////////////////*/
+
+    function test_deposit_revert_sanctioned() public {
+        vm.prank(alice);
+        vusd.approve(address(vault), type(uint256).max);
+
+        // A sanctioned receiver has no deposit capacity (ERC-4626 max* report 0)
+        vusd.setBlacklisted(bob, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSignature("ERC4626ExceededMaxDeposit(address,uint256,uint256)", bob, UNIT, 0));
+        vault.deposit(UNIT, bob);
+        vm.expectRevert(abi.encodeWithSignature("ERC4626ExceededMaxMint(address,uint256,uint256)", bob, UNIT, 0));
+        vault.mint(UNIT, bob);
+        vm.stopPrank();
+        assertEq(vault.maxDeposit(bob), 0);
+        assertEq(vault.maxMint(bob), 0);
+
+        vusd.setBlacklisted(alice, true);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.deposit(UNIT, charlie);
+    }
+
+    function test_transfer_revert_sanctioned() public {
+        _deposit(alice, 100 * UNIT);
+
+        vusd.setBlacklisted(bob, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        vault.transfer(bob, UNIT);
+        vault.approve(bob, UNIT);
+        vm.stopPrank();
+
+        // Sanctioned spender cannot move shares between clean accounts
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        vault.transferFrom(alice, charlie, UNIT);
+
+        // Sanctioned holder is frozen
+        vusd.setBlacklisted(alice, true);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.transfer(charlie, UNIT);
+    }
+
+    function test_instantWithdraw_revert_sanctioned() public {
+        vm.prank(owner);
+        vault.updateCooldownEnabled(false);
+        _deposit(alice, 100 * UNIT);
+
+        vusd.setBlacklisted(bob, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        vault.withdraw(UNIT, bob, alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        vault.redeem(UNIT, bob, alice);
+        vm.stopPrank();
+
+        vusd.setBlacklisted(alice, true);
+        assertEq(vault.maxWithdraw(alice), 0);
+        assertEq(vault.maxRedeem(alice), 0);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.withdraw(UNIT, alice, alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.redeem(UNIT, alice, alice);
+        vm.stopPrank();
+    }
+
+    function test_requestRedeem_revert_sanctioned() public {
+        _deposit(alice, 100 * UNIT);
+        vusd.setBlacklisted(alice, true);
+
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.requestRedeem(UNIT, alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.requestWithdraw(UNIT, alice);
+        vm.stopPrank();
+    }
+
+    function test_claimAndCancel_revert_sanctioned() public {
+        _deposit(alice, 100 * UNIT);
+        vm.prank(alice);
+        (uint256 _requestId,) = vault.requestRedeem(50 * UNIT, alice);
+        vm.warp(block.timestamp + 7 days);
+
+        vusd.setBlacklisted(bob, true);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        vault.claimWithdraw(_requestId, bob);
+
+        vusd.setBlacklisted(alice, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.claimWithdraw(_requestId, charlie);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        vault.cancelWithdraw(_requestId);
+        vm.stopPrank();
+
+        // Delisting releases the request
+        vusd.setBlacklisted(alice, false);
+        vm.prank(alice);
+        assertEq(vault.claimWithdraw(_requestId, alice), 50 * UNIT);
     }
 }

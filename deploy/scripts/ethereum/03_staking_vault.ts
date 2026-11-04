@@ -1,6 +1,7 @@
 import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {deployUpgradable, UpgradableContracts, ContractAliases} from '../../helpers'
+import {isTreasuryMigrated} from '../../helpers/treasury-migration'
 import {StakingVaultConfig} from '../../config'
 import Address from '../../helpers/address'
 
@@ -36,6 +37,12 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
 
   // Get the deployed PeggedToken (VUSD) address as underlying asset
   const {address: peggedTokenAddress} = await get(PeggedToken)
+
+  // The StakingVault checks sanctions through the Treasury, which a Treasury from before the migration cannot do
+  if (!(await isTreasuryMigrated(hre, PeggedToken))) {
+    console.log(`${StakingVault}: the live Treasury predates the migration, leaving the upgrade until it has run`)
+    return
+  }
 
   // Use deployer as owner on local networks, GOVERNOR on production
   const owner = ['hardhat', 'localhost'].includes(hre.network.name)
