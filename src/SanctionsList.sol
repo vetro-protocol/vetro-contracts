@@ -25,7 +25,6 @@ contract SanctionsList is ISanctionsList {
     }
 
     /// @inheritdoc ISanctionsList
-    /// @dev Reverts if the oracle reverts, which blocks the gated flows until governance points them at another list
     function isSanctioned(address account_) external view returns (bool) {
         if (PEGGED_TOKEN.isBlacklisted(account_)) return true;
         return address(SANCTIONS_ORACLE) != address(0) && SANCTIONS_ORACLE.isSanctioned(account_);
