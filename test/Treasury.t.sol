@@ -234,6 +234,58 @@ contract TreasuryTest is Test {
         assertEq(treasury.netDeposited(address(token)), 0);
     }
 
+    // --- seedNetDeposited ---
+    function test_seedNetDeposited_countsVaultAndIdleHoldings() public {
+        deal(address(token), address(treasury), 800 * TOKEN_UNIT);
+        treasury.push(address(token), 600 * TOKEN_UNIT);
+
+        vm.expectEmit(address(treasury));
+        emit Treasury.SeededNetDeposited(address(token), 0, 800 * TOKEN_UNIT);
+        treasury.seedNetDeposited(address(token));
+        assertEq(treasury.netDeposited(address(token)), 800 * TOKEN_UNIT);
+    }
+
+    function test_seedNetDeposited_overwritesNetDeposited() public {
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.prank(gateway);
+        treasury.deposit(address(token), 100 * TOKEN_UNIT);
+        deal(address(token), address(treasury), 50 * TOKEN_UNIT);
+
+        vm.expectEmit(address(treasury));
+        emit Treasury.SeededNetDeposited(address(token), 100 * TOKEN_UNIT, 150 * TOKEN_UNIT);
+        treasury.seedNetDeposited(address(token));
+        assertEq(treasury.netDeposited(address(token)), 150 * TOKEN_UNIT);
+    }
+
+    function test_seedNetDeposited_capCountsSeededHoldings() public {
+        deal(address(token), address(treasury), 800 * TOKEN_UNIT);
+        treasury.seedNetDeposited(address(token));
+        vm.prank(maintainer);
+        treasury.updateDepositCap(address(token), 1000 * TOKEN_UNIT);
+        assertEq(treasury.maxDeposit(address(token)), 200 * TOKEN_UNIT);
+
+        deal(address(token), address(treasury), 1001 * TOKEN_UNIT);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Treasury.ExceededDepositCap.selector, address(token), 1001 * TOKEN_UNIT, 1000 * TOKEN_UNIT
+            )
+        );
+        vm.prank(gateway);
+        treasury.deposit(address(token), 201 * TOKEN_UNIT);
+    }
+
+    function test_seedNetDeposited_revertIfNotDefaultAdmin() public {
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
+        vm.prank(alice);
+        treasury.seedNetDeposited(address(token));
+    }
+
+    function test_seedNetDeposited_revertIfNotWhitelisted() public {
+        MockERC20 _token2 = new MockERC20();
+        vm.expectRevert(abi.encodeWithSignature("UnsupportedToken(address)", _token2));
+        treasury.seedNetDeposited(address(_token2));
+    }
+
     // --- sweep ---
     function test_sweep_success() public {
         MockERC20 _other = new MockERC20();

@@ -16,4 +16,6 @@ export const TREASURY_ABI = [
   'function withdrawable(address) view returns (uint256)',
   'function getPrice(address) view returns (uint256 latestPrice, uint256 unitPrice)',
   'function pegBand(address) view returns (uint256)',
+  'function depositCap(address) view returns (uint256)',
+  'function netDeposited(address) view returns (uint256)',
 ]

@@ -30,6 +30,7 @@ interface ITreasury {
     function push(address token_, uint256 amount_) external;
     function removeFromWhitelist(address token_) external;
     function reserve() external view returns (uint256 _reserve);
+    function seedNetDeposited(address token_) external;
     function setDepositActive(address token_, bool active_) external;
     function setWithdrawActive(address token_, bool active_) external;
     function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)

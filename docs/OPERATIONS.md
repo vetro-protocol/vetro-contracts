@@ -302,7 +302,7 @@ Treasury.updateDepositCap(address token_, uint256 newDepositCap_)
 - In token units. A user deposit reverts with `ExceededDepositCap` if it would take the token's net deposits
   (`Treasury.netDeposited(token)`) past the cap
 - Net deposits go up on each deposit and down on each redemption, never below 0. They gate intake, not holdings: a
-  vault loss opens no room, and keeper swaps and migrated collateral take none
+  vault loss opens no room, keeper swaps take none, and migrated collateral takes none until it is seeded (5.10)
 - Harvest leaves net deposits alone, and the YieldManager's re-deposit adds what it paid, so yield takes room. Once
   that would pass the cap, `YieldManager.harvest(token)` reverts and the yield stays in the Treasury: harvest another
   token or raise the cap. Size caps with room for the yield
@@ -398,6 +398,27 @@ YieldDistributor.updateYieldDuration(uint256 duration_)
 
 - Minimum 1 day, no maximum
 - Affects future distributions only (not the active period)
+
+#### 5.10 Seed Net Deposits
+
+```
+Treasury.seedNetDeposited(address token_)
+```
+
+- Sets a token's net deposits to what the Treasury holds of it: vault shares at their price plus idle tokens. It
+  overwrites the value, so what was counted since the migration does not matter
+- Short-lived: a backfill after the migration, removed by a later upgrade once every token is seeded. The migration
+  starts every token at 0, so until a token is seeded its cap counts only what came in after the migration. Keep caps
+  uncapped until then
+- Harvest through the YieldManager first (`YieldManager.harvest(token)`, its keeper) until
+  `YieldManager.harvestable()` is about 0: the re-deposit adds the yield to net deposits, so seeding unharvested yield
+  counts it twice. Harvest takes the excess of all tokens in the one it is called with, so this is about the total,
+  not each token. Without a YieldManager to harvest with, seeding anyway counts the pending yield twice once it is
+  harvested, which only tightens the caps; seeding again right after that harvest makes it exact
+- Then one Safe batch: `seedNetDeposited(token)` and `updateDepositCap(token, cap)` per token (4.9). After it, check
+  that `Treasury.netDeposited(token)` matches the holdings and `Gateway.maxDeposit(token)` the cap minus them
+- Calling it again resets a token to its current holdings, which fixes a seed taken too early. Never call it after a
+  vault loss: the loss lowers holdings but not net deposits, so a reset would reopen that room
 
 ---
 
@@ -731,9 +752,8 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    - update the Treasury addresses (and their type, now a proxy) in this file and in
      `test/helpers/Address.ethereum.sol`
    - repoint keeper bots and monitoring at the new Treasury
-   - set the deposit caps in a Safe batch of `Treasury.updateDepositCap(token, cap)` per token (4.9): the migration
-     copies live state, so every token starts uncapped with net deposits at 0, and the migrated collateral is not
-     counted
+   - seed net deposits and set the deposit caps (5.10): the migration copies live state, so every token starts
+     uncapped with net deposits at 0, and the migrated collateral is not counted until it is seeded
    - cut a release (major bump)
    - upgrade the Gateways: the new Gateway prices through the Treasury's peg band, so the Gateway deploy scripts skip
      its upgrade until the Treasury is migrated. Until then the old Gateway prices with its own band, the same values

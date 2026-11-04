@@ -98,6 +98,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     event AddedToWhitelist(address indexed token, address indexed vault, address indexed oracle);
     event ExcessWithdrawn(address indexed token, uint256 amount);
     event RemovedFromWhitelist(address indexed token);
+    event SeededNetDeposited(address indexed token, uint256 previousNetDeposited, uint256 newNetDeposited);
     event SetDepositActive(address indexed token, bool newValue);
     event SetWithdrawActive(address indexed token, bool newValue);
     event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn);
@@ -284,6 +285,29 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         IERC20(token_).forceApprove($.tokenConfig[token_].vault, 0);
         delete $.tokenConfig[token_];
         emit RemovedFromWhitelist(token_);
+    }
+
+    /**
+     * @notice DEFAULT_ADMIN_ROLE: Set a token's net deposits to what this Treasury holds of it
+     * @dev Short-lived: backfills net deposits after the migration, which whitelists every token at 0, and is removed
+     * by a later upgrade once every token is seeded. Harvest until `YieldManager.harvestable()` is about 0 first, since
+     * minting pending yield back adds it again, or seed again right after that harvest. Calling it again resets to
+     * current holdings, so never after a vault loss: the loss lowers holdings but not net deposits, and a reset would
+     * reopen that room.
+     * @param token_ Token to seed, must be one of the whitelisted tokens.
+     */
+    function seedNetDeposited(address token_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        TokenConfig storage _config = $.tokenConfig[token_];
+        IERC4626 _vault = IERC4626(_config.vault);
+        uint256 _holdings = IERC20(token_).balanceOf(address(this));
+        uint256 _shares = _vault.balanceOf(address(this));
+        if (_shares > 0) {
+            _holdings += _vault.convertToAssets(_shares);
+        }
+        emit SeededNetDeposited(token_, _config.netDeposited, _holdings);
+        _config.netDeposited = _holdings;
     }
 
     /// @notice KEEPER_ROLE: Set deposit activity for a whitelisted token
