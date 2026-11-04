@@ -26,6 +26,10 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     CHAINLINK_BTC_USD_FEED: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
     CHAINLINK_CBBTC_USD_FEED: '0x2665701293fCbEB223D11A08D826563EDcCE423A',
     HEMIBTC_BTC_ORACLE: '0x7Ff41654D1551F01E622e2b1050EA027a3A6C9dc',
+    CHAINLINK_WBTC_BTC_FEED: '0xfdFD9C85aD200c506Cf9e21F1FD8dd01932FBB23',
+
+    // Curve StableSwap-NG WBTC/cbBTC/hemiBTC pool (coin indices 0/1/2)
+    CURVE_WBTC_CBBTC_HEMIBTC_POOL: '0x66039342C66760874047c36943B1e2d8300363BB',
 
     // Tokens
     WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
@@ -173,6 +177,12 @@ export const ContractAliases = {
   VetBTCYieldDistributor: 'VetBTCYieldDistributor',
   VetBTCYieldManager: 'VetBTCYieldManager',
   FixedPriceFeedAdapter: 'FixedPriceFeedAdapter',
+  CbBtcWbtcChainlinkFeed: 'CbBtcWbtcChainlinkFeed',
+  CbBtcWbtcCurveEmaFeed: 'CbBtcWbtcCurveEmaFeed',
+  CbBtcWbtcPriceFeed: 'CbBtcWbtcPriceFeed',
+  HemiBtcWbtcChainlinkFeed: 'HemiBtcWbtcChainlinkFeed',
+  HemiBtcWbtcCurveEmaFeed: 'HemiBtcWbtcCurveEmaFeed',
+  HemiBtcWbtcPriceFeed: 'HemiBtcWbtcPriceFeed',
 } as const
 
 // =============================================================================
