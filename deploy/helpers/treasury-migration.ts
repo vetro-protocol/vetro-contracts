@@ -4,9 +4,14 @@ import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import Address from './address'
 import {getImplementation, getProxyAdmin} from './eip1967'
 import {deployUpgradable} from '.'
+import {GatewaySetup, isTreasuryMigrated, upgradeGateway} from './gateway'
 import {assertNoStaleBatch, queuedMultiSigTxs, saveForMultiSigBatchExecution} from './gnosis-safe'
+import {assertUpgradeSafety} from './upgrade-safety'
 
 const {log} = console
+
+// Lives with the Gateway helper now; the scripts gating on the migration keep importing it from here
+export {isTreasuryMigrated}
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const DEFAULT_ADMIN_ROLE = '0x0000000000000000000000000000000000000000000000000000000000000000'
@@ -50,6 +55,8 @@ const PEGGED_TOKEN_ABI = [
 
 // A Treasury from before the migration has no peg band: the Gateway held it
 const GATEWAY_ABI = ['function pegBand(address token_) view returns (uint256)']
+
+const PROXY_ADMIN_ABI = ['function upgradeAndCall(address proxy, address implementation, bytes data) payable']
 
 const YIELD_VAULT_ABI = [
   'function isWhitelisted(address account_) view returns (bool)',
@@ -96,14 +103,23 @@ interface SafeCall {
 // Recorded on the `_Previous` deployment when the batch is built, so later runs can tell whether it still holds
 interface MigrationRecord {
   newTreasury: string
+  // Every call of the batch, the Gateway upgrade last
   calls: SafeCall[]
+  // The implementation the batch upgrades the Gateway to
+  gatewayImplementation: string
 }
 
 type BlockTag = number | 'latest'
 
-export interface MigrateTreasuryProps {
+export interface TreasuryAliases {
   peggedTokenAlias: string
   treasuryAlias: string
+}
+
+export interface MigrateTreasuryProps extends TreasuryAliases {
+  // The stack's Gateway. Its upgrade ends the batch: the new Gateway prices through the Treasury's peg band, which
+  // the live Treasury does not have
+  gateway: GatewaySetup
 }
 
 const sameAddress = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
@@ -177,18 +193,23 @@ const readRoles = async (
 const bandsOf = async (hre: HardhatRuntimeEnvironment, peggedToken: Contract, blockTag: BlockTag = 'latest') =>
   hre.ethers.getContractAt(GATEWAY_ABI, await peggedToken.gateway({blockTag}))
 
-/** `bands` holds the peg bands: the Gateway for a Treasury from before the migration, else the Treasury itself */
+/**
+ * `bands` holds the peg bands: the Gateway for a Treasury from before the migration, else the Treasury itself. They
+ * are read at `bandsBlockTag`: the migration batch upgrades the Gateway in its own block, and the new one has no
+ * `pegBand`, so the old Gateway's bands are read at the block before.
+ */
 const readState = async (
   hre: HardhatRuntimeEnvironment,
   treasury: Contract,
   bands: Contract,
   fromBlock: number,
-  blockTag: BlockTag = 'latest'
+  blockTag: BlockTag = 'latest',
+  bandsBlockTag: BlockTag = blockTag
 ) => {
   const tokens: TokenState[] = []
   for (const token of (await treasury.whitelistedTokens({blockTag})) as string[]) {
     const {vault, oracle, stalePeriod, depositActive, withdrawActive} = await treasury.tokenConfig(token, {blockTag})
-    const pegBand: BigNumber = await bands.pegBand(token, {blockTag})
+    const pegBand: BigNumber = await bands.pegBand(token, {blockTag: bandsBlockTag})
     tokens.push({token, vault, oracle, stalePeriod, depositActive, withdrawActive, pegBand})
   }
   const [pendingAdmin, adminSchedule] = await treasury.pendingDefaultAdmin({blockTag})
@@ -288,6 +309,45 @@ const assertNoAdminChangePending = ({pendingAdminChange}: TreasuryState) => {
       `The live Treasury has a pending ${pendingAdminChange}, which the new Treasury cannot copy. Complete or ` +
         'cancel it first.'
     )
+  }
+}
+
+/**
+ * The batch ends with the Gateway upgrade, so its storage layout is checked with the other preconditions, before
+ * anything is deployed or recorded. `deployUpgradable` repeats the check later from its per-process cache.
+ */
+const assertGatewayUpgradeSafe = async (
+  hre: HardhatRuntimeEnvironment,
+  peggedToken: Contract,
+  {contractConfig}: GatewaySetup
+) => {
+  const {reference} = await assertUpgradeSafety(hre, await peggedToken.gateway(), contractConfig.contract)
+  log(chalk.green(`${contractConfig.alias}: storage layout compatible with live ${reference}`))
+}
+
+/**
+ * The `upgradeAndCall` that moves the Gateway to `implementation`, or none when it runs it already. Built the same
+ * way whether the batch is being built or re-checked, so the recorded call compares by `to` and `data` like the rest.
+ */
+const gatewayUpgradeCall = async (
+  hre: HardhatRuntimeEnvironment,
+  peggedToken: Contract,
+  {contractConfig}: GatewaySetup,
+  implementation: string
+): Promise<SafeCall | undefined> => {
+  const {provider} = hre.ethers
+  const proxy: string = await peggedToken.gateway()
+  if (sameAddress(await getImplementation(provider, proxy), implementation)) return undefined
+  return {
+    to: await getProxyAdmin(provider, proxy),
+    data: new ethers.utils.Interface(PROXY_ADMIN_ABI).encodeFunctionData('upgradeAndCall', [
+      proxy,
+      implementation,
+      '0x',
+    ]),
+    description: `${contractConfig.alias} ProxyAdmin.upgradeAndCall(${short(proxy)}, implementation ${short(
+      implementation
+    )})`,
   }
 }
 
@@ -495,7 +555,8 @@ const buildMirrorBatch = async (
 /**
  * The new Treasury must have been an exact copy of the old one, and must have taken all its collateral, when the
  * migration executed. All of it is read at that block, so the result does not change with later config changes or
- * with dust anyone can send to the emptied Treasury. Only the old Treasury's removal from the vaults is read now.
+ * with dust anyone can send to the emptied Treasury. The old Treasury's removal from the vaults and the Gateway
+ * implementation follow `migrate` in the batch, so they are read now: on a fork the batch runs one tx per call.
  * A change made later in that same block shows up as a difference; docs/OPERATIONS.md has the recovery.
  */
 const verifyMigrated = async (
@@ -506,12 +567,15 @@ const verifyMigrated = async (
     newTreasury,
     oldFromBlock,
     newFromBlock,
+    gatewayImplementation,
   }: {
     peggedToken: Contract
     oldTreasury: Contract
     newTreasury: Contract
     oldFromBlock: number
     newFromBlock: number
+    // From the batch record; a record from before the upgrade joined the batch has none
+    gatewayImplementation?: string
   }
 ) => {
   const topics = [treasuryInterface.getEventTopic('Migrated'), ethers.utils.hexZeroPad(newTreasury.address, 32)]
@@ -526,11 +590,28 @@ const verifyMigrated = async (
   log(chalk.blue(`  reading both Treasuries at block ${blockTag}, where the migration executed`))
 
   const problems: string[] = []
-  const oldState = await readState(hre, oldTreasury, await bandsOf(hre, peggedToken, blockTag), oldFromBlock, blockTag)
+  // The old Gateway's bands are read at the block before: the batch upgraded the Gateway in this block
+  const bandsBlockTag = blockTag - 1
+  const oldState = await readState(
+    hre,
+    oldTreasury,
+    await bandsOf(hre, peggedToken, bandsBlockTag),
+    oldFromBlock,
+    blockTag,
+    bandsBlockTag
+  )
   const newState = await readState(hre, newTreasury, newTreasury, newFromBlock, blockTag)
 
   const pointsAt: string = await peggedToken.treasury({blockTag})
   if (!sameAddress(pointsAt, newTreasury.address)) problems.push(`the PeggedToken pointed at ${pointsAt}`)
+  if (gatewayImplementation) {
+    // The upgrade follows `migrate` in the batch, so like the vault removals below it is read now, not at blockTag
+    const gateway: string = await peggedToken.gateway()
+    const running = await getImplementation(hre.ethers.provider, gateway)
+    if (!sameAddress(running, gatewayImplementation)) {
+      problems.push(`the Gateway ${gateway} runs ${running}, not the ${gatewayImplementation} the batch carried`)
+    }
+  }
 
   const tokensOf = (s: TreasuryState) => s.tokens.map((t) => t.token.toLowerCase()).join(',')
   if (tokensOf(oldState) !== tokensOf(newState)) {
@@ -618,7 +699,7 @@ const listCalls = (calls: SafeCall[]) =>
  */
 export const isTreasuryMigrationPending = async (
   hre: HardhatRuntimeEnvironment,
-  {peggedTokenAlias, treasuryAlias}: MigrateTreasuryProps
+  {peggedTokenAlias, treasuryAlias}: TreasuryAliases
 ): Promise<boolean> => {
   const {get, read} = hre.deployments
   const {address: treasury} = await get(treasuryAlias)
@@ -627,18 +708,9 @@ export const isTreasuryMigrationPending = async (
 }
 
 /**
- * Whether the PeggedToken's live Treasury is behind a proxy, or not set yet. The Gateway prices through the Treasury's
- * peg band, which a Treasury from before the migration does not have, so the Gateway upgrades only after it.
- */
-export const isTreasuryMigrated = async (hre: HardhatRuntimeEnvironment, peggedTokenAlias: string) => {
-  const treasury: string = await hre.deployments.read(peggedTokenAlias, 'treasury')
-  if (sameAddress(treasury, ZERO_ADDRESS)) return true
-  return !sameAddress(await getImplementation(hre.ethers.provider, treasury), ZERO_ADDRESS)
-}
-
-/**
  * The recorded batch must still be what live state calls for: anything changed on either Treasury since the build,
- * such as a revoked role or a paused token, would be undone by executing it.
+ * such as a revoked role or a paused token, would be undone by executing it. The Gateway upgrade it ends with must
+ * still be the compiled Gateway: a code change since the build leaves the queued upgrade pointing at stale code.
  */
 const checkPendingBatch = async (
   hre: HardhatRuntimeEnvironment,
@@ -652,6 +724,7 @@ const checkPendingBatch = async (
     newDeployment,
     newFromBlock,
     record,
+    gateway,
   }: {
     treasuryAlias: string
     safe: string
@@ -662,6 +735,7 @@ const checkPendingBatch = async (
     newDeployment: {address: string}
     newFromBlock: number
     record?: MigrationRecord
+    gateway: GatewaySetup
   }
 ) => {
   const rebuild = `set ${MIGRATE_TREASURY_ENV}=true to rebuild the batch, and replace the Safe proposal with it`
@@ -682,6 +756,21 @@ const checkPendingBatch = async (
     oldState,
     newState,
   })
+  // Both stacks share the implementation artifact, so a run that already upgrades the other stack's Gateway to
+  // changed code leaves the artifact matching the compile while this record still points at the old implementation
+  const {contract} = gateway.contractConfig
+  const implementationAlias = `${contract}_Implementation`
+  const {deployer} = await hre.getNamedAccounts()
+  const {differences} = await hre.deployments.fetchIfDifferent(implementationAlias, {contract, from: deployer})
+  const {address: compiled} = await hre.deployments.get(implementationAlias)
+  if (differences || !record.gatewayImplementation || !sameAddress(compiled, record.gatewayImplementation)) {
+    throw Error(
+      `${treasuryAlias}: the ${contract} code changed since the migration batch was built, so the upgrade it ends ` +
+        `with points at stale code. Do NOT execute it; ${rebuild}.`
+    )
+  }
+  const upgrade = await gatewayUpgradeCall(hre, peggedToken, gateway, record.gatewayImplementation)
+  if (upgrade) calls.push(upgrade)
   const key = ({to, data}: SafeCall) => `${to.toLowerCase()}:${data}`
   if (calls.map(key).join() !== record.calls.map(key).join()) {
     throw Error(
@@ -702,8 +791,8 @@ const checkPendingBatch = async (
  *
  * With MIGRATE_TREASURY=true and a live Treasury that is not behind a proxy, the deployer deploys a Treasury proxy
  * whose ProxyAdmin the live admin owns, and the Safe batch gets every call that copies the live config and roles onto
- * it, then `updateTreasury`, `migrate` and the old Treasury's removal from the yield vaults. The batch must execute as
- * one Safe transaction. A Treasury behind a proxy changes code through an upgrade instead.
+ * it, then `updateTreasury`, `migrate`, the old Treasury's removal from the yield vaults and the Gateway upgrade. The
+ * batch must execute as one Safe transaction. A Treasury behind a proxy changes code through an upgrade instead.
  *
  * While the batch is pending, a run without the flag rebuilds it from live state and fails if it no longer matches
  * the recorded one, so a change made after the build (a revoked role, a pause) cannot be undone by executing it. The
@@ -711,7 +800,7 @@ const checkPendingBatch = async (
  */
 export const migrateTreasuryIfRequested = async (
   hre: HardhatRuntimeEnvironment,
-  {peggedTokenAlias, treasuryAlias}: MigrateTreasuryProps
+  {peggedTokenAlias, treasuryAlias, gateway}: MigrateTreasuryProps
 ): Promise<void> => {
   const {deployments, ethers} = hre
   const {get, getOrNull, save} = deployments
@@ -742,6 +831,7 @@ export const migrateTreasuryIfRequested = async (
         newTreasury: oldTreasury,
         oldFromBlock: fromBlock(previous),
         newFromBlock: await newFromBlock(),
+        gatewayImplementation: (previous.linkedData as MigrationRecord | undefined)?.gatewayImplementation,
       })
       await deployments.delete(previousAlias(treasuryAlias))
       log(chalk.green(`  retired ${previousAlias(treasuryAlias)}, git history keeps its record`))
@@ -764,6 +854,7 @@ export const migrateTreasuryIfRequested = async (
 
     oldState = await readState(hre, oldTreasury, await bandsOf(hre, peggedToken), fromBlock(artifact))
     await assertSafeCanSign(hre, {safe, peggedToken, oldTreasury, oldState})
+    await assertGatewayUpgradeSafe(hre, peggedToken, gateway)
     assertNothingQueuedFor([live])
 
     // Kept before deploying: deploying under the alias overwrites the live Treasury's record
@@ -791,10 +882,12 @@ export const migrateTreasuryIfRequested = async (
         newDeployment: artifact,
         newFromBlock: await newFromBlock(),
         record: previous.linkedData,
+        gateway,
       })
       return
     }
     await assertSafeCanSign(hre, {safe, peggedToken, oldTreasury, oldState})
+    await assertGatewayUpgradeSafe(hre, peggedToken, gateway)
     assertNothingQueuedFor([live, artifact.address])
   }
 
@@ -828,12 +921,25 @@ export const migrateTreasuryIfRequested = async (
     oldState,
     newState,
   })
-  const record: MigrationRecord = {newTreasury: newTreasury.address, calls}
+  // The mirror calls go in first, then the Gateway upgrade: `deployUpgradable` deploys the implementation and queues
+  // `upgradeAndCall` from the Safe, which owns the Gateway's ProxyAdmin, so it lands right after `migrate`
+  for (const {to, data} of calls) {
+    await saveForMultiSigBatchExecution({from: safe, to, data})
+  }
+  await upgradeGateway(hre, gateway)
+  const gatewayImplementation = (await get(`${gateway.contractConfig.contract}_Implementation`)).address
+  const upgrade = await gatewayUpgradeCall(hre, peggedToken, gateway, gatewayImplementation)
+  if (upgrade) calls.push(upgrade)
+
+  // Recorded whole, upgrade included, so the pending check and the verification cover every call
+  const record: MigrationRecord = {newTreasury: newTreasury.address, calls, gatewayImplementation}
   await save(previousAlias(treasuryAlias), {...(await get(previousAlias(treasuryAlias))), linkedData: record})
 
   log(chalk.yellow(`  Safe batch for ${treasuryAlias}, ${calls.length} calls, to execute as ONE transaction:`))
   listCalls(calls).forEach((line) => log(chalk.yellow(line)))
-  for (const {to, data} of calls) {
-    await saveForMultiSigBatchExecution({from: safe, to, data})
+  if (!upgrade) {
+    log(
+      chalk.yellow(`  ${gateway.contractConfig.alias} already runs ${short(gatewayImplementation)}, nothing to upgrade`)
+    )
   }
 }
