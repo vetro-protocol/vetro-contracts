@@ -14,7 +14,6 @@ import {ITreasury} from "./interfaces/ITreasury.sol";
 import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title Gateway - Handles both minting and redeeming of PeggedToken
-/// @custom:storage-location erc7201:vetro.storage.gateway
 contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     using SafeERC20 for IPeggedToken;
     using SafeERC20 for IERC20;
@@ -57,7 +56,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     bytes32 private constant _GATEWAY_STORAGE_LOCATION =
         keccak256(abi.encode(uint256(keccak256("vetro.storage.gateway")) - 1)) & ~bytes32(uint256(0xff));
 
-    string public constant VERSION = "1.0.0";
+    string public constant VERSION = "2.0.0";
     uint256 public constant MAX_BPS = 10_000; // 10_000 = 100%
     uint256 public constant MAX_FEE_BPS = 500; // 500 = 5%
     uint256 public constant MAX_WITHDRAWAL_DELAY = 30 days;

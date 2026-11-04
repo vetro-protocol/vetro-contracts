@@ -22,6 +22,7 @@ contract YieldDistributor is IYieldDistributor, AccessControlDefaultAdminRulesUp
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
+    string public constant VERSION = "1.1.0";
     bytes32 public constant DISTRIBUTOR_ROLE = keccak256("DISTRIBUTOR_ROLE");
     uint256 public constant DEFAULT_YIELD_DURATION = 7 days;
     uint256 public constant MIN_YIELD_DURATION = 1 days;
