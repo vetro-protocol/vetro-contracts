@@ -96,7 +96,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AddressIsZero();
     error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error AmountIsZero();
-    error Blacklisted(address account);
     error BurnBelowAmoSupply(uint256 totalSupply, uint256 amoSupply);
     error CallerNotWhitelisted(address caller);
     error ExceededMaxMint(uint256 requested, uint256 available);
@@ -188,6 +187,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         GatewayStorage storage $ = _getGatewayStorage();
         RedeemRequest memory _request = $.redeemRequests[msg.sender];
         if (_request.claimableAt == 0) revert NoActiveWithdrawalRequest();
+        // Locked tokens of a sanctioned account stay frozen in the Gateway
+        _checkNotSanctioned(msg.sender);
 
         uint256 _amountLocked = _request.amountLocked;
         delete $.redeemRequests[msg.sender];
@@ -268,6 +269,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
         GatewayStorage storage $ = _getGatewayStorage();
         if (!$.withdrawalDelayEnabled) revert WithdrawalDelayFeatureNotEnabled();
+        _checkNotSanctioned(msg.sender);
 
         $.peggedToken.safeTransferFrom(msg.sender, address(this), peggedTokenAmount_);
 
@@ -535,6 +537,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      */
     function _executeDeposit(address tokenIn_, uint256 amountIn_, uint256 peggedTokenOut_, address receiver_) private {
         if (amountIn_ == 0) revert AmountIsZero();
+        _checkNotSanctioned(msg.sender);
+        if (receiver_ != msg.sender) _checkNotSanctioned(receiver_);
         uint256 _maxMintable = maxMint();
         if (peggedTokenOut_ > _maxMintable) revert ExceededMaxMint(peggedTokenOut_, _maxMintable);
 
@@ -582,6 +586,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 tokenAmount_,
         address receiver_
     ) private {
+        _checkNotSanctioned(msg.sender);
+        if (receiver_ != msg.sender) _checkNotSanctioned(receiver_);
         GatewayStorage storage $ = _getGatewayStorage();
         RedeemRequest storage _request = $.redeemRequests[msg.sender];
 
@@ -612,7 +618,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     ) private {
         GatewayStorage storage $ = _getGatewayStorage();
         IPeggedToken _token = $.peggedToken;
-        if (_token.isBlacklisted(msg.sender)) revert Blacklisted(msg.sender);
 
         // Validate treasury has sufficient withdrawable amount
         uint256 _maxWithdraw = maxWithdraw(tokenOut_);
@@ -722,6 +727,10 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         }
     }
 
+    /// @dev Reverts with Treasury's Sanctioned if `account_` is on the Treasury's sanctions list
+    function _checkNotSanctioned(address account_) private view {
+        ITreasury(treasury()).checkNotSanctioned(account_);
+    }
 
     /// @dev Helper function to get peggedToken from storage
     function _peggedToken() private view returns (IPeggedToken) {

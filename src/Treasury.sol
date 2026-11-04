@@ -14,6 +14,7 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IAggregatorV3} from "./interfaces/chainlink/IAggregatorV3.sol";
 import {ISwapper} from "./interfaces/bloq/ISwapper.sol";
 import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
+import {ISanctionsList} from "./interfaces/ISanctionsList.sol";
 import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title PeggedToken Treasury
@@ -59,6 +60,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         address swapper;
         mapping(address token => TokenConfig) tokenConfig;
         EnumerableSet.AddressSet whitelistedTokens;
+        // Checked by the Gateway and StakingVault; zero disables the check
+        ISanctionsList sanctionsList;
     }
 
     bytes32 private constant TREASURY_STORAGE_LOCATION =
@@ -85,6 +88,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     error PriceExceedTolerance(uint256 latestPrice, uint256 priceUpperBound, uint256 priceLowerBound);
     error RemoveFromListFailed();
     error ReservedToken();
+    error Sanctioned(address account);
     error StalePrice(address oracle);
     error SwapperNotSet();
     error UnsupportedToken(address);
@@ -106,6 +110,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     event UpdatedOracle(address indexed token, address indexed oracle, uint256 stalePeriod);
     event UpdatedPegBand(address indexed token, uint256 previousPegBand, uint256 newPegBand);
     event UpdatedPriceTolerance(uint256 previousPriceTolerance, uint256 newPriceTolerance);
+    event UpdatedSanctionsList(address indexed previousList, address indexed newList);
     event UpdatedSwapper(address indexed previousSwapper, address indexed newSwapper);
 
     /*/////////////////////////////////////////////////////////////
@@ -416,6 +421,17 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     }
 
     /**
+     * @notice DEFAULT_ADMIN_ROLE: Update the sanctions list the Gateway and StakingVault check
+     * @dev address(0) disables the check, PeggedToken blacklist included
+     * @param newList_ new sanctions list
+     */
+    function updateSanctionsList(address newList_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        emit UpdatedSanctionsList(address($.sanctionsList), newList_);
+        $.sanctionsList = ISanctionsList(newList_);
+    }
+
+    /**
      * @notice MAINTAINER_ROLE: Update swapper address
      * @param swapper_ new swapper address
      */
@@ -459,6 +475,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /*/////////////////////////////////////////////////////////////
                     EXTERNAL VIEW FUNCTIONS
     /////////////////////////////////////////////////////////////*/
+
+    /// @notice Reverts with Sanctioned if `account_` is on the sanctions list; no-op while no list is set
+    function checkNotSanctioned(address account_) external view {
+        if (isSanctioned(account_)) revert Sanctioned(account_);
+    }
 
     /// @notice Returns the most of a token that may be deposited net of what has left, 0 if it is not whitelisted
     function depositCap(address token_) external view returns (uint256) {
@@ -543,6 +564,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         return _getTreasuryStorage().priceTolerance;
     }
 
+    /// @notice Returns the sanctions list the Gateway and StakingVault check, address(0) when disabled
+    function sanctionsList() external view returns (address) {
+        return address(_getTreasuryStorage().sanctionsList);
+    }
+
     /// @notice Returns the swapper used by {swap}
     function swapper() external view returns (address) {
         return _getTreasuryStorage().swapper;
@@ -595,6 +621,15 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /*/////////////////////////////////////////////////////////////
                     PUBLIC VIEW FUNCTIONS
     /////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Returns whether `account_` is on the sanctions list, false while no list is set
+     * @dev A list that reverts blocks the gated flows until the admin swaps or clears it
+     */
+    function isSanctioned(address account_) public view returns (bool) {
+        ISanctionsList _list = _getTreasuryStorage().sanctionsList;
+        return address(_list) != address(0) && _list.isSanctioned(account_);
+    }
 
     /// @notice Returns total reserve value denominated in PeggedToken units
     /// @dev Each token is valued at its oracle price capped at par. A price outside `priceTolerance` does not revert

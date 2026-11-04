@@ -14,6 +14,7 @@ import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockSwapper} from "test/mocks/MockSwapper.sol";
+import {MockSanctionsList} from "test/mocks/MockSanctionsList.sol";
 
 contract TreasuryTest is Test {
     using Math for uint256;
@@ -446,6 +447,40 @@ contract TreasuryTest is Test {
         vm.expectRevert(Treasury.InvalidPriceTolerance.selector);
         vm.prank(maintainer);
         treasury.updatePriceTolerance(_max + 1);
+    }
+
+    // --- sanctions list ---
+    function test_updateSanctionsList() public {
+        address _list = makeAddr("list");
+        vm.expectEmit(address(treasury));
+        emit Treasury.UpdatedSanctionsList(address(0), _list);
+        treasury.updateSanctionsList(_list);
+        assertEq(treasury.sanctionsList(), _list);
+
+        treasury.updateSanctionsList(address(0));
+        assertEq(treasury.sanctionsList(), address(0));
+    }
+
+    function test_updateSanctionsList_revertIfNotAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(UNAUTHORIZED_ACCOUNT_SELECTOR, alice, defaultAdminRole));
+        treasury.updateSanctionsList(alice);
+    }
+
+    function test_checkNotSanctioned_noListIsNoOp() public view {
+        assertFalse(treasury.isSanctioned(alice));
+        treasury.checkNotSanctioned(alice);
+    }
+
+    function test_checkNotSanctioned_followsList() public {
+        MockSanctionsList _list = new MockSanctionsList();
+        treasury.updateSanctionsList(address(_list));
+        treasury.checkNotSanctioned(alice);
+
+        _list.setSanctioned(alice, true);
+        assertTrue(treasury.isSanctioned(alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        treasury.checkNotSanctioned(alice);
     }
 
     // --- updateSwapper ---

@@ -15,6 +15,8 @@ import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
 import {MockYieldVaultRealistic} from "test/mocks/MockYieldVaultRealistic.sol";
+import {MockSanctionsList} from "test/mocks/MockSanctionsList.sol";
+import {SanctionsList} from "src/SanctionsList.sol";
 
 contract GatewayTest is Test {
     using SafeERC20 for IERC20;
@@ -52,6 +54,9 @@ contract GatewayTest is Test {
         gateway = Gateway(address(proxy));
 
         VUSD.updateGateway(address(gateway));
+        address _sanctionsList = address(new SanctionsList(address(VUSD), address(new MockSanctionsList())));
+        vm.prank(admin);
+        treasury.updateSanctionsList(_sanctionsList);
 
         token = address(new MockERC20());
         mockVault = new MockYieldVault(address(token));
@@ -1483,9 +1488,9 @@ contract GatewayTest is Test {
 
         uint256 _tokenAmount = gateway.previewRedeem(token, VUSDAmount);
         vm.startPrank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Gateway.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         gateway.redeem(token, VUSDAmount, 0, bob);
-        vm.expectRevert(abi.encodeWithSelector(Gateway.Blacklisted.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
         gateway.withdraw(token, _tokenAmount, type(uint256).max, bob);
         vm.stopPrank();
 
@@ -1840,5 +1845,123 @@ contract GatewayTest is Test {
         (uint256 locked1, uint256 claimable1) = gateway.getRedeemRequest(alice);
         assertEq(locked1, VUSDAmount, "Should have locked amount");
         assertEq(claimable1, block.timestamp + 7 days, "Should have claimable time");
+    }
+
+    // --- sanctions list (on the Treasury) ---
+    function _setMockSanctionsList() internal returns (MockSanctionsList sanctions) {
+        sanctions = new MockSanctionsList();
+        vm.prank(admin);
+        treasury.updateSanctionsList(address(sanctions));
+    }
+
+    function test_deposit_revertIfCallerOrReceiverSanctioned() public {
+        MockSanctionsList _sanctions = _setMockSanctionsList();
+        uint256 _amount = 100e18;
+        deal(token, alice, 2 * _amount);
+        vm.prank(alice);
+        IERC20(token).forceApprove(address(gateway), type(uint256).max);
+
+        _sanctions.setSanctioned(bob, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        gateway.deposit(token, _amount, 0, bob);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        gateway.mint(token, 1e18, type(uint256).max, bob);
+        vm.stopPrank();
+
+        _sanctions.setSanctioned(bob, false);
+        _sanctions.setSanctioned(alice, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        gateway.deposit(token, _amount, 0, bob);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        gateway.mint(token, 1e18, type(uint256).max, alice);
+        vm.stopPrank();
+
+        // Disabling the oracle lifts the gate
+        vm.prank(admin);
+        treasury.updateSanctionsList(address(0));
+        vm.prank(alice);
+        gateway.deposit(token, _amount, 0, alice);
+        assertGt(VUSD.balanceOf(alice), 0);
+    }
+
+    function test_redeem_revertIfCallerOrReceiverSanctioned() public {
+        uint256 _vusd = 100e18;
+        mintPeggedToken(alice, _vusd);
+        gateway.setWithdrawalDelayEnabled(false);
+        MockSanctionsList _sanctions = _setMockSanctionsList();
+        uint256 _tokenOut = gateway.previewRedeem(token, 1e18);
+
+        _sanctions.setSanctioned(bob, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        gateway.redeem(token, 1e18, 0, bob);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        gateway.withdraw(token, _tokenOut, type(uint256).max, bob);
+        vm.stopPrank();
+
+        _sanctions.setSanctioned(alice, true);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        gateway.redeem(token, 1e18, 0, alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        gateway.withdraw(token, _tokenOut, type(uint256).max, alice);
+        vm.stopPrank();
+
+        _sanctions.setSanctioned(alice, false);
+        vm.prank(alice);
+        gateway.redeem(token, 1e18, 0, alice);
+        assertEq(VUSD.balanceOf(alice), _vusd - 1e18);
+    }
+
+    function test_requestRedeem_revertIfSanctioned() public {
+        uint256 _vusd = 100e18;
+        mintPeggedToken(alice, _vusd);
+        MockSanctionsList _sanctions = _setMockSanctionsList();
+        _sanctions.setSanctioned(alice, true);
+
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), _vusd);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        gateway.requestRedeem(_vusd);
+        vm.stopPrank();
+    }
+
+    function test_lockedRedeem_frozenIfSanctionedAfterRequest() public {
+        uint256 _vusd = 100e18;
+        mintPeggedToken(alice, _vusd);
+        vm.startPrank(alice);
+        VUSD.approve(address(gateway), _vusd);
+        gateway.requestRedeem(_vusd);
+        vm.stopPrank();
+
+        MockSanctionsList _sanctions = _setMockSanctionsList();
+        _sanctions.setSanctioned(alice, true);
+        vm.warp(block.timestamp + 7 days + 1);
+        mockOracle.updatePrice(0.999e8);
+
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        gateway.redeem(token, _vusd, 0, bob);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, alice));
+        gateway.cancelRedeemRequest();
+        vm.stopPrank();
+
+        assertEq(VUSD.balanceOf(address(gateway)), _vusd, "Locked VUSD should stay in Gateway");
+    }
+
+    function test_sanctions_oracleRevertBlocksFlows() public {
+        address _broken = makeAddr("brokenOracle");
+        vm.etch(_broken, hex"fe"); // INVALID
+        vm.prank(admin);
+        treasury.updateSanctionsList(_broken);
+
+        deal(token, alice, 1e18);
+        vm.startPrank(alice);
+        IERC20(token).forceApprove(address(gateway), 1e18);
+        vm.expectRevert();
+        gateway.deposit(token, 1e18, 0, alice);
+        vm.stopPrank();
     }
 }

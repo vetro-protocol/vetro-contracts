@@ -1,6 +1,7 @@
 import {DeployFunction} from 'hardhat-deploy/types'
 import {HardhatRuntimeEnvironment} from 'hardhat/types'
 import {deployUpgradable, UpgradableContracts, ContractAliases} from '../../../helpers'
+import {isTreasuryMigrated} from '../../../helpers/treasury-migration'
 import {SVetBTCConfig} from '../../../config'
 import Address from '../../../helpers/address'
 
@@ -21,6 +22,12 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const {deployer} = await getNamedAccounts()
 
   const {address: vetBTCAddress} = await get(VetBTC)
+
+  // sVetBTC checks sanctions through the Treasury, which a Treasury from before the migration cannot do
+  if (!(await isTreasuryMigrated(hre, VetBTC))) {
+    console.log(`${SVetBTC}: the live Treasury predates the migration, leaving the upgrade until it has run`)
+    return
+  }
   const owner = ['hardhat', 'localhost'].includes(hre.network.name) ? deployer : Address.GOVERNOR || deployer
 
   await deployUpgradable({

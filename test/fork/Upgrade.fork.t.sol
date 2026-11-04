@@ -10,6 +10,7 @@ import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transp
 import {Gateway} from "src/Gateway.sol";
 import {PeggedToken} from "src/PeggedToken.sol";
 import {StakingVault} from "src/StakingVault.sol";
+import {SanctionsList} from "src/SanctionsList.sol";
 import {Treasury} from "src/Treasury.sol";
 import {YieldDistributor} from "src/YieldDistributor.sol";
 import {deployTreasury} from "test/helpers/Deploy.sol";
@@ -43,6 +44,10 @@ interface IWhitelistedYieldVault {
 /// Each Treasury is the one its token points at, so the flows also run on a fork that migrated it.
 abstract contract VetroForkBase is Test {
     using SafeERC20 for IERC20;
+
+    address internal constant REDSTONE_SANCTIONS_ORACLE = 0x574Ad490fE8087B580DB227a8Ca7EfB7C19Dc8C4;
+    // OFAC-listed (Lazarus Group, Ronin bridge exploit)
+    address internal constant OFAC_SANCTIONED = 0x098B716B8Aaf21512996dC57EB0615e2383E2f96;
 
     bytes32 internal constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
     bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
@@ -102,18 +107,28 @@ abstract contract VetroForkBase is Test {
         return [vusd, vetbtc];
     }
 
-    /// @dev Upgrades the proxies to this repo's implementations, the way the Safe batch does. The Gateway prices
-    /// through the Treasury's peg band, so a Treasury not migrated yet is migrated first, as on mainnet.
+    /// @dev Upgrades the proxies to this repo's implementations and sets a SanctionsList on each Treasury, the way the
+    /// Safe batch does. The Gateway prices through, and the StakingVault checks sanctions with, the Treasury, so a
+    /// Treasury not migrated yet is migrated first, as on mainnet.
     function _upgradeAll() internal {
         _migrateAll();
+        address _treasury = address(new Treasury());
         address _gateway = address(new Gateway());
         address _vault = address(new StakingVault());
         address _distributor = address(new YieldDistributor());
         Stack[2] memory _s = _stacks();
         for (uint256 i; i < _s.length; ++i) {
+            // A Treasury migrated on mainnet sits behind a TransparentProxy that may predate the sanctions list
+            if (_slotAddress(address(_s[i].treasury), ADMIN_SLOT) != address(0)) {
+                _upgrade(address(_s[i].treasury), _treasury);
+            }
             _upgrade(address(_s[i].gateway), _gateway);
             _upgrade(address(_s[i].vault), _vault);
             _upgrade(address(_s[i].distributor), _distributor);
+            // Same Safe batch as the upgrade: the Gateway and vault check the blacklist only through the list
+            address _list = address(new SanctionsList(address(_s[i].token), REDSTONE_SANCTIONS_ORACLE));
+            vm.prank(_s[i].treasury.defaultAdmin());
+            _s[i].treasury.updateSanctionsList(_list);
         }
     }
 
@@ -816,9 +831,69 @@ contract MigratedForkTest is VetroFlowsForkTest {
 }
 
 contract UpgradedForkTest is VetroFlowsForkTest {
+    using SafeERC20 for IERC20;
+
     function setUp() public override {
         super.setUp();
         _upgradeAll();
+    }
+
+    function test_sanctionsList_wired() public view {
+        Stack[2] memory _s = _stacks();
+        for (uint256 i; i < _s.length; ++i) {
+            address _list = _s[i].treasury.sanctionsList();
+            assertEq(address(SanctionsList(_list).PEGGED_TOKEN()), address(_s[i].token), "list token");
+            assertEq(address(SanctionsList(_list).SANCTIONS_ORACLE()), REDSTONE_SANCTIONS_ORACLE, "list oracle");
+        }
+    }
+
+    function test_oracleSanctionedAccountBlocked() public {
+        Stack[2] memory _s = _stacks();
+        for (uint256 i; i < _s.length; ++i) {
+            address _collateral = _activeTokens(_s[i])[0];
+            uint256 _amountIn = _amount(_s[i], _collateral);
+            address _user = makeAddr(string.concat(_s[i].name, "-user"));
+
+            (uint256 _shares,) = _stake(_s[i], _user);
+            vm.prank(_user);
+            vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, OFAC_SANCTIONED));
+            _s[i].vault.transfer(OFAC_SANCTIONED, _shares);
+            assertEq(_s[i].vault.maxDeposit(OFAC_SANCTIONED), 0, "sanctioned receiver can stake");
+
+            deal(_collateral, _user, _amountIn);
+            vm.startPrank(_user);
+            IERC20(_collateral).forceApprove(address(_s[i].gateway), _amountIn);
+            vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, OFAC_SANCTIONED));
+            _s[i].gateway.deposit(_collateral, _amountIn, 0, OFAC_SANCTIONED);
+            vm.stopPrank();
+        }
+    }
+
+    function test_blacklistedAccountBlocked() public {
+        Stack[2] memory _s = _stacks();
+        for (uint256 i; i < _s.length; ++i) {
+            address _collateral = _activeTokens(_s[i])[0];
+            uint256 _amountIn = _amount(_s[i], _collateral);
+            address _user = makeAddr(string.concat(_s[i].name, "-user"));
+            address _blacklisted = makeAddr(string.concat(_s[i].name, "-blacklisted"));
+            vm.prank(_s[i].token.owner());
+            _s[i].token.addToBlacklist(_blacklisted);
+
+            (uint256 _shares,) = _stake(_s[i], _user);
+            vm.prank(_user);
+            vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, _blacklisted));
+            _s[i].vault.transfer(_blacklisted, _shares);
+            assertEq(_s[i].vault.maxDeposit(_blacklisted), 0, "blacklisted receiver can stake");
+
+            deal(_collateral, _user, _amountIn);
+            vm.startPrank(_user);
+            IERC20(_collateral).forceApprove(address(_s[i].gateway), _amountIn);
+            vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, _blacklisted));
+            _s[i].gateway.deposit(_collateral, _amountIn, 0, _blacklisted);
+            vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, _blacklisted));
+            _s[i].gateway.redeem(_collateral, 1, 0, _blacklisted);
+            vm.stopPrank();
+        }
     }
 }
 

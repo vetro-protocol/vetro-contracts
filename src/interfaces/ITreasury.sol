@@ -8,6 +8,7 @@ import {IPeggedToken} from "./IPeggedToken.sol";
 ///      AccessControlDefaultAdminRules and therefore not repeated here.
 interface ITreasury {
     function addToWhitelist(address token_, address vault_, address oracle_, uint256 stalePeriod_) external;
+    function checkNotSanctioned(address account_) external view;
     function deposit(address token_, uint256 amount_) external;
     function depositCap(address token_) external view returns (uint256);
     function gateway() external view returns (address);
@@ -16,6 +17,7 @@ interface ITreasury {
     function getRedeemPrice(address token_) external view returns (uint256 _redeemPrice, uint256 _unitPrice);
     function harvest(address token_, address receiver_) external returns (uint256);
     function hasRole(bytes32 role, address account) external view returns (bool);
+    function isSanctioned(address account_) external view returns (bool);
     function isWhitelistedToken(address token_) external view returns (bool);
     // solhint-disable-next-line func-name-mixedcase
     function MAINTAINER_ROLE() external view returns (bytes32);
@@ -30,6 +32,7 @@ interface ITreasury {
     function push(address token_, uint256 amount_) external;
     function removeFromWhitelist(address token_) external;
     function reserve() external view returns (uint256 _reserve);
+    function sanctionsList() external view returns (address);
     function setDepositActive(address token_, bool active_) external;
     function setWithdrawActive(address token_, bool active_) external;
     function swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 minAmountOut_)
@@ -42,6 +45,7 @@ interface ITreasury {
     function updateOracle(address token_, address oracle_, uint256 newStalePeriod_) external;
     function updatePegBand(address token_, uint256 newPegBand_) external;
     function updatePriceTolerance(uint256 newPriceTolerance_) external;
+    function updateSanctionsList(address newList_) external;
     function updateSwapper(address swapper_) external;
     function whitelistedTokens() external view returns (address[] memory);
     function withdraw(address token_, uint256 amount_, address tokenReceiver_) external;
