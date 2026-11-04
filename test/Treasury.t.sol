@@ -1142,6 +1142,36 @@ contract TreasuryTest is Test {
         assertEq(treasury.reserve(), 0);
     }
 
+    function test_reserve_priceBelowTolerance_usesOraclePrice() public {
+        mockOracle.updatePrice(0.97e8);
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+
+        assertEq(treasury.reserve(), 97e18);
+    }
+
+    function test_reserve_priceAboveTolerance_valuedAtPar() public {
+        mockOracle.updatePrice(2e8);
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+
+        assertEq(treasury.reserve(), 100e18);
+    }
+
+    function test_reserve_revertIfStalePrice() public {
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+        vm.warp(block.timestamp + 1 hours);
+
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(mockOracle)));
+        treasury.reserve();
+    }
+
+    function test_reserve_revertIfZeroPrice() public {
+        mockOracle.updatePrice(0);
+        deal(address(token), address(treasury), 100 * TOKEN_UNIT);
+
+        vm.expectRevert(Treasury.InvalidOraclePrice.selector);
+        treasury.reserve();
+    }
+
     // --- harvest ---
     function test_harvest() public {
         address umm = makeAddr("UMM");
@@ -1264,6 +1294,43 @@ contract TreasuryTest is Test {
         // Converted at the par-capped price, the harvest releases exactly the real 200 tokens
         assertEq(_harvested, 200 * TOKEN_UNIT);
         assertEq(treasury.reserve(), VUSD.totalSupply(), "reserve should land on backed supply");
+    }
+
+    function test_harvest_otherTokenOutOfTolerance_withdrawsExcessNetOfDiscount() public {
+        treasury.grantRole(ummRole, alice);
+
+        // 200 tokens of real excess in `token`
+        vm.prank(gateway);
+        VUSD.mint(alice, 800e18);
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+
+        // A second token minted at par, now 2% below it, beyond the 1% tolerance
+        MockERC20 _token2 = new MockERC20();
+        _token2.setDecimals(18);
+        MockYieldVault _vault2 = new MockYieldVault(address(_token2));
+        MockChainlinkOracle _oracle2 = new MockChainlinkOracle(0.98e8);
+        treasury.addToWhitelist(address(_token2), address(_vault2), address(_oracle2), 1 hours);
+        deal(address(_token2), address(treasury), 100e18);
+        vm.prank(gateway);
+        VUSD.mint(alice, 100e18);
+
+        // Reserve is 1000 + 98 against 900 backed, so the second token's discount comes out of the excess
+        vm.prank(alice);
+        assertEq(treasury.harvest(address(token), alice), 198 * TOKEN_UNIT);
+        assertEq(treasury.reserve(), VUSD.totalSupply(), "reserve should land on backed supply");
+    }
+
+    function test_harvest_revertIfHarvestedTokenOutOfTolerance() public {
+        treasury.grantRole(ummRole, alice);
+
+        vm.prank(gateway);
+        VUSD.mint(alice, 800e18);
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+        mockOracle.updatePrice(0.98e8);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.PriceExceedTolerance.selector, 0.98e8, 1.01e8, 0.99e8));
+        treasury.harvest(address(token), alice);
     }
 
     function test_harvest_btcLikeCollateral_withinTolerance_withdrawsExpectedExcess() public {

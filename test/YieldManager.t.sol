@@ -636,11 +636,21 @@ contract YieldManagerTest is Test {
         assertBackingInvariant();
     }
 
-    function test_harvest_revertIfPriceExceedsTolerance() public {
+    function test_harvest_priceBelowTolerance_nothingWhenDiscountExceedsExcess() public {
         createExcess(1_000e6);
         mockOracle.updatePrice(0.98e8); // 2% below par, beyond the treasury's 1% priceTolerance
 
-        // The treasury-level depeg circuit-breaker fires inside harvest's getPrice call
+        // Reserve is 101_000 * 0.98 = 98_980 against 100_000 backed, so there is nothing to harvest
+        assertEq(yieldManager.harvestable(), 0);
+        vm.prank(keeper);
+        assertEq(yieldManager.harvest(token, 0), 0);
+    }
+
+    function test_harvest_revertIfPriceExceedsTolerance() public {
+        createExcess(5_000e6);
+        mockOracle.updatePrice(0.98e8); // 2% below par, beyond the treasury's 1% priceTolerance
+
+        // Reserve is 105_000 * 0.98 = 102_900, and converting that excess into this token hits the circuit-breaker
         vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSelector(Treasury.PriceExceedTolerance.selector, 0.98e8, 1.01e8, 0.99e8));
         yieldManager.harvest(token, 0);

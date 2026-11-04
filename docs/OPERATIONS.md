@@ -280,7 +280,8 @@ Treasury.updatePriceTolerance(uint256 newPriceTolerance_)
 ```
 
 - In BPS, max 10000 (100%)
-- Default: 100 (1%). Prices outside 1 +/- tolerance will revert
+- Default: 100 (1%). Prices outside 1 +/- tolerance revert that token's mint, redeem and harvest. `reserve()` still
+  values the token at its oracle price, so it does not block harvest of other tokens
 - Must stay above every peg band other than 0 (5.5): to go to or below a band, lower that band first with
   `Treasury.updatePegBand`, which MAINTAINER can do on its own
 
