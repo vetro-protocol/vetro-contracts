@@ -15,7 +15,6 @@ interface IGateway {
     /// @notice Returns current AMO-minted supply tracked by treasury
     function amoSupply() external view returns (uint256);
 
-
     /// @notice Burns AMO-minted PeggedToken to reduce AMO supply
     /// @param amount_ Amount of PeggedToken to burn
     function burnFromAMO(uint256 amount_) external;

@@ -29,6 +29,7 @@ contract StakingVault is IStakingVault, ERC4626Upgradeable, Ownable2StepUpgradea
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
+    string public constant VERSION = "1.1.0";
     uint256 public constant DEFAULT_COOLDOWN_DURATION = 7 days;
     uint256 public constant MIN_COOLDOWN_DURATION = 1 days;
     uint256 public constant MAX_COOLDOWN_DURATION = 30 days;
