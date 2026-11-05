@@ -665,8 +665,9 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
 1. **Dry run on a fork.** Fork with anvil (`--gas-limit 16777216 --base-fee 0 --chain-id 1`: mainnet caps a tx at
    2^24 gas, and the fork's base fee outruns the deploy's fee estimate), copy `deployments/ethereum` to
    `deployments/localhost`, `export DEPLOYER=<deployer address>`, impersonate it, and run step 2 with
-   `--network localhost`. The impersonated Safe executes the batch. Then re-run without the flag to verify, and run
-   the Foundry fork tests against the node with `ETHEREUM_FORK_NODE_URL=http://127.0.0.1:8545
+   `--network localhost`. The impersonated Safe executes the batch, one tx per call rather than atomically, so the
+   Gateway upgrade lands a few blocks after `migrate`, in the batch's order. Then re-run without the flag to verify,
+   and run the Foundry fork tests against the node with `ETHEREUM_FORK_NODE_URL=http://127.0.0.1:8545
    ETHEREUM_FORK_BLOCK_NUMBER=0`: they use the Treasury each token points at, so they exercise the new one.
 
 2. **Build the batch**:
@@ -677,11 +678,12 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    ```
 
    Before deploying anything, the script checks that the Safe is the live Treasury's admin, the token's owner and a
-   maintainer of every yield vault, that no admin transfer or delay change is pending on the live Treasury, and that
-   no batch file is left over. It refuses if this run already queued a call to the live Treasury (it would run before
-   the copy and not be in it). The deployer then deploys a Treasury proxy initialized with the live Treasury's admin,
-   whose ProxyAdmin that admin owns; `initialize` grants no other role, so nothing can change the new Treasury before
-   the batch. The live Treasury's record is kept as `<alias>_Previous`.
+   maintainer of every yield vault, that no admin transfer or delay change is pending on the live Treasury, that the
+   compiled Gateway's storage layout is compatible with the live one, and that no batch file is left over. It refuses
+   if this run already queued a call to the live Treasury (it would run before the copy and not be in it). The
+   deployer then deploys a Treasury proxy initialized with the live Treasury's admin, whose ProxyAdmin that admin
+   owns; `initialize` grants no other role, so nothing can change the new Treasury before the batch. The live
+   Treasury's record is kept as `<alias>_Previous`.
 
    Everything else is a Safe call, read from the live Treasury and printed as a numbered list:
    - whitelist the new Treasury on each yield vault
@@ -695,9 +697,13 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    - `updateTreasury`, then `migrate`
    - remove the old Treasury from each yield vault's whitelist (shares move by plain transfer, so `migrate` does not
      need it)
+   - upgrade the Gateway to this repo's implementation, which the deployer deploys last: the new Gateway prices
+     through the Treasury's peg band, so it goes live together with the Treasury that has one
 
    The batch is recorded on `<alias>_Previous`. **Execute it as one Safe transaction.** Between `updateTreasury` and
    `migrate` the token points at a Treasury without collateral, and `migrate` reverts until `updateTreasury` has run.
+   The Gateway deploy scripts skip the upgrade until the migration has executed, so a routine run cannot queue it a
+   second time while the batch is pending.
 
 3. **While it is pending**, routine deploys leave `updateTreasury`, the whitelist and the YieldManager scripts alone.
    The migration script rebuilds the batch from live state and **fails if it no longer matches the recorded one**: a
@@ -719,14 +725,18 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    A Treasury code change made while the batch is pending ships as an ordinary upgrade of the new proxy. Ship it
    before the batch executes: the proxy holds no collateral yet, and the batch's `addToWhitelist` runs the new code.
    After the migration, a new `TokenConfig` field reads 0 for every token already whitelisted (a `depositCap` of 0
-   blocks every deposit), so an upgrade that adds one must queue its setter calls in the same Safe batch.
+   blocks every deposit), so an upgrade that adds one must queue its setter calls in the same Safe batch. The check
+   also fails if the Gateway code changed since the build: the queued upgrade points at the implementation deployed
+   then, so the batch is rebuilt.
 
 4. **Right after the Safe executes**, re-run the deploy without the flag. The migration script finds the block
    `migrate` executed in and compares both Treasuries at that block: collateral list and order, configs, flags,
-   tolerance, swapper, admin, admin delay, every role's holders, and each peg band against the Gateway's. It checks that the old Treasury held no
-   collateral or vault shares right after `migrate` (transfers sent to it later in the block do not count) and that
-   each vault whitelisted the new Treasury, then that the vaults no longer whitelist the old one. It fails listing
-   every difference. On success it deletes `<alias>_Previous`. Then:
+   tolerance, swapper, admin, admin delay, every role's holders, and each peg band against the old Gateway's, read
+   at the block before since the batch upgraded the Gateway. It checks that the old Treasury held no collateral or
+   vault shares right after `migrate` (transfers sent to it later in the block do not count) and that
+   each vault whitelisted the new Treasury, then, read now since they follow `migrate` in the batch, that the vaults no
+   longer whitelist the old one and that the Gateway runs the implementation the batch carried. It fails listing every
+   difference. On success it deletes `<alias>_Previous`. Then:
    - commit the artifacts (git keeps the deleted `_Previous` record)
    - update the Treasury addresses (and their type, now a proxy) in this file and in
      `test/helpers/Address.ethereum.sol`
@@ -735,9 +745,6 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
      copies live state, so every token starts uncapped with net deposits at 0, and the migrated collateral is not
      counted
    - cut a release (major bump)
-   - upgrade the Gateways: the new Gateway prices through the Treasury's peg band, so the Gateway deploy scripts skip
-     its upgrade until the Treasury is migrated. Until then the old Gateway prices with its own band, the same values
-     the batch copied, so a band change in between must be made on both
 
    If it reports a difference, the batch undid a change made on the old Treasury, typically a keeper pause right
    before execution: apply the change again on the new Treasury, whose role holders are the old one's. A change made

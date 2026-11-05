@@ -1,7 +1,5 @@
-import {DeployFunction} from 'hardhat-deploy/types'
-import {HardhatRuntimeEnvironment} from 'hardhat/types'
-import {deployUpgradable, UpgradableContracts, ContractAliases} from '../../helpers'
-import {isTreasuryMigrated} from '../../helpers/treasury-migration'
+import {UpgradableContracts, ContractAliases} from '../../helpers'
+import {GatewaySetup, gatewayDeployScript} from '../../helpers/gateway'
 import {GatewayConfig} from '../../config'
 
 const {PeggedToken, Gateway} = ContractAliases
@@ -26,30 +24,17 @@ const {PeggedToken, Gateway} = ContractAliases
  * After deployment:
  * 1. Call PeggedToken.updateGateway(gateway) - IMPORTANT: Must be done after Treasury is set
  * 2. Configure instant redeem whitelist if needed
+ *
+ * The upgrade of a live Gateway rides in the Treasury migration batch (09_migrate_treasury.ts), see
+ * deploy/helpers/gateway.ts.
  */
-const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
-  const {deployments} = hre
-  const {get} = deployments
-
-  // Get the deployed PeggedToken address
-  const {address: peggedTokenAddress} = await get(PeggedToken)
-
-  // The Gateway prices through the Treasury's peg band, which a Treasury from before the migration does not have
-  if (!(await isTreasuryMigrated(hre, PeggedToken))) {
-    console.log(`${Gateway}: the live Treasury predates the migration, leaving the Gateway upgrade until it has run`)
-    return
-  }
-
-  await deployUpgradable({
-    hre,
-    contractConfig: UpgradableContracts.Gateway,
-    initializeArgs: [
-      peggedTokenAddress, // peggedToken_
-      GatewayConfig.mintLimit, // mintLimit_
-      GatewayConfig.withdrawalDelay, // initialWithdrawalDelay_
-    ],
-  })
+export const gatewaySetup: GatewaySetup = {
+  peggedTokenAlias: PeggedToken,
+  contractConfig: UpgradableContracts.Gateway,
+  config: GatewayConfig,
 }
+
+const func = gatewayDeployScript(gatewaySetup)
 
 func.tags = [Gateway]
 func.dependencies = [PeggedToken]

@@ -1,7 +1,5 @@
-import {DeployFunction} from 'hardhat-deploy/types'
-import {HardhatRuntimeEnvironment} from 'hardhat/types'
-import {deployUpgradable, UpgradableContracts, ContractAliases} from '../../../helpers'
-import {isTreasuryMigrated} from '../../../helpers/treasury-migration'
+import {UpgradableContracts, ContractAliases} from '../../../helpers'
+import {GatewaySetup, gatewayDeployScript} from '../../../helpers/gateway'
 import {VetBTCGatewayConfig} from '../../../config'
 
 const {VetBTC, VetBTCGateway} = ContractAliases
@@ -13,27 +11,17 @@ const {VetBTC, VetBTCGateway} = ContractAliases
  * - asset_:           vetBTC token address
  * - mintLimit_:       maximum total mint cap
  * - withdrawalDelay_: withdrawal delay in seconds
+ *
+ * The upgrade of a live Gateway rides in the Treasury migration batch (10_vetbtc_migrate_treasury.ts), see
+ * deploy/helpers/gateway.ts.
  */
-const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
-  const {deployments} = hre
-  const {get} = deployments
-
-  const {address: vetBTCAddress} = await get(VetBTC)
-
-  // The Gateway prices through the Treasury's peg band, which a Treasury from before the migration does not have
-  if (!(await isTreasuryMigrated(hre, VetBTC))) {
-    console.log(
-      `${VetBTCGateway}: the live Treasury predates the migration, leaving the Gateway upgrade until it has run`
-    )
-    return
-  }
-
-  await deployUpgradable({
-    hre,
-    contractConfig: UpgradableContracts.VetBTCGateway,
-    initializeArgs: [vetBTCAddress, VetBTCGatewayConfig.mintLimit, VetBTCGatewayConfig.withdrawalDelay],
-  })
+export const vetBTCGatewaySetup: GatewaySetup = {
+  peggedTokenAlias: VetBTC,
+  contractConfig: UpgradableContracts.VetBTCGateway,
+  config: VetBTCGatewayConfig,
 }
+
+const func = gatewayDeployScript(vetBTCGatewaySetup)
 
 func.tags = [VetBTCGateway]
 func.dependencies = [VetBTC]
