@@ -132,6 +132,50 @@ contract MinPriceFeedAdapterTest is Test {
         assertEq(_answer, priceA_ < priceB_ ? priceA_ : priceB_);
     }
 
+    function test_latestRoundData_revertIfEitherTimestampZero() public {
+        vm.warp(1_000_000);
+        feedA.setUpdatedAt(0);
+        feedB.setUpdatedAt(999_000);
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+
+        feedA.setUpdatedAt(999_000);
+        feedB.setUpdatedAt(0);
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+    }
+
+    function test_latestRoundData_revertIfEitherTimestampInFuture() public {
+        // HVC-10: A = 1.000 @ now, B = 0.995 @ now + 1 day must not return 0.995 @ now
+        vm.warp(1_000_000);
+        feedA.setUpdatedAt(block.timestamp);
+        feedB.updatePrice(0.995e18);
+        feedB.setUpdatedAt(block.timestamp + 1 days);
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+
+        feedA.setUpdatedAt(block.timestamp + 1);
+        feedB.setUpdatedAt(block.timestamp);
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(MinPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+    }
+
+    function test_latestRoundData_acceptsTimestampEqualToNow() public {
+        vm.warp(1_000_000);
+        feedA.setUpdatedAt(block.timestamp);
+        feedB.setUpdatedAt(block.timestamp);
+        (,,, uint256 _updatedAt,) = adapter.latestRoundData();
+        assertEq(_updatedAt, block.timestamp);
+    }
+
     // ── AggregatorInterface ──────────────────────────────────────────────────
 
     function test_latestAnswer_matchesLatestRoundData() public view {

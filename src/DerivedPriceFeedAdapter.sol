@@ -20,6 +20,7 @@ contract DerivedPriceFeedAdapter is AggregatorV2V3Interface {
     error InvalidPrice();
     error OutputDecimalsTooLow();
     error HistoricalRoundsNotSupported();
+    error InvalidTimestamp();
 
     /// @notice Chainlink feed for the base asset (e.g. cbBTC/USD).
     AggregatorV2V3Interface public immutable baseFeed;
@@ -77,8 +78,8 @@ contract DerivedPriceFeedAdapter is AggregatorV2V3Interface {
     {
         (, int256 _basePrice,, uint256 _baseUpdatedAt,) = baseFeed.latestRoundData();
         (, int256 _quotePrice,, uint256 _quoteUpdatedAt,) = quoteFeed.latestRoundData();
-        uint256 _minUpdatedAt = _min(_baseUpdatedAt, _quoteUpdatedAt);
-        return (1, _derive(_basePrice, _quotePrice), _minUpdatedAt, _minUpdatedAt, 1);
+        _updatedAt = _minUpdatedAt(_baseUpdatedAt, _quoteUpdatedAt);
+        return (1, _derive(_basePrice, _quotePrice), _updatedAt, _updatedAt, 1);
     }
 
     /// @inheritdoc AggregatorV3Interface
@@ -98,7 +99,7 @@ contract DerivedPriceFeedAdapter is AggregatorV2V3Interface {
     function latestTimestamp() external view returns (uint256) {
         (,,, uint256 _baseUpdatedAt,) = baseFeed.latestRoundData();
         (,,, uint256 _quoteUpdatedAt,) = quoteFeed.latestRoundData();
-        return _min(_baseUpdatedAt, _quoteUpdatedAt);
+        return _minUpdatedAt(_baseUpdatedAt, _quoteUpdatedAt);
     }
 
     /// @inheritdoc AggregatorInterface
@@ -125,7 +126,11 @@ contract DerivedPriceFeedAdapter is AggregatorV2V3Interface {
         if (_result <= 0) revert InvalidPrice();
     }
 
-    function _min(uint256 a, uint256 b) private pure returns (uint256) {
-        return a < b ? a : b;
+    /// @dev Checks each source before the min(): a valid timestamp must not hide a zero or future one.
+    function _minUpdatedAt(uint256 updatedAtA_, uint256 updatedAtB_) private view returns (uint256) {
+        if (updatedAtA_ == 0 || updatedAtA_ > block.timestamp || updatedAtB_ == 0 || updatedAtB_ > block.timestamp) {
+            revert InvalidTimestamp();
+        }
+        return updatedAtA_ < updatedAtB_ ? updatedAtA_ : updatedAtB_;
     }
 }
