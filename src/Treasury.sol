@@ -210,7 +210,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
      * Note: As treasury reserve is in multiple tokens, there is no guarantee
      * that this function will withdraw all of the excess in given token.
      * @param token_ Token address to withdraw excess
-     * @param receiver_ Address to receive the withdrawn tokens, not this Treasury or its vault
+     * @param receiver_ Address to receive the withdrawn tokens, not this Treasury, its vault or a sanctioned account
      * @return Amount of tokens withdrawn
      */
     function harvest(address token_, address receiver_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
@@ -218,6 +218,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
         if (receiver_ == address(0)) revert AddressIsZero();
         if (receiver_ == address(this) || receiver_ == $.tokenConfig[token_].vault) revert InvalidReceiver(receiver_);
+        checkNotSanctioned(receiver_);
         uint256 _excess = _excessTokens(token_);
         if (_excess == 0) return 0;
 
@@ -476,11 +477,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
                     EXTERNAL VIEW FUNCTIONS
     /////////////////////////////////////////////////////////////*/
 
-    /// @notice Reverts with Sanctioned if `account_` is on the sanctions list; no-op while no list is set
-    function checkNotSanctioned(address account_) external view {
-        if (isSanctioned(account_)) revert Sanctioned(account_);
-    }
-
     /// @notice Returns the most of a token that may be deposited net of what has left, 0 if it is not whitelisted
     function depositCap(address token_) external view returns (uint256) {
         return _getTreasuryStorage().tokenConfig[token_].depositCap;
@@ -621,6 +617,11 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /*/////////////////////////////////////////////////////////////
                     PUBLIC VIEW FUNCTIONS
     /////////////////////////////////////////////////////////////*/
+
+    /// @notice Reverts with Sanctioned if `account_` is on the sanctions list; no-op while no list is set
+    function checkNotSanctioned(address account_) public view {
+        if (isSanctioned(account_)) revert Sanctioned(account_);
+    }
 
     /**
      * @notice Returns whether `account_` is on the sanctions list, false while no list is set

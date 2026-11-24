@@ -16,6 +16,7 @@ interface IGateway {
     function amoSupply() external view returns (uint256);
 
     /// @notice Burns AMO-minted PeggedToken to reduce AMO supply
+    /// @dev Exempt from the sanctions list: burning only reduces supply and AMO debt
     /// @param amount_ Amount of PeggedToken to burn
     function burnFromAMO(uint256 amount_) external;
 
@@ -87,6 +88,7 @@ interface IGateway {
     function mintLimit() external view returns (uint256);
 
     /// @notice Mints PeggedToken to AMO operations (UMM role)
+    /// @dev Reverts with Treasury's Sanctioned if the caller or `receiver_` is on the sanctions list
     /// @param amount_ Amount of PeggedToken to mint
     /// @param receiver_ Address to receive the minted PeggedToken
     function mintToAMO(uint256 amount_, address receiver_) external;

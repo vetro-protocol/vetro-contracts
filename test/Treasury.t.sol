@@ -1422,6 +1422,18 @@ contract TreasuryTest is Test {
         treasury.harvest(address(token), address(0));
     }
 
+    function test_harvest_revertIfReceiverSanctioned() public {
+        address _receiver = makeAddr("receiver");
+        treasury.grantRole(ummRole, alice);
+        MockSanctionsList _list = new MockSanctionsList();
+        treasury.updateSanctionsList(address(_list));
+        _list.setSanctioned(_receiver, true);
+
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, _receiver));
+        vm.prank(alice);
+        treasury.harvest(address(token), _receiver);
+    }
+
     function test_harvest_revertIfReceiverIsTreasuryOrVault() public {
         treasury.grantRole(ummRole, alice);
 
