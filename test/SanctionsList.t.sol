@@ -59,14 +59,54 @@ contract SanctionsListTest is Test {
         assertFalse(list.isSanctioned(alice));
     }
 
-    function test_isSanctioned_revertsWithOracle() public {
-        address _broken = makeAddr("broken");
-        vm.etch(_broken, hex"fe");
-        SanctionsList _list = new SanctionsList(address(token), _broken);
-        vm.expectRevert();
-        _list.isSanctioned(alice);
+    function _listWithOracleCode(bytes memory code_) internal returns (SanctionsList) {
+        address _oracle = makeAddr("rawOracle");
+        vm.etch(_oracle, code_);
+        return new SanctionsList(address(token), _oracle);
+    }
 
-        // A blacklisted account short-circuits before the oracle call
+    function test_isSanctioned_rawOracleReturnsTrue() public {
+        // MSTORE(0, 1) RETURN(0, 32)
+        assertTrue(_listWithOracleCode(hex"600160005260206000f3").isSanctioned(alice));
+    }
+
+    function test_isSanctioned_falseIfOracleReverts() public {
+        assertFalse(_listWithOracleCode(hex"fe").isSanctioned(alice));
+    }
+
+    function test_isSanctioned_falseIfOracleReturnsEmpty() public {
+        assertFalse(_listWithOracleCode(hex"00").isSanctioned(alice));
+    }
+
+    function test_isSanctioned_falseIfOracleHasNoCode() public {
+        assertFalse(new SanctionsList(address(token), makeAddr("eoa")).isSanctioned(alice));
+    }
+
+    function test_isSanctioned_falseIfOracleReturnsShort() public {
+        // MSTORE(0, 1) RETURN(0, 31)
+        assertFalse(_listWithOracleCode(hex"6001600052601f6000f3").isSanctioned(alice));
+    }
+
+    function test_isSanctioned_falseIfOracleReturnsLong() public {
+        // MSTORE(0, 1) RETURN(0, 64)
+        assertFalse(_listWithOracleCode(hex"600160005260406000f3").isSanctioned(alice));
+    }
+
+    function test_isSanctioned_falseIfOracleReturnsLargeData() public {
+        // MSTORE(0, 1) RETURN(0, 0x4000)
+        assertFalse(_listWithOracleCode(hex"60016000526140006000f3").isSanctioned(alice));
+    }
+
+    function test_isSanctioned_falseIfOracleBurnsGas() public {
+        // JUMPDEST PUSH1 0 JUMP
+        SanctionsList _list = _listWithOracleCode(hex"5b600056");
+        uint256 _gasBefore = gasleft();
+        assertFalse(_list.isSanctioned{gas: 100_000}(alice));
+        assertLt(_gasBefore - gasleft(), 100_000);
+    }
+
+    function test_isSanctioned_blacklistEnforcedIfOracleBroken() public {
+        SanctionsList _list = _listWithOracleCode(hex"fe");
         token.addToBlacklist(alice);
         assertTrue(_list.isSanctioned(alice));
     }

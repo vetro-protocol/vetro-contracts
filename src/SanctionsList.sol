@@ -8,13 +8,16 @@ import {ISanctionsList} from "./interfaces/ISanctionsList.sol";
 /// @title SanctionsList - The single place Gateway and StakingVault ask whether an account is sanctioned
 /// @notice Flags accounts blacklisted on the PeggedToken or listed by an external sanctions oracle (e.g. RedStone).
 ///         One deployment per PeggedToken. Both sources are immutable: changing either is a new deployment set on the
-///         Treasury. A zero oracle checks the blacklist only, e.g. to replace an oracle that is down.
+///         Treasury. A zero oracle checks the blacklist only. The oracle is upgradeable by a third party, thus an oracle
+///         call that fails (revert, out of gas or bad return data) gives "not sanctioned" and does not block Vetro.
 contract SanctionsList is ISanctionsList {
     string public constant VERSION = "1.0.0";
 
     IPeggedToken public immutable PEGGED_TOKEN;
     /// @notice Chainalysis-compatible sanctions oracle, address(0) for blacklist only
     ISanctionsList public immutable SANCTIONS_ORACLE;
+
+    uint256 private constant ORACLE_GAS = 50_000;
 
     error AddressIsZero();
 
@@ -27,6 +30,10 @@ contract SanctionsList is ISanctionsList {
     /// @inheritdoc ISanctionsList
     function isSanctioned(address account_) external view returns (bool) {
         if (PEGGED_TOKEN.isBlacklisted(account_)) return true;
-        return address(SANCTIONS_ORACLE) != address(0) && SANCTIONS_ORACLE.isSanctioned(account_);
+        if (address(SANCTIONS_ORACLE) == address(0)) return false;
+        (bool _success, bytes memory _return) = address(SANCTIONS_ORACLE).staticcall{gas: ORACLE_GAS}(
+            abi.encodeCall(ISanctionsList.isSanctioned, (account_))
+        );
+        return _success && _return.length == 32 && abi.decode(_return, (bool));
     }
 }

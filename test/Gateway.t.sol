@@ -1951,17 +1951,23 @@ contract GatewayTest is Test {
         assertEq(VUSD.balanceOf(address(gateway)), _vusd, "Locked VUSD should stay in Gateway");
     }
 
-    function test_sanctions_oracleRevertBlocksFlows() public {
+    function test_sanctions_brokenOracleDoesNotBlockFlows() public {
         address _broken = makeAddr("brokenOracle");
         vm.etch(_broken, hex"fe"); // INVALID
+        address _list = address(new SanctionsList(address(VUSD), _broken));
         vm.prank(admin);
-        treasury.updateSanctionsList(_broken);
+        treasury.updateSanctionsList(_list);
 
-        deal(token, alice, 1e18);
+        deal(token, alice, 2e18);
         vm.startPrank(alice);
-        IERC20(token).forceApprove(address(gateway), 1e18);
-        vm.expectRevert();
+        IERC20(token).forceApprove(address(gateway), 2e18);
         gateway.deposit(token, 1e18, 0, alice);
+        assertGt(VUSD.balanceOf(alice), 0);
         vm.stopPrank();
+
+        VUSD.addToBlacklist(bob);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        gateway.deposit(token, 1e18, 0, bob);
     }
 }
