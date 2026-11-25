@@ -25,10 +25,6 @@
     "verify": "hardhat etherscan-verify --sleep",
     "size-contract": "hardhat size-contracts"
   },
-  "dependencies": {
-    "@openzeppelin/contracts": "5.1.0",
-    "@openzeppelin/contracts-upgradeable": "5.1.0"
-  },
   "devDependencies": {
     "@defi-wonderland/smock": "2.4.0",
     "@nomicfoundation/hardhat-chai-matchers": "^1.0.6",
