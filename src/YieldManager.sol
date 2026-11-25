@@ -21,6 +21,7 @@ import {IYieldDistributor} from "./interfaces/IYieldDistributor.sol";
 contract YieldManager is ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
     using SafeERC20 for IPeggedToken;
+    using Math for uint256;
 
     /*/////////////////////////////////////////////////////////////
                         STATE VARIABLES
@@ -127,37 +128,41 @@ contract YieldManager is ReentrancyGuardTransient {
     }
 
     /**
-     * @notice KEEPER_ROLE: Harvest treasury excess payable in `token_` into the buffer.
+     * @notice KEEPER_ROLE: Harvest up to `maxAmount_` of treasury excess payable in `token_` into the buffer.
      * @dev Compute `minPeggedTokenOut_` off-chain (e.g. eth_call-simulate this function); deriving it
-     * on-chain from `previewDeposit` is circular and never reverts.
+     * on-chain from `previewDeposit` is circular and never reverts. The harvest is also capped by the
+     * Treasury deposit cap and the Gateway mint limit, so a full cap gives a smaller harvest, not a revert.
+     * Size `maxAmount_` from a simulated vault withdraw, as the vault can hold less liquidity than it reports.
      * @param token_ Whitelisted collateral token to harvest the excess in
      * @param minPeggedTokenOut_ Minimum pegged tokens the Gateway mint must produce
+     * @param maxAmount_ Max `token_` amount to harvest, nonzero
      * @return _minted Pegged tokens added to the buffer
      */
-    function harvest(address token_, uint256 minPeggedTokenOut_)
+    function harvest(address token_, uint256 minPeggedTokenOut_, uint256 maxAmount_)
         external
         nonReentrant
         onlyRole(KEEPER_ROLE)
         returns (uint256 _minted)
     {
-        return _harvest(token_, minPeggedTokenOut_);
+        return _harvest(token_, minPeggedTokenOut_, maxAmount_);
     }
 
     /**
      * @notice KEEPER_ROLE: `harvest` then `distribute` in one call.
      * @param token_ Whitelisted collateral token to harvest the excess in
      * @param minPeggedTokenOut_ Minimum pegged tokens the Gateway mint must produce
+     * @param maxAmount_ Max `token_` amount to harvest, nonzero
      * @param amount_ Max pegged tokens to send to the YieldDistributor, nonzero
      * @return _minted Pegged tokens added to the buffer
      * @return _distributed Pegged tokens sent to the YieldDistributor
      */
-    function harvestAndDistribute(address token_, uint256 minPeggedTokenOut_, uint256 amount_)
+    function harvestAndDistribute(address token_, uint256 minPeggedTokenOut_, uint256 maxAmount_, uint256 amount_)
         external
         nonReentrant
         onlyRole(KEEPER_ROLE)
         returns (uint256 _minted, uint256 _distributed)
     {
-        _minted = _harvest(token_, minPeggedTokenOut_);
+        _minted = _harvest(token_, minPeggedTokenOut_, maxAmount_);
         _distributed = _distribute(amount_);
     }
 
@@ -298,11 +303,20 @@ contract YieldManager is ReentrancyGuardTransient {
         emit Distributed(msg.sender, _distributed, buffer());
     }
 
-    function _harvest(address token_, uint256 minPeggedTokenOut_) private returns (uint256 _minted) {
-        uint256 _harvested = treasury().harvest(token_, address(this));
+    function _harvest(address token_, uint256 minPeggedTokenOut_, uint256 maxAmount_)
+        private
+        returns (uint256 _minted)
+    {
+        if (maxAmount_ == 0) revert AmountIsZero();
+
+        ITreasury _treasury = treasury();
+        IGateway _gateway = gateway();
+        uint256 _amountIn = _maxHarvest(_treasury, _gateway, token_, maxAmount_);
+        if (_amountIn == 0) return 0;
+
+        uint256 _harvested = _treasury.harvest(token_, address(this), _amountIn);
         if (_harvested == 0) return 0;
 
-        IGateway _gateway = gateway();
         IERC20(token_).forceApprove(address(_gateway), _harvested);
         _minted = _gateway.deposit(token_, _harvested, minPeggedTokenOut_, address(this));
 
@@ -336,6 +350,34 @@ contract YieldManager is ReentrancyGuardTransient {
     function _maxDripPerPeriod() private view returns (uint256) {
         uint256 _cap = Math.mulDiv(absoluteCap, YIELD_DISTRIBUTOR.yieldDuration(), CAP_WINDOW);
         return Math.min(_dripPerPeriod(maxAprBps), _cap);
+    }
+
+    /// @dev Most `token_` the Gateway accepts now: `maxAmount_` limited by the Treasury deposit cap and by the
+    /// mint limit. Mirrors the Gateway's round-down mint math in `token_` decimals, so the result never mints
+    /// past the limit. The mint price is at most the unit price, so `token_` amounts within the mint room
+    /// mint within it.
+    function _maxHarvest(ITreasury treasury_, IGateway gateway_, address token_, uint256 maxAmount_)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 _cap = Math.min(maxAmount_, treasury_.maxDeposit(token_));
+        if (_cap == 0) return 0;
+
+        uint256 _scale = 10 ** (IERC20Metadata(address(PEGGED_TOKEN)).decimals() - IERC20Metadata(token_).decimals());
+        uint256 _mintRoom = gateway_.maxMint() / _scale;
+        if (_cap <= _mintRoom) return _cap;
+
+        uint256 _feeComplement = MAX_BPS - gateway_.mintFee(token_);
+        (uint256 _price, uint256 _unitPrice) = treasury_.getMintPrice(token_);
+
+        uint256 _amountAfterFee = _cap.mulDiv(_feeComplement, MAX_BPS);
+        uint256 _peggedAmountOut = _amountAfterFee.mulDiv(_price, _unitPrice);
+        if (_peggedAmountOut <= _mintRoom) return _cap;
+
+        uint256 _maxAmountIn = _mintRoom.mulDiv(_unitPrice, _price).mulDiv(MAX_BPS, _feeComplement);
+
+        return _maxAmountIn;
     }
 
     function _previewDistribute(uint256 target_) private view returns (uint256) {

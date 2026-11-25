@@ -72,6 +72,7 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /////////////////////////////////////////////////////////////*/
 
     error AddressIsZero();
+    error AmountIsZero();
     error AddToListFailed();
     error AssetMismatch();
     error BalanceShouldBeZero();
@@ -214,34 +215,25 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
      * @return Amount of tokens withdrawn
      */
     function harvest(address token_, address receiver_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
-        TreasuryStorage storage $ = _getTreasuryStorage();
-        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (receiver_ == address(0)) revert AddressIsZero();
-        if (receiver_ == address(this) || receiver_ == $.tokenConfig[token_].vault) revert InvalidReceiver(receiver_);
-        uint256 _excess = _excessTokens(token_);
-        if (_excess == 0) return 0;
+        return _harvest(token_, receiver_, type(uint256).max);
+    }
 
-        uint256 _paid;
-        uint256 _balance = IERC20(token_).balanceOf(address(this));
-        if (_balance > 0) {
-            uint256 _toPay = Math.min(_balance, _excess);
-            IERC20(token_).safeTransfer(receiver_, _toPay);
-            _paid = _toPay;
-            _excess -= _paid;
-        }
-
-        if (_excess > 0) {
-            IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
-            uint256 _assets = _vault.maxWithdraw(address(this));
-            if (_assets > 0) {
-                uint256 _toWithdraw = Math.min(_excess, _assets);
-                _vault.withdraw(_toWithdraw, receiver_, address(this));
-                _paid += _toWithdraw;
-            }
-        }
-
-        emit ExcessWithdrawn(token_, _paid);
-        return _paid;
+    /**
+     * @notice UMM_ROLE: Withdraw up to `maxAmount_` excess tokens from reserve.
+     * @dev The vault's `maxWithdraw` is book value, not liquidity; size `maxAmount_` from a simulated withdraw.
+     * @param token_ Token address to withdraw excess
+     * @param receiver_ Address to receive the withdrawn tokens, not this Treasury or its vault
+     * @param maxAmount_ Max tokens to withdraw, nonzero
+     * @return Amount of tokens withdrawn
+     */
+    function harvest(address token_, address receiver_, uint256 maxAmount_)
+        external
+        onlyRole(UMM_ROLE)
+        nonReentrant
+        returns (uint256)
+    {
+        if (maxAmount_ == 0) revert AmountIsZero();
+        return _harvest(token_, receiver_, maxAmount_);
     }
 
     /**
@@ -740,6 +732,37 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         assembly {
             $.slot := _location
         }
+    }
+
+    function _harvest(address token_, address receiver_, uint256 maxAmount_) private returns (uint256) {
+        TreasuryStorage storage $ = _getTreasuryStorage();
+        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
+        if (receiver_ == address(0)) revert AddressIsZero();
+        if (receiver_ == address(this) || receiver_ == $.tokenConfig[token_].vault) revert InvalidReceiver(receiver_);
+        uint256 _excess = Math.min(_excessTokens(token_), maxAmount_);
+        if (_excess == 0) return 0;
+
+        uint256 _paid;
+        uint256 _balance = IERC20(token_).balanceOf(address(this));
+        if (_balance > 0) {
+            uint256 _toPay = Math.min(_balance, _excess);
+            IERC20(token_).safeTransfer(receiver_, _toPay);
+            _paid = _toPay;
+            _excess -= _paid;
+        }
+
+        if (_excess > 0) {
+            IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
+            uint256 _assets = _vault.maxWithdraw(address(this));
+            if (_assets > 0) {
+                uint256 _toWithdraw = Math.min(_excess, _assets);
+                _vault.withdraw(_toWithdraw, receiver_, address(this));
+                _paid += _toWithdraw;
+            }
+        }
+
+        emit ExcessWithdrawn(token_, _paid);
+        return _paid;
     }
 
     /// @dev Never below 0: redemptions can exceed deposits, e.g. of migrated collateral or of another token's deposit

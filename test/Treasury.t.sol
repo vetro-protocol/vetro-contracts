@@ -1247,6 +1247,37 @@ contract TreasuryTest is Test {
         assertEq(treasury.withdrawable(address(token)), 600 * TOKEN_UNIT);
     }
 
+    function test_harvest_maxAmount() public {
+        address umm = makeAddr("UMM");
+        treasury.grantRole(ummRole, umm);
+        vm.prank(gateway);
+        VUSD.mint(alice, 600e18);
+        uint256 tokenAmount = 1000 * TOKEN_UNIT;
+        deal(address(token), address(treasury), tokenAmount);
+        treasury.push(address(token), tokenAmount - (100 * TOKEN_UNIT));
+
+        vm.prank(umm);
+        assertEq(treasury.harvest(address(token), umm, 250 * TOKEN_UNIT), 250 * TOKEN_UNIT);
+        assertEq(token.balanceOf(address(treasury)), 0);
+        assertEq(token.balanceOf(address(mockVault)), 750 * TOKEN_UNIT);
+
+        vm.prank(umm);
+        assertEq(treasury.harvest(address(token), umm, type(uint256).max), 150 * TOKEN_UNIT);
+        assertEq(token.balanceOf(umm), 400 * TOKEN_UNIT);
+    }
+
+    function test_harvest_revertIfMaxAmountZero() public {
+        address umm = makeAddr("UMM");
+        treasury.grantRole(ummRole, umm);
+        vm.prank(gateway);
+        VUSD.mint(alice, 800e18);
+        deal(address(token), address(treasury), 1000 * TOKEN_UNIT);
+
+        vm.prank(umm);
+        vm.expectRevert(Treasury.AmountIsZero.selector);
+        treasury.harvest(address(token), umm, 0);
+    }
+
     function test_harvest_keepsNetDeposited() public {
         address umm = makeAddr("UMM");
         treasury.grantRole(ummRole, umm);
