@@ -169,7 +169,7 @@ contract WbtcPricedFeedsForkTest is Test {
         _deposit(HEMIBTC, 5e8);
         deal(WBTC, address(treasury), IERC20(WBTC).balanceOf(address(treasury)) + 0.01e8);
 
-        assertEq(treasury.harvest(WBTC, address(this)), 0.01e8);
+        assertEq(gateway.harvest(address(0), address(this), type(uint256).max), 0.01e18);
         assertEq(treasury.reserve(), vetBTC.totalSupply(), "reserve lands on supply");
     }
 

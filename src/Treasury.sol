@@ -15,7 +15,6 @@ import {IAggregatorV3} from "./interfaces/chainlink/IAggregatorV3.sol";
 import {ISwapper} from "./interfaces/bloq/ISwapper.sol";
 import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {ISanctionsList} from "./interfaces/ISanctionsList.sol";
-import {IGateway} from "./interfaces/IGateway.sol";
 
 /// @title PeggedToken Treasury
 contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpgradeable {
@@ -100,7 +99,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /////////////////////////////////////////////////////////////*/
 
     event AddedToWhitelist(address indexed token, address indexed vault, address indexed oracle);
-    event ExcessWithdrawn(address indexed token, uint256 amount);
     event RemovedFromWhitelist(address indexed token);
     event SetDepositActive(address indexed token, bool newValue);
     event SetWithdrawActive(address indexed token, bool newValue);
@@ -203,46 +201,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
         _config.netDeposited = _netDeposited;
 
         if (IERC4626(_config.vault).deposit(amount_, address(this)) == 0) revert ZeroShares();
-    }
-
-    /**
-     * @notice UMM_ROLE: Withdraw excess tokens from reserve.
-     * Note: As treasury reserve is in multiple tokens, there is no guarantee
-     * that this function will withdraw all of the excess in given token.
-     * @param token_ Token address to withdraw excess
-     * @param receiver_ Address to receive the withdrawn tokens, not this Treasury, its vault or a sanctioned account
-     * @return Amount of tokens withdrawn
-     */
-    function harvest(address token_, address receiver_) external onlyRole(UMM_ROLE) nonReentrant returns (uint256) {
-        TreasuryStorage storage $ = _getTreasuryStorage();
-        if (!$.whitelistedTokens.contains(token_)) revert UnsupportedToken(token_);
-        if (receiver_ == address(0)) revert AddressIsZero();
-        if (receiver_ == address(this) || receiver_ == $.tokenConfig[token_].vault) revert InvalidReceiver(receiver_);
-        checkNotSanctioned(receiver_);
-        uint256 _excess = _excessTokens(token_);
-        if (_excess == 0) return 0;
-
-        uint256 _paid;
-        uint256 _balance = IERC20(token_).balanceOf(address(this));
-        if (_balance > 0) {
-            uint256 _toPay = Math.min(_balance, _excess);
-            IERC20(token_).safeTransfer(receiver_, _toPay);
-            _paid = _toPay;
-            _excess -= _paid;
-        }
-
-        if (_excess > 0) {
-            IERC4626 _vault = IERC4626($.tokenConfig[token_].vault);
-            uint256 _assets = _vault.maxWithdraw(address(this));
-            if (_assets > 0) {
-                uint256 _toWithdraw = Math.min(_excess, _assets);
-                _vault.withdraw(_toWithdraw, receiver_, address(this));
-                _paid += _toWithdraw;
-            }
-        }
-
-        emit ExcessWithdrawn(token_, _paid);
-        return _paid;
     }
 
     /**
@@ -353,8 +311,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /**
      * @notice MAINTAINER_ROLE: Update the most of a token that may be deposited net of what has been redeemed
      * @dev Gates intake, so a vault loss or a depeg the oracle misses does not open room. Net deposits go up on
-     * {deposit} and down on {withdraw}, never below 0, and start at 0 when the token is whitelisted. {harvest}
-     * leaves them alone: the yield was never counted, and minting it back through the Gateway takes room.
+     * {deposit} and down on {withdraw}, never below 0, and start at 0 when the token is whitelisted. The Gateway's
+     * harvest moves no collateral, so it leaves them alone.
      * type(uint256).max means no cap.
      * @param token_ Token to update deposit cap for
      * @param newDepositCap_ New deposit cap in token units
@@ -634,8 +592,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
 
     /// @notice Returns total reserve value denominated in PeggedToken units
     /// @dev Each token is valued at its oracle price capped at par. A price outside `priceTolerance` does not revert
-    /// here, so one depegged or pushed token cannot block harvest of every token; its lower price only understates
-    /// the excess.
+    /// here, so one depegged or pushed token cannot block the core harvest; its lower price only understates the
+    /// excess.
     function reserve() public view returns (uint256 _reserve) {
         TreasuryStorage storage $ = _getTreasuryStorage();
         uint256 _len = $.whitelistedTokens.length();
@@ -665,27 +623,6 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     /*/////////////////////////////////////////////////////////////
                         PRIVATE FUNCTIONS
     /////////////////////////////////////////////////////////////*/
-
-    function _excessTokens(address token_) private view returns (uint256 excess) {
-        TreasuryStorage storage $ = _getTreasuryStorage();
-        IPeggedToken _peggedToken = $.peggedToken;
-        // Excess = reserve - coreSupply: the reserve backs only the core supply, not AMO or spoke supply
-        uint256 _backedSupply = IGateway(_peggedToken.gateway()).coreSupply();
-        uint256 _reserve = reserve();
-        if (_reserve <= _backedSupply) return 0;
-
-        uint256 _excess;
-        unchecked {
-            _excess = _reserve - _backedSupply;
-        }
-
-        // Convert excess (in PeggedToken decimals) to token amount, at the price the Gateway re-mints it at
-        TokenConfig storage _config = $.tokenConfig[token_];
-        (uint256 _price, uint256 _unitPrice) = _getMintPrice(_config, $.priceTolerance);
-        uint256 _tokens = _excess.mulDiv(_unitPrice, _price) / (10 ** (18 - _config.decimals));
-
-        return _tokens;
-    }
 
     function _getMintPrice(TokenConfig storage config_, uint256 priceToleranceBps_)
         private

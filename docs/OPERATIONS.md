@@ -102,7 +102,7 @@ All roles for Gateway and Treasury operations are managed on the **Treasury** co
 |------|----------|------------|---------|
 | DEFAULT_ADMIN_ROLE | `0x00` | Treasury, YieldDistributor | Protocol governance: whitelist tokens, set limits |
 | MAINTAINER_ROLE | `keccak256("MAINTAINER_ROLE")` | Treasury | Configuration: fees, oracles, deposit caps, whitelists, withdrawal settings, narrowing peg bands |
-| KEEPER_ROLE | `keccak256("KEEPER_ROLE")` | Treasury | Vault operations: push/pull, pause/unpause, swap |
+| KEEPER_ROLE | `keccak256("KEEPER_ROLE")` | Treasury | Vault operations: push/pull, pause/unpause, swap; YieldManager harvest and distribute (it reads roles from the Treasury) |
 | UMM_ROLE | `keccak256("UMM_ROLE")` | Treasury | AMO operations: mint/burn VUSD, harvest yield |
 | DISTRIBUTOR_ROLE | `keccak256("DISTRIBUTOR_ROLE")` | YieldDistributor | Distribute yield to StakingVault |
 | Owner (Ownable2Step) | N/A | VUSD, StakingVault | Blacklist, cooldown config, vault rewards |
@@ -165,7 +165,7 @@ Treasury.swap(address tokenIn_, address tokenOut_, uint256 amountIn_, uint256 mi
 
 ---
 
-### 2. UMM_ROLE Operations (Gateway + Treasury)
+### 2. UMM_ROLE Operations (Gateway; the role is held on the Treasury)
 
 #### 2.1 Mint VUSD for AMO
 
@@ -189,16 +189,30 @@ Gateway.burnFromAMO(uint256 amount_)
 - Exempt from the sanctions list: burning only reduces supply and AMO debt. Blocking it would leave unbacked AMO supply outstanding
 - **When**: Removing AMO liquidity, reducing outstanding AMO-minted supply
 
-#### 2.3 Harvest Excess Yield from Treasury
+#### 2.3 Harvest Yield
 
 ```
-Treasury.harvest(address token_, address receiver_)
+Gateway.harvest(address source_, address receiver_, uint256 amount_)
+Gateway.harvestable(address source_)
 ```
 
-- Withdraws excess reserves (reserve value - total VUSD supply) as profit
-- Only available when reserve exceeds backed supply
-- Returns the amount harvested
-- Reverts with `Sanctioned` if `receiver_` is on the sanctions list
+- Mints up to `amount_` of a source's yield to `receiver_` as VUSD; no collateral moves
+- `source_` is `address(0)` for the core (`Treasury.reserve()` above `Gateway.coreSupply()`) or a registered spoke
+  (its `reserve()` above its `Gateway.spokeSupply`, and the yield joins that supply)
+- `amount_` is a cap: `type(uint256).max` takes all of it. Harvesting less leaves a margin in a spoke against a
+  negative share rate report, which would otherwise stop its mints until the rate recovers
+- Not bound by the mint limits, but counts against them: core yield uses `mintLimit` room, and a spoke's supply can
+  grow past its limit
+- Reverts with `InvalidSpoke` for an unregistered spoke, when the source cannot be valued (stale feed, Concrete
+  paused), or with `Sanctioned` if `receiver_` is on the sanctions list
+- `YieldManager.harvest(source, amount)`, `YieldManager.harvestBatch(sources, amounts)` and
+  `YieldManager.harvestAndDistribute(sources, amounts, distributeAmount)` (a batch, then one distribute) call it for
+  the YieldManager's buffer. A batch is all or nothing: simulate it first and leave out a source that cannot be valued
+  (an amount of 0 does not skip it, the source is still valued). `YieldManager.harvestable(source)` ignores the
+  YieldManager's own role and screening
+- For `harvestAndDistribute`, pass `type(uint256).max` as `distributeAmount` to distribute what the caps allow after
+  the batch: `amountForApr` and `maxDistribute` read the current buffer, so read before the batch they leave out what
+  it adds
 - **When**: After vault yield has been realized (see Yield Harvesting Workflow below)
 
 ---
@@ -214,7 +228,7 @@ YieldDistributor.distribute(uint256 amount_)
 - Caller must have VUSD balance >= `amount_` and approve YieldDistributor
 - Yield is dripped linearly over `yieldDuration` (default 7 days)
 - If called during an active period, remaining undistributed yield is combined with new amount
-- **When**: After harvesting excess from Treasury (see Yield Harvesting Workflow)
+- **When**: After harvesting yield (see Yield Harvesting Workflow)
 
 ---
 
@@ -283,8 +297,8 @@ Treasury.updatePriceTolerance(uint256 newPriceTolerance_)
 ```
 
 - In BPS, max 10000 (100%)
-- Default: 100 (1%). Prices outside 1 +/- tolerance revert that token's mint, redeem and harvest. `reserve()` still
-  values the token at its oracle price, so it does not block harvest of other tokens
+- Default: 100 (1%). Prices outside 1 +/- tolerance revert that token's mint and redeem. `reserve()` still values
+  the token at its oracle price, so harvest (2.3) goes on and the token's discount only lowers the core yield
 - Must stay above every peg band other than 0 (5.5): to go to or below a band, lower that band first with
   `Treasury.updatePegBand`, which MAINTAINER can do on its own
 
@@ -306,9 +320,7 @@ Treasury.updateDepositCap(address token_, uint256 newDepositCap_)
   (`Treasury.netDeposited(token)`) past the cap
 - Net deposits go up on each deposit and down on each redemption, never below 0. They gate intake, not holdings: a
   vault loss opens no room, and keeper swaps and migrated collateral take none
-- Harvest leaves net deposits alone, and the YieldManager's re-deposit adds what it paid, so yield takes room. Once
-  that would pass the cap, `YieldManager.harvest(token)` reverts and the yield stays in the Treasury: harvest another
-  token or raise the cap. Size caps with room for the yield
+- Harvest mints yield without moving collateral, so it leaves net deposits alone and yield takes no cap room
 - New tokens start uncapped (`type(uint256).max`) with net deposits at 0, and so does a token removed and whitelisted
   again. AMO mints and keeper operations ignore the cap
 - `Gateway.maxDeposit(token)` returns the room left, bounded by what the yield vault accepts. It is not a guarantee:
@@ -365,7 +377,8 @@ Treasury.updatePegBand(address token_, uint256 newPegBand_)
 
 - Token must be whitelisted; removing it from the whitelist clears its band
 - Other than 0, must be less than Treasury's `priceTolerance`, which in turn cannot be lowered to or below it (4.7)
-- When price is within peg band, deposit/redeem uses 1:1 rate, and harvest converts the excess at par
+- When price is within peg band, deposit/redeem uses 1:1 rate. Harvest does not use the band: `reserve()` values
+  each token at its oracle price capped at par
 - When outside peg band, uses oracle price (discount/premium)
 - Before the Treasury migration the band lives on the Gateway (`Gateway.updatePegBand`); the migration copies it
 
@@ -469,6 +482,7 @@ Gateway.removeSpoke(address spoke_)
 - A new spoke's LPs mint nothing until its limit is raised
 - Lowering the limit to 0 stops the spoke's mints; redeems stay open
 - `removeSpoke` needs zero supply (8.3)
+- A spoke's yield is harvested with `Gateway.harvest(spoke, receiver, amount)` (2.3), which raises its supply
 
 #### 8.2 ConcreteSpoke AccessManager Configuration
 
@@ -489,13 +503,13 @@ instant withdraw whitelist (7.2, sVUSD exit only).
 
 #### 8.3 Retiring a Spoke
 
-1. Lower its Gateway limit to 0, which stops its mints
+1. Lower its Gateway limit to 0, which stops its mints, and harvest its yield (2.3), which joins its supply
 2. Have a whitelisted LP redeem the spoke's remaining `Gateway.spokeSupply` through the spoke in one call (not
    possible while it is shut down). A remainder worth less than one share unit cannot be redeemed on its own: reopen
    mints, have an LP mint, then redeem the whole supply in one call
 3. `Gateway.removeSpoke(spoke)`
 
-Shares left in the spoke after removal (rounding remainders and yield above its supply) have no way out.
+Shares left in the spoke after removal (rounding remainders and yield since the last harvest) have no way out.
 
 ---
 
@@ -543,50 +557,34 @@ What happens:
 YieldVault.pricePerShare()  // should be > previous value
 
 // Check Treasury's reserve increased
-Treasury.reserve()  // should be > total VUSD supply if there is excess
+Treasury.reserve()  // should be > Gateway.coreSupply() if there is excess
 ```
 
-#### Step 2: Harvest Excess from Treasury
+#### Step 2: Harvest Yield as VUSD
 
-**Who**: UMM_ROLE
-**Contract**: Treasury
-
-```
-Treasury.harvest(address token_, address receiver_)
-```
-
-- `receiver_` should be the address that will distribute yield (an address with DISTRIBUTOR_ROLE on YieldDistributor)
-- Only works when `Treasury.reserve() > VUSD.totalSupply()`
-- Returns the excess collateral tokens (e.g., USDC)
-
-**Prerequisite**: The Yield Vault's `pricePerShare` must have increased (Step 1 completed), causing Treasury's reserve value to exceed the backed VUSD supply.
-
-**Verification**:
-```solidity
-// Before harvest, check there is excess
-Treasury.reserve()        // e.g., 10,050,000 (in 18 decimals)
-VUSD.totalSupply() // e.g., 10,000,000
-// Excess = 50,000 available for harvest
-```
-
-#### Step 3: Convert Harvested Tokens to VUSD
-
-The harvested tokens (e.g., USDC) need to be converted to VUSD before distribution to StakingVault holders.
-
-**Who**: Any address (no role required)
+**Who**: UMM_ROLE (or KEEPER_ROLE through the YieldManager)
 **Contract**: Gateway
 
 ```
-// Approve Gateway to spend the harvested tokens
-IERC20(token).approve(Gateway, amount)
-
-// Deposit to get VUSD
-Gateway.deposit(address token_, uint256 amount_, uint256 minVUSDOut_, address receiver_)
+Gateway.harvest(address source_, address receiver_, uint256 amount_)
 ```
 
-- Set `receiver_` to the address that will call `distribute`
+- Mints the source's yield as VUSD (2.3); the collateral stays in the Treasury or the spoke
+- `receiver_` should be the address that will distribute yield (an address with DISTRIBUTOR_ROLE on YieldDistributor)
+- Through the YieldManager (KEEPER_ROLE): `YieldManager.harvestBatch(sources, amounts)` mints into its buffer, with
+  `sources` built from `address(0)` and `Gateway.getSpokes()`. Simulate first and leave out a source that cannot be
+  valued
 
-#### Step 4: Distribute Yield to StakingVault
+**Prerequisite**: The Yield Vault's `pricePerShare` must have increased (Step 1 completed), causing Treasury's reserve value to exceed the core supply.
+
+**Verification**:
+```solidity
+// Before harvest, check there is yield
+Gateway.harvestable(address(0))   // core: Treasury.reserve() - Gateway.coreSupply()
+Gateway.harvestable(spoke)        // a spoke: its reserve() - Gateway.spokeSupply(spoke)
+```
+
+#### Step 3: Distribute Yield to StakingVault
 
 **Who**: DISTRIBUTOR_ROLE
 **Contract**: YieldDistributor
@@ -598,6 +596,11 @@ VUSD.approve(YieldDistributor, amount)
 // Distribute - yield drips linearly over yieldDuration (default 7 days)
 YieldDistributor.distribute(uint256 amount_)
 ```
+
+Through the YieldManager (KEEPER_ROLE), `YieldManager.distribute(amount)` pays from its buffer, or
+`YieldManager.harvestAndDistribute(sources, amounts, distributeAmount)` harvests and distributes in one call. The amount
+is clamped to `YieldManager.maxDistribute()` (the APR and absolute caps), and each distribution restarts the drip
+period, so distribute on the cadence the caps target rather than after every harvest.
 
 **Result**: StakingVault's `totalAssets()` gradually increases over the yield duration as `pullYield()` is called automatically on every deposit/withdraw/requestRedeem operation on StakingVault.
 
@@ -612,19 +615,21 @@ StakingVault.totalAssets()         // should gradually increase
 ### Complete Workflow Summary
 
 ```
-1. Keeper calls Strategy.rebalance()         --> Yield Vault pricePerShare increases
-2. UMM calls Treasury.harvest(token, self)   --> Excess collateral sent to UMM
-3. UMM deposits harvested tokens via Gateway --> Gets VUSD
-4. Distributor calls YieldDistributor.distribute(amount)  --> Yield drips to StakingVault over 7 days
+1. Keeper calls Strategy.rebalance()                      --> Yield Vault pricePerShare increases
+2. UMM calls Gateway.harvest(source, self, amount)        --> Yield minted to UMM as VUSD
+3. Distributor calls YieldDistributor.distribute(amount)  --> Yield drips to StakingVault over 7 days
 ```
+
+With the YieldManager, steps 2 and 3 are its keeper calls: `harvestBatch(sources, amounts)` then
+`distribute(amount)`, or `harvestAndDistribute(sources, amounts, distributeAmount)` in one call.
 
 ### Frequency Recommendations
 
 | Operation | Frequency | Trigger Condition |
 |-----------|-----------|-------------------|
 | Strategy rebalance | Daily to weekly | When underlying protocol has accumulated yield |
-| Treasury harvest | After each rebalance | When `reserve > totalSupply` |
-| YieldDistributor.distribute | After each harvest | When VUSD from harvest is available |
+| Gateway harvest | After each rebalance | When `Gateway.harvestable(source) > 0` |
+| YieldDistributor.distribute | After each harvest | When VUSD from harvest is available (through the YieldManager: when `maxDistribute() > 0`) |
 | Treasury.push | As needed | When idle collateral sits in Treasury |
 | Treasury.pull | As needed | When it is preferred to keep some asset idle in treasury to avoid pull from strategies |
 
@@ -786,6 +791,11 @@ proxy, the script has nothing to migrate: code changes ship as upgrades, like th
    - update the Treasury addresses (and their type, now a proxy) in this file and in
      `test/helpers/Address.ethereum.sol`
    - repoint keeper bots and monitoring at the new Treasury
+   - replace the YieldManager: run `--tags YieldDistributor,VetBTCYieldDistributor,YieldManager,VetBTCYieldManager`,
+     then `--tags MultisigTxs`, and have the Safe execute that batch. It deploys a new YieldManager in place of one
+     without `harvestBatch` (that one calls the removed `Treasury.harvest`), grants it UMM_ROLE and DISTRIBUTOR_ROLE,
+     and revokes both from the old one. Update `VUSD_YIELD_MANAGER` and `VETBTC_YIELD_MANAGER` in
+     `test/helpers/Address.ethereum.sol` and repoint the keeper at the new YieldManager and its signatures
    - set the deposit caps in a Safe batch of `Treasury.updateDepositCap(token, cap)` per token (4.9): the migration
      copies live state, so every token starts uncapped with net deposits at 0, and the migrated collateral is not
      counted

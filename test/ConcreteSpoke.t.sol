@@ -206,10 +206,18 @@ abstract contract ConcreteSpokeBase is Test {
         usdtOracle.updatePrice(1e8);
     }
 
-    /// @dev Mints `amount_` VUSD through the core and streams it to sVUSD over the full yield duration
-    function _streamToStakers(uint256 amount_) internal {
-        _coreDeposit(address(this), amount_ / 1e12);
-        uint256 _amount = amount_;
+    /// @dev UMM harvests all of a source's yield (`address(0)` for the core) to itself
+    function _harvest(address source_) internal returns (uint256) {
+        vm.prank(umm);
+        return gateway.harvest(source_, umm, type(uint256).max);
+    }
+
+    /// @dev Harvests the surplus (core and spoke) and streams it to sVUSD over the full yield duration
+    function _streamToStakers() internal {
+        vm.startPrank(umm);
+        uint256 _amount = gateway.harvest(address(0), address(this), type(uint256).max)
+            + gateway.harvest(address(spoke), address(this), type(uint256).max);
+        vm.stopPrank();
         YieldDistributor _distributor = YieldDistributor(svusd.yieldDistributor());
         vm.startPrank(admin);
         _distributor.grantRole(_distributor.DISTRIBUTOR_ROLE(), address(this));
@@ -455,8 +463,8 @@ contract ConcreteSpokeTest is ConcreteSpokeBase {
         spoke.unstakeAndRedeem(_shares / 4, 0, lp1);
     }
 
-    /// @dev Staking yield exits through the spoke while it stays within the spoke's supply; past it the staked exit is
-    /// refused (that VUSD exits through the core)
+    /// @dev Staking yield from the spoke's own harvest exits in full; yield from the core can push a staked exit past
+    /// the spoke's supply, which is refused (that VUSD exits through the core)
     function test_unstakeAndRedeem_withStakingYield() public {
         _fundAndApprove(lp1, 100e6);
         uint256 _shares = spoke.mintAndStake(100e6, 0, lp1);
@@ -464,13 +472,15 @@ contract ConcreteSpokeTest is ConcreteSpokeBase {
         vm.stopPrank();
 
         ct.setRate(1.1e18);
-        _streamToStakers(10e18);
+        _streamToStakers();
         uint256 _expected = spoke.previewUnstakeAndRedeem(_shares / 2);
         vm.prank(lp1);
         assertEq(spoke.unstakeAndRedeem(_shares / 2, _expected, lp1), _expected, "preview equals execution");
         assertApproxEqAbs(_expected, 50e6, 1, "half of 110 VUSD at 1.10");
 
-        _streamToStakers(100e18);
+        _coreDeposit(alice, 1_000e6);
+        deal(address(usdt), address(treasury), usdt.balanceOf(address(treasury)) + 100e6); // core yield
+        _streamToStakers();
         uint256 _rest = svusd.balanceOf(lp1);
         assertGt(svusd.previewRedeem(_rest), gateway.spokeSupply(address(spoke)));
         // The spoke lacks the shares, so the payout fails before the Gateway's supply check would
@@ -817,18 +827,209 @@ contract ConcreteSpokeTest is ConcreteSpokeBase {
     }
 
     /*/////////////////////////////////////////////////////////////
-                            CORE HARVEST
+                            HARVEST
     /////////////////////////////////////////////////////////////*/
 
-    /// @dev The Treasury round trip only sees the supply the core backs, so spoke supply does not hide core yield
-    function test_coreHarvest_excludesSpokeSupply() public {
+    function test_harvest_mintsSurplusAndRaisesSupply() public {
+        _mint(lp1, 1_000e6);
+        ct.setRate(1.1e18);
+
+        assertEq(gateway.harvestable(address(spoke)), 100e18);
+        vm.expectEmit(address(gateway));
+        emit Gateway.Harvested(address(spoke), umm, 100e18);
+        assertEq(_harvest(address(spoke)), 100e18);
+        assertEq(vusd.balanceOf(umm), 100e18);
+        assertEq(gateway.spokeSupply(address(spoke)), 1_100e18, "yield is backed in the spoke");
+        assertEq(ct.balanceOf(address(spoke)), 1_000e6, "no collateral moves");
+        assertEq(_harvest(address(spoke)), 0, "nothing left to harvest");
+    }
+
+    function test_harvest_upToAmount() public {
+        _mint(lp1, 1_000e6);
+        ct.setRate(1.1e18);
+
+        vm.prank(umm);
+        assertEq(gateway.harvest(address(spoke), umm, 40e18), 40e18);
+        assertEq(gateway.spokeSupply(address(spoke)), 1_040e18);
+        assertEq(gateway.harvestable(address(spoke)), 60e18);
+        assertEq(_harvest(address(spoke)), 60e18, "the rest");
+    }
+
+    function test_harvest_nothingOnRateDrop() public {
+        _mint(lp1, 1_000e6);
+        ct.setRate(0.98e18);
+        assertEq(gateway.harvestable(address(spoke)), 0);
+        assertEq(_harvest(address(spoke)), 0);
+    }
+
+    function test_harvest_revertIfReceiverSanctioned() public {
+        _mint(lp1, 1_000e6);
+        ct.setRate(1.1e18);
+        _sanction(stranger);
+        vm.prank(umm);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, stranger));
+        gateway.harvest(address(spoke), stranger, type(uint256).max);
+    }
+
+    /// @dev A removed spoke can still hold shares above its (zero) supply; harvesting them would mint supply the
+    /// Gateway no longer counts
+    function test_harvest_revertForRemovedSpokeWithShares() public {
+        _mint(lp1, 1_000e6);
+        ct.setRate(1.1e18);
+        _redeem(lp1, 1_000e18);
+        assertEq(gateway.spokeSupply(address(spoke)), 0);
+        assertGt(ct.balanceOf(address(spoke)), 0, "surplus shares stay behind");
+        vm.prank(admin);
+        gateway.removeSpoke(address(spoke));
+
+        vm.prank(umm);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.InvalidSpoke.selector, address(spoke)));
+        gateway.harvest(address(spoke), umm, type(uint256).max);
+    }
+
+    function test_harvest_revertIfNotUmmZeroReceiverOrNotASpoke() public {
+        bytes32 _role = gateway.UMM_ROLE();
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.AccessControlUnauthorizedAccount.selector, stranger, _role));
+        gateway.harvest(address(0), stranger, type(uint256).max);
+        vm.prank(umm);
+        vm.expectRevert(Gateway.AddressIsZero.selector);
+        gateway.harvest(address(0), address(0), type(uint256).max);
+        vm.prank(umm);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.InvalidSpoke.selector, stranger));
+        gateway.harvest(stranger, umm, type(uint256).max);
+    }
+
+    /// @dev Each source is harvested on its own and in either order: a spoke's yield raises its supply and the total
+    /// supply together, so the core's excess is unchanged
+    function test_harvest_coreAndSpokeSeparately() public {
         _coreDeposit(alice, 1_000e6);
         _mint(lp1, 1_000e6);
-        deal(address(usdt), address(treasury), 10e6); // core yield
+        deal(address(usdt), address(treasury), usdt.balanceOf(address(treasury)) + 10e6);
+        uint256 _reserve = treasury.reserve();
+        ct.setRate(1.1e18);
 
-        assertEq(yieldManager.harvestable(), 10e18);
+        assertEq(_harvest(address(spoke)), 100e18);
+        assertEq(gateway.harvestable(address(0)), 10e18, "core excess unchanged by the spoke harvest");
+        vm.expectEmit(address(gateway));
+        emit Gateway.Harvested(address(0), umm, 10e18);
+        assertEq(_harvest(address(0)), 10e18);
+        assertEq(gateway.spokeSupply(address(spoke)), 1_100e18);
+        assertEq(treasury.reserve(), _reserve, "no core collateral moves");
+        assertEq(treasury.reserve(), gateway.coreSupply(), "core exactly backed");
+    }
+
+    /// @dev The caller picks the source, so one that cannot be valued reverts; the others stay harvestable
+    function test_harvest_revertForUnreadableSource() public {
+        _coreDeposit(alice, 1_000e6);
+        _mint(lp1, 1_000e6);
+        deal(address(usdt), address(treasury), usdt.balanceOf(address(treasury)) + 10e6);
+        ct.setRate(1.1e18);
+
+        vm.mockCallRevert(address(ct), abi.encodeWithSelector(MockRateVault.convertToAssets.selector), "paused");
+        vm.prank(umm);
+        vm.expectRevert("paused");
+        gateway.harvest(address(spoke), umm, type(uint256).max);
+        assertEq(_harvest(address(0)), 10e18, "core still harvested");
+        vm.clearMockedCalls();
+
+        vm.warp(block.timestamp + 2 days); // core feed stale, reserve() reverts
+        vm.prank(umm);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(usdtOracle)));
+        gateway.harvest(address(0), umm, type(uint256).max);
+        assertEq(_harvest(address(spoke)), 100e18, "spoke still harvested");
+    }
+
+    function test_harvest_notBoundByMintLimit() public {
+        _mint(lp1, 1_000e6);
+        vm.prank(admin);
+        gateway.decreaseSpokeMintLimit(address(spoke), 1_000e18);
+        ct.setRate(1.1e18);
+        assertEq(_harvest(address(spoke)), 100e18);
+        assertEq(spoke.maxMint(), 0, "harvested yield fills the limit");
+    }
+
+    /// @dev No buffer is kept: a small negative report after a harvest shuts mints until the rate recovers (accepted)
+    function test_harvest_thenSmallDropShutsMintsUntilRecovery() public {
+        _mint(lp1, 1_000_000e6);
+        ct.setRate(1.0001e18);
+        assertEq(_harvest(address(spoke)), 100e18);
+
+        ct.setRate(1e18);
+        assertEq(spoke.maxMint(), 0);
+        _fundAndApprove(lp2, 1e6);
+        vm.expectRevert(abi.encodeWithSelector(Gateway.SpokeUndercollateralized.selector, 1_000_001e18, 1_000_101e18));
+        spoke.mint(1e6, 0, lp2);
+        vm.stopPrank();
+
+        ct.setRate(1.0001e18);
+        assertGt(spoke.maxMint(), 0, "mints reopen once the spoke is whole");
+    }
+
+    function test_yieldManager_harvestBatchSumsEverySource() public {
+        MockRateVault _ct2 = new MockRateVault(address(usdt));
+        ConcreteSpoke _spoke2 = _deploySpoke(_ct2);
+        _addSpoke(_spoke2);
+        _whitelist(_spoke2, lp1);
+
+        _coreDeposit(alice, 1_000e6);
+        _mint(lp1, 1_000e6);
+        _ct2.mint(lp1, 1_000e6);
+        vm.startPrank(lp1);
+        _ct2.approve(address(_spoke2), 1_000e6);
+        _spoke2.mint(1_000e6, 0, lp1);
+        vm.stopPrank();
+        deal(address(usdt), address(treasury), usdt.balanceOf(address(treasury)) + 10e6);
+        ct.setRate(1.1e18);
+        _ct2.setRate(1.2e18);
+
+        address[] memory _sources = new address[](3);
+        _sources[1] = address(spoke);
+        _sources[2] = address(_spoke2);
+        uint256[] memory _amounts = new uint256[](3);
+        _amounts[0] = _amounts[1] = _amounts[2] = type(uint256).max;
         vm.prank(keeper);
-        assertEq(yieldManager.harvest(address(usdt), 0), 10e18);
+        assertEq(yieldManager.harvestBatch(_sources, _amounts), 310e18);
+        assertEq(yieldManager.buffer(), 310e18);
+        assertEq(gateway.spokeSupply(address(spoke)), 1_100e18);
+        assertEq(gateway.spokeSupply(address(_spoke2)), 1_200e18);
+        assertEq(gateway.totalSpokeSupply(), 2_300e18);
+        assertEq(treasury.reserve(), gateway.coreSupply(), "core exactly backed");
+    }
+
+    /// @dev A source that cannot be valued reverts the batch; leaving it out harvests the others
+    function test_yieldManager_harvestBatchWithoutUnreadableSource() public {
+        _coreDeposit(alice, 1_000e6);
+        _mint(lp1, 1_000e6);
+        ct.setRate(1.1e18);
+        vm.warp(block.timestamp + 2 days); // core feed stale
+        address[] memory _both = new address[](2);
+        _both[1] = address(spoke);
+        uint256[] memory _all = new uint256[](2);
+        _all[0] = _all[1] = type(uint256).max;
+
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(usdtOracle)));
+        yieldManager.harvestBatch(_both, _all);
+
+        address[] memory _spokeOnly = new address[](1);
+        _spokeOnly[0] = address(spoke);
+        uint256[] memory _one = new uint256[](1);
+        _one[0] = type(uint256).max;
+        vm.prank(keeper);
+        assertEq(yieldManager.harvestBatch(_spokeOnly, _one), 100e18, "spoke harvested");
+    }
+
+    /// @dev The core's yield only counts the supply it backs, so spoke supply does not hide it
+    function test_yieldManager_harvestCoreExcludesSpokeSupply() public {
+        _coreDeposit(alice, 1_000e6);
+        _mint(lp1, 1_000e6);
+        deal(address(usdt), address(treasury), usdt.balanceOf(address(treasury)) + 10e6); // core yield
+
+        assertEq(yieldManager.harvestable(address(0)), 10e18);
+        vm.prank(keeper);
+        assertEq(yieldManager.harvest(address(0), type(uint256).max), 10e18);
+        assertEq(yieldManager.buffer(), 10e18);
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -952,7 +1153,7 @@ contract ConcreteSpokeTest is ConcreteSpokeBase {
         vm.prank(alice);
         assertEq(gateway.redeem(address(usdt), 100e18, 0, alice), 100e6);
         deal(address(usdt), address(treasury), usdt.balanceOf(address(treasury)) + 10e6);
-        assertEq(yieldManager.harvestable(), 10e18);
+        assertEq(yieldManager.harvestable(address(0)), 10e18);
     }
 
     /// @dev The spoke and the Gateway read the PeggedToken's Treasury live: after a swap, sanctions come from the new

@@ -9,8 +9,9 @@ const {PeggedToken, Treasury, YieldDistributor, YieldManager} = ContractAliases
 /**
  * Deploy YieldManager for VUSD: non-upgradeable keeper periphery
  *
- * Keeps an existing deployment; to replace one, pass `redeploy = true` locally. Queues UMM_ROLE (Treasury)
- * and DISTRIBUTOR_ROLE (YieldDistributor) for it and revokes both from a replaced deployment.
+ * Keeps an existing deployment, except one without `harvestBatch`: that one predates the Gateway harvest and can only
+ * call the removed `Treasury.harvest`, so it is replaced. Queues UMM_ROLE (Treasury) and DISTRIBUTOR_ROLE
+ * (YieldDistributor) for it and revokes both from a replaced deployment.
  *
  * Requires a YieldDistributor whose `distribute` pulls accrued yield first (else it reverts
  * DripExceedsCap), so deploy with its tags: `--tags YieldDistributor,VetBTCYieldDistributor,
@@ -30,14 +31,17 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
 
   const {address: peggedTokenAddress} = await get(PeggedToken)
   const {address: yieldDistributorAddress} = await get(YieldDistributor)
-  const previousAddress = (await getOrNull(YieldManager))?.address
+  const previous = await getOrNull(YieldManager)
+  const previousAddress = previous?.address
+  const redeploy = !!previous && !previous.abi.some((f: {name?: string}) => f.name === 'harvestBatch')
 
-  const {address: yieldManagerAddress} = await deployNonUpgradeable(hre, YieldManager, [
-    peggedTokenAddress,
-    yieldDistributorAddress,
-    maxAprBps,
-    absoluteCap,
-  ])
+  const {address: yieldManagerAddress} = await deployNonUpgradeable(
+    hre,
+    YieldManager,
+    [peggedTokenAddress, yieldDistributorAddress, maxAprBps, absoluteCap],
+    YieldManager,
+    redeploy
+  )
 
   const ummRole = await read(Treasury, 'UMM_ROLE')
   const distributorRole = await read(YieldDistributor, 'DISTRIBUTOR_ROLE')

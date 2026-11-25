@@ -15,7 +15,6 @@ interface ITreasury {
     function getMintPrice(address token_) external view returns (uint256 _mintPrice, uint256 _unitPrice);
     function getPrice(address token_) external view returns (uint256 _latestPrice, uint256 _unitPrice);
     function getRedeemPrice(address token_) external view returns (uint256 _redeemPrice, uint256 _unitPrice);
-    function harvest(address token_, address receiver_) external returns (uint256);
     function hasRole(bytes32 role, address account) external view returns (bool);
     function isSanctioned(address account_) external view returns (bool);
     function isWhitelistedToken(address token_) external view returns (bool);

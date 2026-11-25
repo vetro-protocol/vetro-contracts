@@ -38,7 +38,6 @@ contract TreasurySolvencyHandler is Test {
     uint256 public ghost_donated;
     uint256 public ghost_capUpdates;
     uint256 public ghost_capRejections;
-    uint256 public ghost_harvestCapRejections;
     // A deposit that passed the cap check with net deposits ending above the cap, or was refused while within it
     uint256 public ghost_capViolations;
     // Independent model of Treasury.netDeposited: up on deposits, down on what redemptions pay out
@@ -162,22 +161,10 @@ contract TreasurySolvencyHandler is Test {
         ghost_priceTicks++;
     }
 
-    // Re-mints the harvested collateral through the Gateway, as YieldManager does. The re-deposit is held to the cap
-    // like any deposit; when it is refused, the harvested collateral stays with the handler.
+    // Mints the core's yield through the Gateway, as YieldManager does. No collateral moves, so net deposits and the
+    // cap are untouched.
     function harvest() external {
-        uint256 _harvested = treasury.harvest(address(collateral), address(this));
-        if (_harvested == 0) return;
-        ghost_harvested += _harvested;
-        bool _overCap = ghost_netDeposited + _harvested > treasury.depositCap(address(collateral));
-        collateral.approve(address(gateway), _harvested);
-        try gateway.deposit(address(collateral), _harvested, 0, yieldSink) {
-            ghost_netDeposited += _harvested;
-            if (_overCap) ghost_capViolations++;
-        } catch (bytes memory reason) {
-            _revertUnlessCapExceeded(reason);
-            ghost_harvestCapRejections++;
-            if (!_overCap) ghost_capViolations++;
-        }
+        ghost_harvested += gateway.harvest(address(0), yieldSink, type(uint256).max);
     }
 
     function _reduceNetDeposited(uint256 amount) internal {
@@ -289,7 +276,6 @@ contract TreasurySolvencyInvariantTest is Test {
         console.log("priceTicks:", handler.ghost_priceTicks());
         console.log("capUpdates:", handler.ghost_capUpdates());
         console.log("capRejections:", handler.ghost_capRejections());
-        console.log("harvestCapRejections:", handler.ghost_harvestCapRejections());
         console.log("donated:", handler.ghost_donated());
         console.log("netDeposited:", treasury.netDeposited(address(collateral)));
         console.log("reserve:  ", treasury.reserve());
