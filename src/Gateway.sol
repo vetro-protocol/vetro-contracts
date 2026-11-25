@@ -225,6 +225,8 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @inheritdoc IGateway
     function mintToAMO(uint256 amount_, address receiver_) external onlyRole(UMM_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
+        _checkNotSanctioned(msg.sender);
+        if (receiver_ != msg.sender) _checkNotSanctioned(receiver_);
 
         GatewayStorage storage $ = _getGatewayStorage();
         // Check AMO mint limit

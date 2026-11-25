@@ -1915,6 +1915,32 @@ contract GatewayTest is Test {
         assertEq(VUSD.balanceOf(alice), _vusd - 1e18);
     }
 
+    function test_mintToAMO_revertIfCallerOrReceiverSanctioned() public {
+        MockSanctionsList _sanctions = _setMockSanctionsList();
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(100e18);
+
+        _sanctions.setSanctioned(bob, true);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, bob));
+        gateway.mintToAMO(10e18, bob);
+
+        _sanctions.setSanctioned(address(this), true);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.Sanctioned.selector, address(this)));
+        gateway.mintToAMO(10e18, alice);
+    }
+
+    function test_burnFromAMO_allowedIfCallerSanctioned() public {
+        MockSanctionsList _sanctions = _setMockSanctionsList();
+        vm.prank(admin);
+        gateway.updateAmoMintLimit(100e18);
+        gateway.mintToAMO(10e18, address(this));
+
+        _sanctions.setSanctioned(address(this), true);
+        gateway.burnFromAMO(10e18);
+        assertEq(gateway.amoSupply(), 0);
+        assertEq(VUSD.balanceOf(address(this)), 0);
+    }
+
     function test_requestRedeem_revertIfSanctioned() public {
         uint256 _vusd = 100e18;
         mintPeggedToken(alice, _vusd);

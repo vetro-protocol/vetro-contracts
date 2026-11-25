@@ -175,6 +175,7 @@ Gateway.mintToAMO(uint256 amount_, address receiver_)
 
 - Mints VUSD without collateral for AMO (market-making) operations
 - Limited by `amoMintLimit` (check `Gateway.maxAmoMint()` for remaining capacity)
+- Reverts with `Sanctioned` if the caller or `receiver_` is on the Treasury sanctions list
 - **When**: Providing liquidity to DEX pools or lending markets
 
 #### 2.2 Burn VUSD from AMO
@@ -185,6 +186,7 @@ Gateway.burnFromAMO(uint256 amount_)
 
 - Burns VUSD from caller's balance, reducing AMO supply
 - Cannot burn more than current `amoSupply`
+- Exempt from the sanctions list: burning only reduces supply and AMO debt. Blocking it would leave unbacked AMO supply outstanding
 - **When**: Removing AMO liquidity, reducing outstanding AMO-minted supply
 
 #### 2.3 Harvest Excess Yield from Treasury
@@ -196,6 +198,7 @@ Treasury.harvest(address token_, address receiver_)
 - Withdraws excess reserves (reserve value - total VUSD supply) as profit
 - Only available when reserve exceeds backed supply
 - Returns the amount harvested
+- Reverts with `Sanctioned` if `receiver_` is on the sanctions list
 - **When**: After vault yield has been realized (see Yield Harvesting Workflow below)
 
 ---
