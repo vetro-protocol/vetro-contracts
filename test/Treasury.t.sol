@@ -16,6 +16,19 @@ import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 import {MockSwapper} from "test/mocks/MockSwapper.sol";
 import {MockSanctionsList} from "test/mocks/MockSanctionsList.sol";
 
+/// @dev Stands in for the Gateway: nothing is backed outside the Treasury, so all supply is core
+contract MockCoreGateway {
+    PeggedToken private immutable _token;
+
+    constructor(PeggedToken token_) {
+        _token = token_;
+    }
+
+    function coreSupply() external view returns (uint256) {
+        return _token.totalSupply();
+    }
+}
+
 contract TreasuryTest is Test {
     using Math for uint256;
 
@@ -48,9 +61,9 @@ contract TreasuryTest is Test {
         // The tests act as keeper and maintainer
         treasury.grantRole(treasury.KEEPER_ROLE(), address(this));
         treasury.grantRole(treasury.MAINTAINER_ROLE(), address(this));
+        // No supply is backed outside the Treasury (no AMO, no spokes), so all of it is core
+        gateway = address(new MockCoreGateway(VUSD));
         VUSD.updateGateway(gateway);
-        // Mock the amoSupply() call to return 0
-        vm.mockCall(gateway, abi.encodeWithSignature("amoSupply()"), abi.encode(0));
 
         token = new MockERC20();
         mockVault = new MockYieldVault(address(token));

@@ -39,6 +39,9 @@ export const NetworkAddresses: {[chainId: number]: NetworkAddresses} = {
     CBBTC: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
     HEMIBTC: '0x06ea695B91700071B161A434fED42D1DcbAD9f00',
 
+    // Concrete ctDefiUSDT (ERC4626 on USDT)
+    CTDEFIUSDT: '0x0E609b710da5e0AA476224b6c0e5445cCc21251E',
+
     VETRO_VAULT_WBTC: '0x30c410D92e54B2b492D725D6CEBed98891817C91',
     VETRO_VAULT_CBBTC: '0xD954d72D885f8409bCBe3f15ad2fc3EcA4a5Ba33',
     VETRO_VAULT_HemiBTC: '0x54b8a87c9f85Dd2515CaAE1fad2dd85199900076',
@@ -161,6 +164,21 @@ export const YieldManagerConfig = {
 }
 
 // =============================================================================
+// RESERVE SPOKE CONFIGURATION
+// =============================================================================
+
+// One isolated spoke per yield-bearing collateral, each its own entry point. Its restricted functions are permissioned
+// by `accessManager` (whitelist behind a delay, shutdown and force exits for Concrete); the
+// script skips until it is set. The Gateway admin sets `mintLimit`; 0 leaves the Gateway's as it is, and a new spoke
+// takes no mints until one is set.
+export const SpokeConfig = {
+  ctDefiUSDT: {
+    accessManager: '',
+    mintLimit: parseEther('0'),
+  },
+}
+
+// =============================================================================
 // CONTRACT ALIASES (for hardhat-deploy)
 // =============================================================================
 
@@ -175,6 +193,7 @@ export const ContractAliases = {
   ChainlinkFeedAdapter: 'ChainlinkFeedAdapter',
   DerivedPriceFeedAdapter: 'DerivedPriceFeedAdapter',
   SanctionsList: 'SanctionsList',
+  ConcreteSpoke: 'ConcreteSpoke',
 
   // vetBTC ecosystem
   VetBTC: 'VetBTC',
@@ -219,6 +238,10 @@ export const UpgradableContracts: {[key: string]: ContractConfig} = {
   YieldDistributor: {
     alias: 'YieldDistributor',
     contract: 'YieldDistributor',
+  },
+  ConcreteSpoke: {
+    alias: ContractAliases.ConcreteSpoke,
+    contract: 'ConcreteSpoke',
   },
 
   // vetBTC ecosystem

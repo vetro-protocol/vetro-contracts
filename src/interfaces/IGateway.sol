@@ -5,6 +5,10 @@ import {IPeggedToken} from "./IPeggedToken.sol";
 
 /// @title IGateway - Interface for PeggedToken Gateway
 interface IGateway {
+    /// @notice Registers a spoke (DEFAULT_ADMIN). It mints nothing until its mint limit is raised.
+    /// @param spoke_ Spoke to add
+    function addSpoke(address spoke_) external;
+
     /// @notice Adds address to instant redeem whitelist
     /// @param account_ Address to whitelist
     function addToInstantRedeemWhitelist(address account_) external;
@@ -15,13 +19,30 @@ interface IGateway {
     /// @notice Returns current AMO-minted supply tracked by treasury
     function amoSupply() external view returns (uint256);
 
+    /// @notice Supply the Treasury backs: total supply less spoke supply (the AMO's included)
+    function coreSupply() external view returns (uint256);
+
     /// @notice Burns AMO-minted PeggedToken to reduce AMO supply
     /// @dev Exempt from the sanctions list: burning only reduces supply and AMO debt
     /// @param amount_ Amount of PeggedToken to burn
     function burnFromAMO(uint256 amount_) external;
 
+    /// @notice Burns PeggedToken from `account_` against the calling spoke's supply (spoke only). The spoke decides
+    /// who may redeem and pays them; the burn needs no allowance and never exceeds the spoke's supply. Neither party
+    /// may be sanctioned.
+    /// @param account_ Holder to burn from
+    /// @param receiver_ Who the spoke pays for the burn, reported by the spoke for screening
+    /// @param amount_ PeggedToken amount to burn
+    function burnFromSpoke(address account_, address receiver_, uint256 amount_) external;
+
     /// @notice Cancels redeem request and returns locked peggedToken to user
     function cancelRedeemRequest() external;
+
+    /// @notice Lowers a spoke's mint limit (DEFAULT_ADMIN). Zero, or anything at or below its supply, stops its mints
+    /// and never blocks its redeems.
+    /// @param spoke_ Registered spoke
+    /// @param newLimit_ New limit in PeggedToken, below the current one
+    function decreaseSpokeMintLimit(address spoke_, uint256 newLimit_) external;
 
     /// @notice Deposits tokens to receive PeggedToken
     /// @param tokenIn_ Token to deposit
@@ -43,6 +64,14 @@ interface IGateway {
     /// @return claimableAt Timestamp when request can be claimed
     function getRedeemRequest(address user_) external view returns (uint256 amountLocked, uint256 claimableAt);
 
+    /// @notice Gets all registered spokes
+    function getSpokes() external view returns (address[] memory);
+
+    /// @notice Raises a spoke's mint limit (DEFAULT_ADMIN)
+    /// @param spoke_ Registered spoke
+    /// @param newLimit_ New limit in PeggedToken, above the current one
+    function increaseSpokeMintLimit(address spoke_, uint256 newLimit_) external;
+
     /// @notice Checks if address is whitelisted for instant redeem/withdraw
     /// @param account_ Address to check
     /// @return True if whitelisted
@@ -58,7 +87,7 @@ interface IGateway {
     /// @param tokenIn_ Token to deposit
     function maxDeposit(address tokenIn_) external view returns (uint256);
 
-    /// @notice Returns remaining mint capacity
+    /// @notice Returns remaining core mint capacity. Spoke mints are bound by their own limit.
     function maxMint() external view returns (uint256);
 
     /// @notice Returns maximum PeggedToken amount owner can redeem
@@ -83,6 +112,13 @@ interface IGateway {
     /// @param token_ Token address
     /// @return The mint fee in BPS
     function mintFee(address token_) external view returns (uint256);
+
+    /// @notice Mints PeggedToken against the calling spoke's collateral (spoke only). Bound by the spoke's mint
+    /// limit, and refused when it would leave the spoke's reserve below its supply. Neither party may be sanctioned.
+    /// @param payer_ Who paid the spoke for the mint, reported by the spoke for screening
+    /// @param receiver_ Address to receive the minted PeggedToken
+    /// @param amount_ PeggedToken amount to mint
+    function mintFromSpoke(address payer_, address receiver_, uint256 amount_) external;
 
     /// @notice Returns current mint limit in PeggedToken
     function mintLimit() external view returns (uint256);
@@ -146,6 +182,11 @@ interface IGateway {
     /// @param account_ Address to remove from whitelist
     function removeFromInstantRedeemWhitelist(address account_) external;
 
+    /// @notice Unregisters a spoke (DEFAULT_ADMIN). Only at zero supply: removal ends its burns, which would
+    /// cut its holders' exit and leave its supply on the core. Retire a spoke by stopping its mints, redeeming the
+    /// remaining supply through it, then removing it.
+    function removeSpoke(address spoke_) external;
+
     /// @notice Requests a redeem with delay period (locks peggedToken in contract)
     /// @param peggedTokenAmount_ Amount of peggedToken to lock in request
     function requestRedeem(uint256 peggedTokenAmount_) external;
@@ -153,6 +194,16 @@ interface IGateway {
     /// @notice Sets the withdrawal delay feature enabled or disabled
     /// @param enabled_ The intended state for withdrawal delay
     function setWithdrawalDelayEnabled(bool enabled_) external;
+
+    /// @notice Returns the cap on a spoke's supply for its mints
+    function spokeMintLimit(address spoke_) external view returns (uint256);
+
+    /// @notice Returns the PeggedToken supply a spoke backs: minted through it, net of burns through it
+    function spokeSupply(address spoke_) external view returns (uint256);
+
+    /// @notice Returns the supply all spokes back: the AMO's (a special purpose spoke for now) plus every registered
+    /// spoke's. Not the sum of `spokeSupply` over `getSpokes()`, which leaves out the AMO.
+    function totalSpokeSupply() external view returns (uint256);
 
     /// @notice Returns treasury contract address
     function treasury() external view returns (address);

@@ -455,6 +455,48 @@ StakingVault.updateVaultRewards(address vaultRewards_)
 StakingVault.updateYieldDistributor(address distributor_)
 ```
 
+### 8. Spokes (Gateway + ConcreteSpoke)
+
+#### 8.1 Gateway Spoke Admin (DEFAULT_ADMIN)
+
+```
+Gateway.addSpoke(address spoke_)
+Gateway.increaseSpokeMintLimit(address spoke_, uint256 newLimit_)
+Gateway.decreaseSpokeMintLimit(address spoke_, uint256 newLimit_)
+Gateway.removeSpoke(address spoke_)
+```
+
+- A new spoke's LPs mint nothing until its limit is raised
+- Lowering the limit to 0 stops the spoke's mints; redeems stay open
+- `removeSpoke` needs zero supply (8.3)
+
+#### 8.2 ConcreteSpoke AccessManager Configuration
+
+The spoke's `restricted` functions are permissioned in its AccessManager, deployed separately. Redeems cannot be
+stopped through the AccessManager without a delay only when it is configured as below. With D the whitelist delay:
+
+- `setWhitelisted`: a whitelist role with execution delay D (holder to be agreed with Concrete)
+- `setShutdown`, `forceRedeem` and `forceUnstakeAndRedeem`: a Concrete role, no delay
+- Grant delay of at least D on the Concrete and whitelist roles
+- Target admin delay of at least D on the spoke
+- An execution delay on the AccessManager admin, so grants, revokes and role admin changes wait too
+- Raising a grant or target admin delay from 0 only takes effect after the AccessManager's 5-day `minSetback`:
+  whitelist no LP until the getters show the new delays on chain
+
+Outside the AccessManager, the spoke's ProxyAdmin (Safe), the VUSD blacklist (6.1), the Treasury sanctions list and
+`PeggedToken.updateGateway` (6.2) can still stop a given exit, as can removing the spoke from the StakingVault's
+instant withdraw whitelist (7.2, sVUSD exit only).
+
+#### 8.3 Retiring a Spoke
+
+1. Lower its Gateway limit to 0, which stops its mints
+2. Have a whitelisted LP redeem the spoke's remaining `Gateway.spokeSupply` through the spoke in one call (not
+   possible while it is shut down). A remainder worth less than one share unit cannot be redeemed on its own: reopen
+   mints, have an LP mint, then redeem the whole supply in one call
+3. `Gateway.removeSpoke(spoke)`
+
+Shares left in the spoke after removal (rounding remainders and yield above its supply) have no way out.
+
 ---
 
 ## Yield Harvesting Workflow
