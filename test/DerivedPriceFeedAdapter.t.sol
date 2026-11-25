@@ -149,6 +149,40 @@ contract DerivedPriceFeedAdapterTest is Test {
         assertEq(answer, expected);
     }
 
+    function test_latestRoundData_revertIfEitherTimestampZero() public {
+        vm.warp(1_000_000);
+        baseFeed.setUpdatedAt(0);
+        quoteFeed.setUpdatedAt(999_000);
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+
+        baseFeed.setUpdatedAt(999_000);
+        quoteFeed.setUpdatedAt(0);
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+    }
+
+    function test_latestRoundData_revertIfEitherTimestampInFuture() public {
+        vm.warp(1_000_000);
+        baseFeed.setUpdatedAt(block.timestamp);
+        quoteFeed.setUpdatedAt(block.timestamp + 1 days);
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+
+        baseFeed.setUpdatedAt(block.timestamp + 1);
+        quoteFeed.setUpdatedAt(block.timestamp);
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestRoundData();
+        vm.expectRevert(DerivedPriceFeedAdapter.InvalidTimestamp.selector);
+        adapter.latestTimestamp();
+    }
+
     // ── getRoundData ─────────────────────────────────────────────────────────
 
     function test_getRoundData_reverts() public {

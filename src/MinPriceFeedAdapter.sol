@@ -20,6 +20,7 @@ contract MinPriceFeedAdapter is AggregatorV2V3Interface {
     error InvalidPrice();
     error OutputDecimalsTooLow();
     error HistoricalRoundsNotSupported();
+    error InvalidTimestamp();
 
     /// @notice First source (e.g. the primary Chainlink feed).
     AggregatorV2V3Interface public immutable feedA;
@@ -75,8 +76,8 @@ contract MinPriceFeedAdapter is AggregatorV2V3Interface {
     {
         (, int256 _priceA,, uint256 _updatedAtA,) = feedA.latestRoundData();
         (, int256 _priceB,, uint256 _updatedAtB,) = feedB.latestRoundData();
-        uint256 _minUpdatedAt = _updatedAtA < _updatedAtB ? _updatedAtA : _updatedAtB;
-        return (1, _lower(_priceA, _priceB), _minUpdatedAt, _minUpdatedAt, 1);
+        _updatedAt = _minUpdatedAt(_updatedAtA, _updatedAtB);
+        return (1, _lower(_priceA, _priceB), _updatedAt, _updatedAt, 1);
     }
 
     /// @inheritdoc AggregatorV3Interface
@@ -96,7 +97,7 @@ contract MinPriceFeedAdapter is AggregatorV2V3Interface {
     function latestTimestamp() external view returns (uint256) {
         (,,, uint256 _updatedAtA,) = feedA.latestRoundData();
         (,,, uint256 _updatedAtB,) = feedB.latestRoundData();
-        return _updatedAtA < _updatedAtB ? _updatedAtA : _updatedAtB;
+        return _minUpdatedAt(_updatedAtA, _updatedAtB);
     }
 
     /// @inheritdoc AggregatorInterface
@@ -124,5 +125,13 @@ contract MinPriceFeedAdapter is AggregatorV2V3Interface {
         int256 _b = (priceB_ * _scaleUp) / _scaleDownB;
         _result = _a < _b ? _a : _b;
         if (_result <= 0) revert InvalidPrice();
+    }
+
+    /// @dev Checks each source before the min(): a valid timestamp must not hide a zero or future one.
+    function _minUpdatedAt(uint256 updatedAtA_, uint256 updatedAtB_) private view returns (uint256) {
+        if (updatedAtA_ == 0 || updatedAtA_ > block.timestamp || updatedAtB_ == 0 || updatedAtB_ > block.timestamp) {
+            revert InvalidTimestamp();
+        }
+        return updatedAtA_ < updatedAtB_ ? updatedAtA_ : updatedAtB_;
     }
 }
