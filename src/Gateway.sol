@@ -78,6 +78,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     event AddedToInstantRedeemWhitelist(address indexed account);
     event BurnedFromAMO(uint256 amountBurned, uint256 newAmoSupply);
     event Deposit(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
+    event Harvested(address indexed source, address indexed receiver, uint256 amount);
     event MintFeeUpdated(address indexed token, uint256 previousMintFee, uint256 newMintFee);
     event MintLimitUpdated(uint256 previousMintLimit, uint256 newMintLimit);
     event MintedToAMO(address indexed receiver, uint256 amountMinted, uint256 newAmoSupply);
@@ -229,6 +230,29 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         }
         _executeDeposit(tokenIn_, amountIn_, _peggedTokenAmount, receiver_);
         return _peggedTokenAmount;
+    }
+
+    /**
+     * @inheritdoc IGateway
+     * @dev No collateral moves: the core's yield is the Treasury's reserve above the core supply, and a spoke's is its
+     * reserve above its supply, which joins that supply. Not bound by the mint limits, which cap user mints, but it
+     * counts against them: core yield can use up `mintLimit` room, and a spoke's supply can grow past its
+     * `spokeMintLimit`.
+     */
+    function harvest(address source_, address receiver_, uint256 amount_)
+        external
+        nonReentrant
+        onlyRole(UMM_ROLE)
+        returns (uint256 _minted)
+    {
+        if (receiver_ == address(0)) revert AddressIsZero();
+        _checkNotSanctioned(receiver_);
+        GatewayStorage storage $ = _getGatewayStorage();
+        _minted = Math.min(amount_, _harvestable($, source_));
+        if (_minted == 0) return 0;
+        if (source_ != address(0)) $.spokeSupply[source_] += _minted;
+        $.peggedToken.mint(receiver_, _minted);
+        emit Harvested(source_, receiver_, _minted);
     }
 
     /// @inheritdoc IGateway
@@ -418,6 +442,11 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     function getRedeemRequest(address user_) external view returns (uint256 _amountLocked, uint256 _claimableAt) {
         RedeemRequest memory _request = _getGatewayStorage().redeemRequests[user_];
         return (_request.amountLocked, _request.claimableAt);
+    }
+
+    /// @inheritdoc IGateway
+    function harvestable(address source_) external view returns (uint256) {
+        return _harvestable(_getGatewayStorage(), source_);
     }
 
     /// @notice Check if address is whitelisted for instant redeem/withdraw
@@ -848,7 +877,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      * @dev Reverts if a redemption burn left totalSupply below totalSpokeSupply (the AMO's included). AMO-minted
      * tokens are backed by the AMO position and retired via burnFromAMO; other spoke supply is backed by its spoke and
      * retired through it. Only the Gateway burns PeggedToken, so checking every redemption keeps totalSpokeSupply <=
-     * totalSupply, which maxMint, Treasury and YieldManager rely on. A core redemption that would dip into spoke
+     * totalSupply, which maxMint and the core's harvestable rely on. A core redemption that would dip into spoke
      * supply (e.g. core holders past the core reserve after yield drift) reverts here.
      * Note: amoSupply is meant to stay a very small fraction of totalSupply, and governance sizes amoMintLimit
      * (and unwinds the AMO via burnFromAMO) as totalSupply changes.
@@ -865,6 +894,21 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 _totalSupply = $.peggedToken.totalSupply();
         uint256 _spokeSupply = _totalSpokeSupply($);
         return _totalSupply > _spokeSupply ? _totalSupply - _spokeSupply : 0;
+    }
+
+    /// @dev Yield of the core (`address(0)`) or of a registered spoke. Reverts when the source cannot be valued.
+    function _harvestable(GatewayStorage storage $, address source_) private view returns (uint256) {
+        uint256 _reserve;
+        uint256 _supply;
+        if (source_ == address(0)) {
+            _reserve = ITreasury(treasury()).reserve();
+            _supply = _coreSupply($);
+        } else {
+            if (!$.spokes.contains(source_)) revert InvalidSpoke(source_);
+            _reserve = ISpoke(source_).reserve();
+            _supply = $.spokeSupply[source_];
+        }
+        return _reserve > _supply ? _reserve - _supply : 0;
     }
 
     /// @dev Helper function to get peggedToken from storage

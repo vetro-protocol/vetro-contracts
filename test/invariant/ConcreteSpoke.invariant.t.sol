@@ -32,11 +32,12 @@ struct HandlerEnv {
 
 /// @notice Random spoke and core flows side by side over two spokes: LP mints to VUSD and to sVUSD, redeems from VUSD
 /// and from sVUSD, force exits from both, mint stops (limit 0) and shutdowns, core mints and redeems (including spoke
-/// VUSD sent to the core), AMO mints and burns, transfers, share rate steps and jumps, a spoke's share rate
+/// VUSD sent to the core), AMO mints and burns, harvests, transfers, share rate steps and jumps, a spoke's share rate
 /// reverting (Concrete paused), core yield, share donations, the USDT feed moving off par or going stale, time passing.
 /// One actor is not whitelisted on the spokes.
 /// @dev Reverts are swallowed so sequences keep going, so the properties that matter are tracked as ghosts instead:
-/// a call that should succeed (within the max views) and reverted, a call that should revert and went through.
+/// a call that should succeed (within the max views) and reverted, a call that should revert and went through, a
+/// harvest that minted other than what was there.
 contract ConcreteSpokeHandler is Test {
     Gateway internal gateway;
     PeggedToken internal vusd;
@@ -55,15 +56,23 @@ contract ConcreteSpokeHandler is Test {
 
     uint256[SPOKE_COUNT] public ghost_spokeMinted;
     uint256[SPOKE_COUNT] public ghost_spokeBurned;
+    uint256[SPOKE_COUNT] public ghost_spokeHarvested;
     // A spoke mint that left the spoke worth less than its supply, valued from the share balance and rate rather than
     // the spoke's own reserve
     uint256 public ghost_undercollateralizedMints;
     // A spoke mint that minted other than the shares' value at the share price, computed here
     uint256 public ghost_mintMismatches;
-    // A mint within the spoke's max view, or a redeem the spoke can pay, that reverted
+    // A harvest that minted other than the source's yield measured before it (capped by the amount), or went through
+    // for a source that cannot be valued
+    uint256 public ghost_harvestMismatches;
+    // After a full harvest: core reserve not equal to core supply, a spoke that was whole not at its reserve, or a
+    // second harvest of the source minting anything; after a spoke harvest, the core's excess changed
+    uint256 public ghost_postHarvestViolations;
+    // A mint within the spoke's max view, a redeem the spoke can pay, or a harvest, that reverted
     uint256 public ghost_livenessFailures;
     // A spoke call that went through for a non-whitelisted account or during a shutdown
     uint256 public ghost_unexpectedSuccesses;
+    uint256 public ghost_harvests;
     uint256 public ghost_rateReverts;
 
     bool[SPOKE_COUNT] internal paused;
@@ -235,7 +244,7 @@ contract ConcreteSpokeHandler is Test {
         vm.stopPrank();
     }
 
-    /// @dev Any VUSD, spoke-minted or AMO included, can be redeemed at the core
+    /// @dev Any VUSD, spoke-minted, AMO or harvested included, can be redeemed at the core
     function coreRedeem(uint256 actorSeed_, uint256 amount_) external {
         address _holder = holders[actorSeed_ % holders.length];
         uint256 _balance = vusd.balanceOf(_holder);
@@ -267,6 +276,60 @@ contract ConcreteSpokeHandler is Test {
         amount_ = bound(amount_, 1, _balance);
         vm.prank(_from);
         vusd.transfer(_to, amount_);
+    }
+
+    /*/////////////////////////////////////////////////////////////
+                                HARVEST
+    /////////////////////////////////////////////////////////////*/
+
+    /// @dev One source at a time (the core or a spoke), all of its yield or part of it. The expected amount is
+    /// measured independently before the call, then the state after it is checked.
+    function harvest(uint256 sourceSeed_, uint256 amount_, bool all_) external {
+        uint256 _pick = sourceSeed_ % (SPOKE_COUNT + 1);
+        bool _core = _pick == SPOKE_COUNT;
+        address _source = _core ? address(0) : address(spokes[_pick]);
+        (bool _readable, uint256 _available) = _core ? _coreExcess() : _spokeSurplus(_pick);
+        (bool _coreReadable, uint256 _coreBefore) = _coreExcess();
+        bool _whole = !_core && _readable && _spokeWhole(_pick);
+        uint256 _amount = all_ ? type(uint256).max : bound(amount_, 0, _available + 1e18);
+
+        vm.prank(umm);
+        uint256 _minted;
+        try gateway.harvest(_source, umm, _amount) returns (uint256 _out) {
+            _minted = _out;
+        } catch {
+            // Only a source that cannot be valued reverts
+            if (_readable) ghost_livenessFailures++;
+            return;
+        }
+        ghost_harvests++;
+        if (!_readable || _minted != Math.min(_amount, _available)) ghost_harvestMismatches++;
+        if (!_core) ghost_spokeHarvested[_pick] += _minted;
+
+        if (_core) {
+            // All of it leaves the core exactly backed; below par its reserve reads under its supply and stays so
+            uint256 _reserveAfter = treasury.reserve();
+            uint256 _coreSupply = gateway.coreSupply();
+            if (_reserveAfter > _coreSupply && all_) ghost_postHarvestViolations++;
+            if (all_ && _available > 0 && _reserveAfter != _coreSupply) ghost_postHarvestViolations++;
+        } else {
+            if (all_ && _whole && spokes[_pick].reserve() != gateway.spokeSupply(_source)) {
+                ghost_postHarvestViolations++;
+            }
+            // A spoke's yield raises its supply and the total supply together: the core's excess is unchanged
+            if (_coreReadable) {
+                (, uint256 _coreAfter) = _coreExcess();
+                if (_coreAfter != _coreBefore) ghost_postHarvestViolations++;
+            }
+        }
+        if (all_) {
+            vm.prank(umm);
+            try gateway.harvest(_source, umm, type(uint256).max) returns (uint256 _again) {
+                if (_again != 0) ghost_postHarvestViolations++;
+            } catch {
+                ghost_livenessFailures++;
+            }
+        }
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -367,6 +430,28 @@ contract ConcreteSpokeHandler is Test {
             return false;
         }
     }
+
+    function _spokeSurplus(uint256 i_) internal view returns (bool _readable, uint256 _surplus) {
+        uint256 _supply = gateway.spokeSupply(address(spokes[i_]));
+        try spokes[i_].reserve() returns (uint256 _reserve) {
+            return (true, _reserve > _supply ? _reserve - _supply : 0);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    function _spokeWhole(uint256 i_) internal view returns (bool) {
+        return spokes[i_].reserve() >= gateway.spokeSupply(address(spokes[i_]));
+    }
+
+    function _coreExcess() internal view returns (bool _readable, uint256 _excess) {
+        try treasury.reserve() returns (uint256 _reserve) {
+            uint256 _coreSupply = gateway.coreSupply();
+            return (true, _reserve > _coreSupply ? _reserve - _coreSupply : 0);
+        } catch {
+            return (false, 0);
+        }
+    }
 }
 
 contract ConcreteSpokeInvariantTest is ConcreteSpokeBase {
@@ -380,7 +465,7 @@ contract ConcreteSpokeInvariantTest is ConcreteSpokeBase {
     function setUp() public override {
         super.setUp();
 
-        // A second spoke, so the ledger is exercised across spokes
+        // A second spoke, so harvest and the ledger are exercised across spokes
         ct2 = new MockRateVault(address(usdt));
         spoke2 = _deploySpoke(ct2);
         _addSpoke(spoke2);
@@ -458,7 +543,9 @@ contract ConcreteSpokeInvariantTest is ConcreteSpokeBase {
             uint256 _supply = gateway.spokeSupply(address(_spokes[i]));
             _total += _supply;
             assertEq(
-                _supply, SEEDED + handler.ghost_spokeMinted(i) - handler.ghost_spokeBurned(i), "minted less burned"
+                _supply,
+                SEEDED + handler.ghost_spokeMinted(i) + handler.ghost_spokeHarvested(i) - handler.ghost_spokeBurned(i),
+                "minted plus harvested less burned"
             );
         }
         assertEq(gateway.totalSpokeSupply(), gateway.amoSupply() + _total, "total is the AMO plus every spoke");
@@ -491,6 +578,13 @@ contract ConcreteSpokeInvariantTest is ConcreteSpokeBase {
     /// forge-config: default.invariant.depth = 128
     function invariant_spokeCallsRevertWhenTheyMust() public view {
         assertEq(handler.ghost_unexpectedSuccesses(), 0);
+    }
+
+    /// forge-config: default.invariant.runs = 256
+    /// forge-config: default.invariant.depth = 128
+    function invariant_harvestExact() public view {
+        assertEq(handler.ghost_harvestMismatches(), 0, "minted what was there");
+        assertEq(handler.ghost_postHarvestViolations(), 0, "nothing left, nothing over");
     }
 
     /// forge-config: default.invariant.runs = 256

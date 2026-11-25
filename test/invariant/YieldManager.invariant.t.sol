@@ -89,7 +89,7 @@ contract YieldManagerHandler is Test {
         IERC20(token).safeTransfer(address(treasury), amount_);
 
         vm.prank(keeper);
-        ghost_bufferIn += yieldManager.harvest(token, 0);
+        ghost_bufferIn += yieldManager.harvest(address(0), type(uint256).max);
     }
 
     function distributeForApr(uint256 aprBps_) external {

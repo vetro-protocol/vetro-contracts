@@ -83,32 +83,22 @@ contract TreasurySolvencyTest is Test {
         assertEq(treasury.reserve(), amount + yield, "reserve should reflect vault appreciation");
         assertGt(treasury.reserve(), vusd.totalSupply(), "appreciation creates harvestable excess");
 
-        uint256 harvested = treasury.harvest(address(collateral), owner);
-        assertApproxEqAbs(harvested, yield, 1, "harvest should extract the excess");
-        assertApproxEqAbs(treasury.reserve(), vusd.totalSupply(), 1, "reserve returns to backed supply");
+        uint256 harvested = _harvestCore();
+        assertApproxEqAbs(harvested, yield, 1, "harvest should mint the excess");
+        assertEq(treasury.reserve(), vusd.totalSupply(), "reserve returns to backed supply");
     }
 
-    function test_harvest_liquidityAwareVault_paysWhatTheVaultCanRelease() public {
-        _mint(alice, 1_000e18);
-        _simulateVaultYield(100e18);
-
-        // The vault reports only part of the excess as withdrawable: harvest takes that much instead of reverting
-        vault.setLiquidityAwareMaxWithdraw(true);
-        vault.setLiquidCap(40e18);
-        uint256 harvested = treasury.harvest(address(collateral), owner);
-        assertEq(harvested, 40e18, "harvest pays what the vault can release");
-        assertEq(collateral.balanceOf(owner), 40e18);
-        assertApproxEqAbs(treasury.reserve(), vusd.totalSupply() + 60e18, 1, "the rest stays harvestable");
-    }
-
-    function test_harvest_liquidityAwareVault_paysWhatItCanAndKeepsNetDeposited() public {
+    // Harvest moves no collateral, so it needs no vault liquidity and leaves net deposits alone
+    function test_harvest_needsNoVaultLiquidity() public {
         _mint(alice, 1_000e18);
         _simulateVaultYield(100e18);
 
         vault.setLiquidityAwareMaxWithdraw(true);
         vault.setLiquidCap(40e18);
-        assertEq(treasury.harvest(address(collateral), owner), 40e18);
+        assertEq(_harvestCore(), 100e18, "the whole excess");
+        assertEq(collateral.balanceOf(owner), 0, "no collateral leaves");
         assertEq(treasury.netDeposited(address(collateral)), 1_000e18);
+        assertEq(treasury.reserve(), vusd.totalSupply());
     }
 
     function test_redeem_afterVaultYield_reducesNetDepositedByAssets() public {
@@ -122,37 +112,23 @@ contract TreasurySolvencyTest is Test {
         assertEq(treasury.netDeposited(address(collateral)), 60e18, "the 40 paid out, not the 20 shares");
     }
 
-    function test_harvest_revertsWhenTheVaultCannotRelease() public {
-        _mint(alice, 1_000e18);
-        _simulateVaultYield(100e18);
-
-        // maxWithdraw is book value, so harvest asks for the whole excess and the vault reverts
-        vault.setLiquidCap(40e18);
-        vm.expectRevert("MockYieldVaultRealistic: illiquid");
-        treasury.harvest(address(collateral), owner);
-    }
-
     /*//////////////////////////////////////////////////////////////
                         RESERVE UNDER ABOVE-PAR ORACLE
     //////////////////////////////////////////////////////////////*/
 
-    // Harvest during an in-tolerance up-tick and re-mint the excess at par, as YieldManager does.
-    function test_abovePegTick_harvestAndRemint_keepsSupplyBacked() public {
+    // An in-tolerance up-tick is not yield: the reserve is capped at par
+    function test_abovePegTick_harvest_keepsSupplyBacked() public {
         uint256 amount = 1_000e18;
         _mint(alice, amount);
 
         oracle.updatePrice(1.005e8);
-        uint256 harvested = treasury.harvest(address(collateral), owner);
-        if (harvested > 0) {
-            collateral.approve(address(gateway), harvested);
-            gateway.deposit(address(collateral), harvested, 0, owner);
-        }
+        assertEq(_harvestCore(), 0, "an up-tick is not yield");
 
         oracle.updatePrice(1e8);
         assertGe(treasury.reserve(), vusd.totalSupply(), "supply must stay backed once the price returns to par");
     }
 
-    function testFuzz_priceTick_harvestAndRemint_keepsSupplyBacked(uint256 price_, uint256 yield_) public {
+    function testFuzz_priceTick_harvest_keepsSupplyBacked(uint256 price_, uint256 yield_) public {
         price_ = bound(price_, 0.99e8, 1.01e8);
         yield_ = bound(yield_, 0, 100e18);
         _mint(alice, 1_000e18);
@@ -160,18 +136,12 @@ contract TreasurySolvencyTest is Test {
 
         oracle.updatePrice(int256(price_));
         bool hadExcess = treasury.reserve() > vusd.totalSupply();
-        uint256 harvested = treasury.harvest(address(collateral), owner);
+        uint256 harvested = _harvestCore();
         assertLe(harvested, yield_, "harvest must not exceed real yield");
         if (hadExcess) {
-            // Harvest releases the excess measured at the same capped price, leaving only rounding dust
-            assertGe(treasury.reserve(), vusd.totalSupply(), "harvest must not take more than the excess");
-            assertApproxEqAbs(treasury.reserve(), vusd.totalSupply(), 10, "harvest should take the whole excess");
+            assertEq(treasury.reserve(), vusd.totalSupply(), "harvest mints exactly the excess");
         } else {
             assertEq(harvested, 0, "nothing to harvest without excess");
-        }
-        if (harvested > 0) {
-            collateral.approve(address(gateway), harvested);
-            gateway.deposit(address(collateral), harvested, 0, owner);
         }
 
         oracle.updatePrice(1e8);
@@ -182,35 +152,35 @@ contract TreasurySolvencyTest is Test {
                         HARVEST UNDER PEG BAND
     //////////////////////////////////////////////////////////////*/
 
+    /// @dev The core's yield minted through the Gateway, as YieldManager does
+    function _harvestCore() internal returns (uint256) {
+        return gateway.harvest(address(0), owner, type(uint256).max);
+    }
+
     function _collateralHeld() internal view returns (uint256) {
         return collateral.balanceOf(address(treasury)) + vault.convertToAssets(vault.balanceOf(address(treasury)));
     }
 
-    // Harvest and re-mint the collateral through the Gateway, as YieldManager does
-    function _harvestAndRemint() internal returns (uint256 excessBefore, uint256 minted) {
+    function _harvestAndMeasure() internal returns (uint256 excessBefore, uint256 minted) {
         uint256 _reserve = treasury.reserve();
         uint256 _supply = vusd.totalSupply();
         excessBefore = _reserve > _supply ? _reserve - _supply : 0;
-        uint256 _harvested = treasury.harvest(address(collateral), owner);
-        if (_harvested > 0) {
-            collateral.approve(address(gateway), _harvested);
-            minted = gateway.deposit(address(collateral), _harvested, 0, owner);
-        }
+        minted = _harvestCore();
     }
 
-    // Inside the band the Gateway mints at par, so harvest must convert the excess at par too
-    function test_inBandPrice_harvestAndRemint_mintsAtMostExcess() public {
+    // Inside the band deposits mint at par, but harvest mints only the excess the reserve shows at the oracle price
+    function test_inBandPrice_harvest_mintsExactlyExcess() public {
         treasury.updatePegBand(address(collateral), 50);
         _mint(alice, 1_000e18);
         _simulateVaultYield(10e18);
         oracle.updatePrice(0.997e8);
 
-        (uint256 excess, uint256 minted) = _harvestAndRemint();
-        assertLe(minted, excess, "remint must not exceed the excess");
-        assertGe(treasury.reserve(), vusd.totalSupply(), "supply must stay backed at the same price");
+        (uint256 excess, uint256 minted) = _harvestAndMeasure();
+        assertEq(minted, excess, "harvest mints the excess");
+        assertEq(treasury.reserve(), vusd.totalSupply(), "supply exactly backed at the same price");
     }
 
-    function testFuzz_pegBand_harvestAndRemint_mintsAtMostExcess(
+    function testFuzz_pegBand_harvest_mintsExactlyExcess(
         uint256 price_,
         uint256 band_,
         uint256 yield_,
@@ -226,42 +196,25 @@ contract TreasurySolvencyTest is Test {
         _simulateVaultYield(yield_);
         oracle.updatePrice(int256(price_));
 
-        (uint256 excess, uint256 minted) = _harvestAndRemint();
-        assertLe(minted, excess + 2, "remint must not exceed the excess");
-        if (excess > 0) {
-            assertGe(treasury.reserve() + 2, vusd.totalSupply(), "supply must stay backed at the same price");
-        }
-        assertGe(_collateralHeld() + 2, vusd.totalSupply(), "collateral held must cover supply");
+        (uint256 excess, uint256 minted) = _harvestAndMeasure();
+        assertEq(minted, excess, "harvest mints the excess, no mint fee");
+        if (excess > 0) assertEq(treasury.reserve(), vusd.totalSupply(), "supply exactly backed at the same price");
+        assertGe(_collateralHeld(), vusd.totalSupply(), "collateral held must cover supply");
 
         oracle.updatePrice(1e8);
-        assertGe(treasury.reserve() + 2, vusd.totalSupply(), "supply must stay backed once the price returns to par");
+        assertGe(treasury.reserve(), vusd.totalSupply(), "supply must stay backed once the price returns to par");
     }
 
-    // Below the floor the Gateway mints at the oracle price, so one harvest takes the whole excess
-    function test_belowFloorPrice_harvestAndRemint_takesWholeExcess() public {
+    // Below the floor one harvest takes the whole excess
+    function test_belowFloorPrice_harvest_takesWholeExcess() public {
         treasury.updatePegBand(address(collateral), 10);
         _mint(alice, 1_000e18);
         _simulateVaultYield(10e18);
         oracle.updatePrice(0.995e8);
 
-        (uint256 excess, uint256 minted) = _harvestAndRemint();
-        assertApproxEqAbs(minted, excess, 2, "remint should mint the whole excess");
-        assertApproxEqAbs(treasury.reserve(), vusd.totalSupply(), 10, "no excess should be left behind");
-    }
-
-    // A receiver that keeps the collateral instead of re-minting it
-    function testFuzz_harvestWithoutRemint_keepsSupplyBacked(uint256 price_, uint256 yield_) public {
-        price_ = bound(price_, 0.99e8, 1.01e8);
-        yield_ = bound(yield_, 0, 100e18);
-        _mint(alice, 1_000e18);
-        _simulateVaultYield(yield_);
-        oracle.updatePrice(int256(price_));
-
-        bool hadExcess = treasury.reserve() > vusd.totalSupply();
-        treasury.harvest(address(collateral), owner);
-        if (hadExcess) {
-            assertGe(treasury.reserve() + 2, vusd.totalSupply(), "supply must stay backed at the same price");
-        }
+        (uint256 excess, uint256 minted) = _harvestAndMeasure();
+        assertEq(minted, excess, "harvest mints the whole excess");
+        assertEq(treasury.reserve(), vusd.totalSupply(), "no excess left behind");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -430,14 +383,14 @@ contract TreasurySolvencyTest is Test {
         assertEq(collateral.balanceOf(alice), 100e18, "the idle balance still redeems");
     }
 
-    function test_shutdownVault_harvestPaysFromIdle() public {
+    // A shut-down vault blocks withdrawals, not harvest: no collateral moves
+    function test_shutdownVault_harvestStillMints() public {
         _mint(alice, 1_000e18);
         _simulateVaultYield(100e18);
         deal(address(collateral), address(treasury), 50e18);
 
-        // 150 excess, 50 of it idle: harvest skips the shut-down vault and pays the idle part
         vault.setShutdown(true);
-        assertEq(treasury.harvest(address(collateral), owner), 50e18);
-        assertEq(collateral.balanceOf(owner), 50e18);
+        assertEq(_harvestCore(), 150e18);
+        assertEq(treasury.reserve(), vusd.totalSupply());
     }
 }

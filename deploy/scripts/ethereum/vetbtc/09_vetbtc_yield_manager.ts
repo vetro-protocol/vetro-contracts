@@ -9,8 +9,9 @@ const {VetBTC, VetBTCTreasury, VetBTCYieldDistributor, VetBTCYieldManager, Yield
 /**
  * Deploy YieldManager for vetBTC: non-upgradeable keeper periphery
  *
- * Keeps an existing deployment; to replace one, pass `redeploy = true` locally. Queues UMM_ROLE (Treasury)
- * and DISTRIBUTOR_ROLE (YieldDistributor) for it and revokes both from a replaced deployment.
+ * Keeps an existing deployment, except one without `harvestBatch`: that one predates the Gateway harvest and can only
+ * call the removed `Treasury.harvest`, so it is replaced. Queues UMM_ROLE (Treasury) and DISTRIBUTOR_ROLE
+ * (YieldDistributor) for it and revokes both from a replaced deployment.
  *
  * Requires a YieldDistributor whose `distribute` pulls accrued yield first (else it reverts
  * DripExceedsCap), so deploy with its tags: `--tags YieldDistributor,VetBTCYieldDistributor,
@@ -32,14 +33,17 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
 
   const {address: vetBTCAddress} = await get(VetBTC)
   const {address: yieldDistributorAddress} = await get(VetBTCYieldDistributor)
-  const previousAddress = (await getOrNull(VetBTCYieldManager))?.address
+  const previous = await getOrNull(VetBTCYieldManager)
+  const previousAddress = previous?.address
+  const redeploy = !!previous && !previous.abi.some((f: {name?: string}) => f.name === 'harvestBatch')
 
   // alias differs from the contract name, so pass the artifact explicitly
   const {address: yieldManagerAddress} = await deployNonUpgradeable(
     hre,
     VetBTCYieldManager,
     [vetBTCAddress, yieldDistributorAddress, maxAprBps, absoluteCap],
-    YieldManager
+    YieldManager,
+    redeploy
   )
 
   const ummRole = await read(VetBTCTreasury, 'UMM_ROLE')

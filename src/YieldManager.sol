@@ -14,10 +14,10 @@ import {IGateway} from "./interfaces/IGateway.sol";
 import {IYieldDistributor} from "./interfaces/IYieldDistributor.sol";
 
 /// @title YieldManager: Buffered, rate-targeted staker yield
-/// @notice Harvests treasury excess into a pegged token buffer; the keeper pays stakers from it, capped by an
-/// admin-set APR and a weekly token amount.
-/// @dev Harvesting re-deposits through the Gateway, so the collateral stays in the treasury earning while
-/// the buffer waits. Needs UMM_ROLE (Treasury) and DISTRIBUTOR_ROLE (YieldDistributor).
+/// @notice Harvests yield (the core's and each spoke's) into a pegged token buffer; the keeper pays stakers from
+/// it, capped by an admin-set APR and a weekly token amount.
+/// @dev Harvesting mints through the Gateway without moving collateral, so it keeps earning while the buffer waits.
+/// Needs UMM_ROLE (Treasury, checked by the Gateway) and DISTRIBUTOR_ROLE (YieldDistributor).
 contract YieldManager is ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
     using SafeERC20 for IPeggedToken;
@@ -59,7 +59,7 @@ contract YieldManager is ReentrancyGuardTransient {
 
     event AbsoluteCapUpdated(uint256 previousCap, uint256 newCap);
     event Distributed(address indexed caller, uint256 amount, uint256 bufferLeft);
-    event Harvested(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount);
+    event Harvested(address indexed source, uint256 amount);
     event MaxAprUpdated(uint256 previousAprBps, uint256 newAprBps);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
 
@@ -73,6 +73,7 @@ contract YieldManager is ReentrancyGuardTransient {
     error AmountIsZero();
     error AssetMismatch();
     error DripExceedsCap(uint256 drip, uint256 cap);
+    error LengthMismatch(uint256 sources, uint256 amounts);
     error MaxAprTooHigh(uint256 aprBps, uint256 maxAprBps);
 
     /*/////////////////////////////////////////////////////////////
@@ -127,38 +128,54 @@ contract YieldManager is ReentrancyGuardTransient {
     }
 
     /**
-     * @notice KEEPER_ROLE: Harvest treasury excess payable in `token_` into the buffer.
-     * @dev Compute `minPeggedTokenOut_` off-chain (e.g. eth_call-simulate this function); deriving it
-     * on-chain from `previewDeposit` is circular and never reverts.
-     * @param token_ Whitelisted collateral token to harvest the excess in
-     * @param minPeggedTokenOut_ Minimum pegged tokens the Gateway mint must produce
+     * @notice KEEPER_ROLE: Harvest up to `amount_` of a source's yield into the buffer
+     * @param source_ `address(0)` for the core, else a registered spoke
+     * @param amount_ Most to harvest; `type(uint256).max` for all of it
      * @return _minted Pegged tokens added to the buffer
      */
-    function harvest(address token_, uint256 minPeggedTokenOut_)
+    function harvest(address source_, uint256 amount_)
         external
         nonReentrant
         onlyRole(KEEPER_ROLE)
         returns (uint256 _minted)
     {
-        return _harvest(token_, minPeggedTokenOut_);
+        return _harvest(source_, amount_);
     }
 
     /**
-     * @notice KEEPER_ROLE: `harvest` then `distribute` in one call.
-     * @param token_ Whitelisted collateral token to harvest the excess in
-     * @param minPeggedTokenOut_ Minimum pegged tokens the Gateway mint must produce
-     * @param amount_ Max pegged tokens to send to the YieldDistributor, nonzero
+     * @notice KEEPER_ROLE: `harvestBatch` then one `distribute`
+     * @param sources_ `address(0)` for the core, else registered spokes
+     * @param amounts_ Most to harvest from each source, matching `sources_`; `type(uint256).max` for all of it
+     * @param distributeAmount_ Max pegged tokens to send to the YieldDistributor, nonzero
      * @return _minted Pegged tokens added to the buffer
      * @return _distributed Pegged tokens sent to the YieldDistributor
      */
-    function harvestAndDistribute(address token_, uint256 minPeggedTokenOut_, uint256 amount_)
+    function harvestAndDistribute(address[] calldata sources_, uint256[] calldata amounts_, uint256 distributeAmount_)
         external
         nonReentrant
         onlyRole(KEEPER_ROLE)
         returns (uint256 _minted, uint256 _distributed)
     {
-        _minted = _harvest(token_, minPeggedTokenOut_);
-        _distributed = _distribute(amount_);
+        _minted = _harvestBatch(sources_, amounts_);
+        _distributed = _distribute(distributeAmount_);
+    }
+
+    /**
+     * @notice KEEPER_ROLE: Harvest several sources into the buffer in one call
+     * @dev All or nothing: any source that fails (cannot be valued, role, sanctions) reverts the whole call, so
+     * simulate it first and leave out a source that cannot be valued. An amount of 0 does not skip a source: it is
+     * still valued.
+     * @param sources_ `address(0)` for the core, else registered spokes
+     * @param amounts_ Most to harvest from each source, matching `sources_`; `type(uint256).max` for all of it
+     * @return _minted Pegged tokens added to the buffer
+     */
+    function harvestBatch(address[] calldata sources_, uint256[] calldata amounts_)
+        external
+        nonReentrant
+        onlyRole(KEEPER_ROLE)
+        returns (uint256 _minted)
+    {
+        return _harvestBatch(sources_, amounts_);
     }
 
     /**
@@ -235,17 +252,10 @@ contract YieldManager is ReentrancyGuardTransient {
         return IGateway(PEGGED_TOKEN.gateway());
     }
 
-    /**
-     * @notice The yield available to harvest, i.e. the excess of the treasury reserve over
-     *  the core supply it backs: `reserve - Gateway.coreSupply()`.
-     * @dev Reverts if any whitelisted token's oracle is stale. A token priced outside tolerance is valued at its
-     *  oracle price, which can leave nothing to harvest until yield covers its discount.
-     * @return _excessPegged Harvestable excess in pegged token units, or 0 if none.
-     */
-    function harvestable() public view returns (uint256 _excessPegged) {
-        uint256 _backedSupply = gateway().coreSupply();
-        uint256 _reserve = treasury().reserve();
-        return _reserve > _backedSupply ? _reserve - _backedSupply : 0;
+    /// @notice Yield of a source (`address(0)` for the core, else a registered spoke), before this contract's own role
+    /// and screening checks. Reverts when the source cannot be valued.
+    function harvestable(address source_) public view returns (uint256) {
+        return gateway().harvestable(source_);
     }
 
     /// @notice Most `distribute` sends now: the headroom under both caps, limited by the buffer
@@ -298,15 +308,17 @@ contract YieldManager is ReentrancyGuardTransient {
         emit Distributed(msg.sender, _distributed, buffer());
     }
 
-    function _harvest(address token_, uint256 minPeggedTokenOut_) private returns (uint256 _minted) {
-        uint256 _harvested = treasury().harvest(token_, address(this));
-        if (_harvested == 0) return 0;
+    function _harvest(address source_, uint256 amount_) private returns (uint256 _minted) {
+        _minted = gateway().harvest(source_, address(this), amount_);
+        if (_minted > 0) emit Harvested(source_, _minted);
+    }
 
-        IGateway _gateway = gateway();
-        IERC20(token_).forceApprove(address(_gateway), _harvested);
-        _minted = _gateway.deposit(token_, _harvested, minPeggedTokenOut_, address(this));
-
-        emit Harvested(token_, _harvested, _minted);
+    function _harvestBatch(address[] calldata sources_, uint256[] calldata amounts_) private returns (uint256 _minted) {
+        uint256 _len = sources_.length;
+        if (amounts_.length != _len) revert LengthMismatch(_len, amounts_.length);
+        for (uint256 i; i < _len; ++i) {
+            _minted += _harvest(sources_[i], amounts_[i]);
+        }
     }
 
     function _updateAbsoluteCap(uint256 absoluteCap_) private {

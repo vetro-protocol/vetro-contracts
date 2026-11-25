@@ -19,6 +19,20 @@ import {MockERC20} from "test/mocks/MockERC20.sol";
 import {MockYieldVault} from "test/mocks/MockYieldVault.sol";
 import {MockNonPullingYieldDistributor} from "test/mocks/MockNonPullingYieldDistributor.sol";
 
+/// @dev A spoke whose reserve the test sets
+contract MockReserveSpoke {
+    address public immutable peggedToken;
+    uint256 public reserve;
+
+    constructor(address peggedToken_) {
+        peggedToken = peggedToken_;
+    }
+
+    function setReserve(uint256 reserve_) external {
+        reserve = reserve_;
+    }
+}
+
 contract YieldManagerTest is Test {
     using SafeERC20 for IERC20;
 
@@ -46,10 +60,12 @@ contract YieldManagerTest is Test {
     uint256 constant MAX_PER_PERIOD = 105e18;
     uint256 constant ABSOLUTE_CAP = 1_000e18;
     uint256 constant PERIOD = 7 days;
+    address constant CORE = address(0);
+    uint256 constant ALL = type(uint256).max;
 
     event AbsoluteCapUpdated(uint256 previousCap, uint256 newCap);
     event Distributed(address indexed caller, uint256 amount, uint256 bufferLeft);
-    event Harvested(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount);
+    event Harvested(address indexed source, uint256 amount);
     event MaxAprUpdated(uint256 previousAprBps, uint256 newAprBps);
     event Swept(address indexed token, uint256 amount, address indexed receiver);
 
@@ -121,7 +137,7 @@ contract YieldManagerTest is Test {
     function fillBuffer(uint256 tokenAmount) internal {
         createExcess(tokenAmount);
         vm.prank(keeper);
-        yieldManager.harvest(token, 0);
+        yieldManager.harvest(CORE, ALL);
     }
 
     function distributeAt(uint256 aprBps) internal returns (uint256 amount) {
@@ -480,7 +496,7 @@ contract YieldManagerTest is Test {
 
         createExcess(1_000e6);
         vm.prank(keeper);
-        legacyManager.harvestAndDistribute(token, 0, MAX_PER_PERIOD);
+        legacyManager.harvestAndDistribute(_coreSources(), _allAmounts(), MAX_PER_PERIOD);
 
         skip(3 days); // accrued yield sits unpulled in the distributor
         uint256 headroom = legacyManager.maxDistribute();
@@ -520,79 +536,80 @@ contract YieldManagerTest is Test {
 
     function test_harvest() public {
         createExcess(1_000e6);
-        assertEq(yieldManager.harvestable(), 1_000e18, "harvestable should equal donated excess");
+        assertEq(yieldManager.harvestable(CORE), 1_000e18, "harvestable should equal donated excess");
+        uint256 reserveBefore = treasury.reserve();
 
         vm.expectEmit();
-        emit Harvested(token, 1_000e6, 1_000e18);
+        emit Harvested(CORE, 1_000e18);
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvest(token, 1_000e18);
+        uint256 minted = yieldManager.harvest(CORE, ALL);
 
         assertEq(minted, 1_000e18, "minted amount mismatch");
         assertEq(yieldManager.buffer(), 1_000e18, "harvest should fill the buffer");
         assertEq(peggedToken.balanceOf(address(distributor)), 0, "harvest must not distribute");
-        assertEq(IERC20(token).balanceOf(address(yieldManager)), 0, "yieldManager must hold no collateral");
-        assertEq(yieldManager.harvestable(), 0, "excess should be fully harvested");
+        assertEq(treasury.reserve(), reserveBefore, "no collateral moves");
+        assertEq(yieldManager.harvestable(CORE), 0, "excess should be fully harvested");
+        assertBackingInvariant();
+    }
+
+    function test_harvest_upToAmount() public {
+        createExcess(1_000e6);
+
+        vm.prank(keeper);
+        assertEq(yieldManager.harvest(CORE, 400e18), 400e18);
+        assertEq(yieldManager.harvestable(CORE), 600e18, "the rest stays harvestable");
         assertBackingInvariant();
     }
 
     function test_harvest_nothingToHarvest() public {
         vm.recordLogs();
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvest(token, 0);
+        uint256 minted = yieldManager.harvest(CORE, ALL);
 
         assertEq(minted, 0, "nothing to harvest");
         assertEq(vm.getRecordedLogs().length, 0, "no-op harvest must not emit");
     }
 
     function test_harvest_excessInVault() public {
-        // Push the donated excess into the yield vault to exercise harvest's vault-withdraw leg
+        // Yield in the vault counts like loose collateral, and nothing is withdrawn
         createExcess(1_000e6);
         treasury.push(token, 1_000e6);
         assertEq(IERC20(token).balanceOf(address(treasury)), 0, "excess should sit in the vault");
 
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvest(token, 1_000e18);
+        uint256 minted = yieldManager.harvest(CORE, ALL);
 
         assertEq(minted, 1_000e18, "minted amount mismatch");
         assertBackingInvariant();
     }
 
-    function test_harvest_yieldTakesRoom() public {
-        // Harvest leaves net deposits alone and the re-deposit adds what it paid
+    function test_harvest_leavesDepositRoom() public {
+        // No collateral moves, so net deposits and the room under the cap are untouched
         treasury.updateDepositCap(token, INITIAL_DEPOSIT + 1_000e6);
         createExcess(1_000e6);
 
         vm.prank(keeper);
-        yieldManager.harvest(token, 0);
-        assertEq(treasury.netDeposited(token), INITIAL_DEPOSIT + 1_000e6);
-        assertEq(treasury.maxDeposit(token), 0);
+        yieldManager.harvest(CORE, ALL);
+        assertEq(treasury.netDeposited(token), INITIAL_DEPOSIT);
+        assertEq(treasury.maxDeposit(token), 1_000e6);
         assertBackingInvariant();
     }
 
-    function test_harvest_revertAtDepositCap() public {
-        // The yield stays in the Treasury until the cap is raised
+    function test_harvest_notBlockedByDepositCap() public {
         treasury.updateDepositCap(token, INITIAL_DEPOSIT);
         createExcess(1_000e6);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Treasury.ExceededDepositCap.selector, token, INITIAL_DEPOSIT + 1_000e6, INITIAL_DEPOSIT
-            )
-        );
         vm.prank(keeper);
-        yieldManager.harvest(token, 0);
+        assertEq(yieldManager.harvest(CORE, ALL), 1_000e18);
     }
 
-    function test_harvest_withMintFee() public {
-        gateway.updateMintFee(token, 50); // 0.5%
+    function test_harvest_noMintFee() public {
+        gateway.updateMintFee(token, 50); // 0.5%, charged on deposits only
         createExcess(1_000e6);
 
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvest(token, 995e18);
-
-        assertEq(minted, 995e18, "minted should be net of mint fee");
-        // The fee remainder stays in the treasury as excess for the next cycle
-        assertEq(yieldManager.harvestable(), 5e18, "fee remainder should stay harvestable");
+        assertEq(yieldManager.harvest(CORE, ALL), 1_000e18, "harvest pays no mint fee");
+        assertEq(yieldManager.harvestable(CORE), 0);
         assertBackingInvariant();
     }
 
@@ -600,21 +617,18 @@ contract YieldManagerTest is Test {
         mockOracle.updatePrice(0.995e8); // 0.5% below par, within the treasury's 1% priceTolerance
         createExcess(1_000e6);
 
-        // Repricing shrinks the whole reserve: excess = 101_000 * 0.995 - 100_000 = 495 pegged.
-        // Harvest converts it back to ~497.49 tokens, which mint at price (pegBand = 0 => below pegFloor).
+        // Repricing shrinks the whole reserve: excess = 101_000 * 0.995 - 100_000 = 495 pegged
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvest(token, 0);
-
-        assertApproxEqAbs(minted, 495e18, 1e12, "minted should be valued at price");
+        assertEq(yieldManager.harvest(CORE, ALL), 495e18, "minted at the oracle price");
         assertBackingInvariant();
     }
 
     function test_harvest_priceAboveParWithinTolerance_nothingWithoutYield() public {
         mockOracle.updatePrice(1.005e8);
-        assertEq(yieldManager.harvestable(), 0, "an above-par tick is not yield");
+        assertEq(yieldManager.harvestable(CORE), 0, "an above-par tick is not yield");
 
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvest(token, 0);
+        uint256 minted = yieldManager.harvest(CORE, ALL);
 
         assertEq(minted, 0, "nothing to harvest");
         mockOracle.updatePrice(1e8);
@@ -624,14 +638,24 @@ contract YieldManagerTest is Test {
     function test_harvest_priceAboveParWithinTolerance() public {
         mockOracle.updatePrice(1.005e8);
         createExcess(1_000e6);
-        assertEq(yieldManager.harvestable(), 1_000e18, "only the donated excess is harvestable");
+        assertEq(yieldManager.harvestable(CORE), 1_000e18, "only the donated excess is harvestable");
 
-        // Harvest converts the 1_000 pegged excess at the par-capped price, which mints at par
         vm.prank(keeper);
-        uint256 minted = yieldManager.harvest(token, 1_000e18);
+        uint256 minted = yieldManager.harvest(CORE, ALL);
 
         assertEq(minted, 1_000e18, "minted should equal the real excess");
-        assertEq(yieldManager.harvestable(), 0, "excess should be fully harvested");
+        assertEq(yieldManager.harvestable(CORE), 0, "excess should be fully harvested");
+        mockOracle.updatePrice(1e8);
+        assertBackingInvariant();
+    }
+
+    /// @dev Beyond the tolerance a mint would revert, but the reserve still values the token, capped at par
+    function test_harvest_priceAboveTolerance_harvestsAtPar() public {
+        mockOracle.updatePrice(1.02e8);
+        createExcess(1_000e6);
+
+        vm.prank(keeper);
+        assertEq(yieldManager.harvest(CORE, ALL), 1_000e18, "only the real excess, valued at par");
         mockOracle.updatePrice(1e8);
         assertBackingInvariant();
     }
@@ -641,27 +665,40 @@ contract YieldManagerTest is Test {
         mockOracle.updatePrice(0.98e8); // 2% below par, beyond the treasury's 1% priceTolerance
 
         // Reserve is 101_000 * 0.98 = 98_980 against 100_000 backed, so there is nothing to harvest
-        assertEq(yieldManager.harvestable(), 0);
+        assertEq(yieldManager.harvestable(CORE), 0);
         vm.prank(keeper);
-        assertEq(yieldManager.harvest(token, 0), 0);
+        assertEq(yieldManager.harvest(CORE, ALL), 0);
     }
 
-    function test_harvest_revertIfPriceExceedsTolerance() public {
+    function test_harvest_priceBeyondToleranceValuedAtOracle() public {
         createExcess(5_000e6);
         mockOracle.updatePrice(0.98e8); // 2% below par, beyond the treasury's 1% priceTolerance
 
-        // Reserve is 105_000 * 0.98 = 102_900, and converting that excess into this token hits the circuit-breaker
+        // The reserve still values the token, at its lower oracle price: 105_000 * 0.98 - 100_000 = 2_900
         vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(Treasury.PriceExceedTolerance.selector, 0.98e8, 1.01e8, 0.99e8));
-        yieldManager.harvest(token, 0);
+        assertEq(yieldManager.harvest(CORE, ALL), 2_900e18);
     }
 
-    function test_harvest_revertIfMinOutTooHigh() public {
+    function test_harvest_revertIfStale() public {
         createExcess(1_000e6);
+        skip(2 hours); // past the 1 hour stale period
 
         vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(Gateway.MintableIsLessThanMinimum.selector, 1_000e18, 1_000e18 + 1));
-        yieldManager.harvest(token, 1_000e18 + 1);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(mockOracle)));
+        yieldManager.harvest(CORE, ALL);
+    }
+
+    function test_harvest_revertWithoutUmmRole() public {
+        createExcess(1_000e6);
+        bytes32 _ummRole = treasury.UMM_ROLE();
+        vm.prank(admin);
+        treasury.revokeRole(_ummRole, address(yieldManager));
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(Gateway.AccessControlUnauthorizedAccount.selector, address(yieldManager), _ummRole)
+        );
+        yieldManager.harvest(CORE, ALL);
     }
 
     function test_harvest_revertIfNotKeeper() public {
@@ -670,7 +707,92 @@ contract YieldManagerTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(YieldManager.AccessControlUnauthorizedAccount.selector, alice, keeperRole)
         );
-        yieldManager.harvest(token, 0);
+        yieldManager.harvest(CORE, ALL);
+    }
+
+    // --- harvestBatch ---
+
+    function _one(address source_, uint256 amount_)
+        internal
+        pure
+        returns (address[] memory sources_, uint256[] memory amounts_)
+    {
+        sources_ = new address[](1);
+        amounts_ = new uint256[](1);
+        sources_[0] = source_;
+        amounts_[0] = amount_;
+    }
+
+    function _coreSources() internal pure returns (address[] memory sources_) {
+        sources_ = new address[](1);
+    }
+
+    function _allAmounts() internal pure returns (uint256[] memory amounts_) {
+        amounts_ = new uint256[](1);
+        amounts_[0] = ALL;
+    }
+
+    function test_harvestBatch() public {
+        createExcess(1_000e6);
+        (address[] memory _sources, uint256[] memory _amounts) = _one(CORE, ALL);
+        vm.expectEmit(address(yieldManager));
+        emit Harvested(CORE, 1_000e18);
+        vm.prank(keeper);
+        assertEq(yieldManager.harvestBatch(_sources, _amounts), 1_000e18);
+        assertEq(yieldManager.buffer(), 1_000e18);
+    }
+
+    function test_harvestBatch_upToAmount() public {
+        createExcess(1_000e6);
+        (address[] memory _sources, uint256[] memory _amounts) = _one(CORE, 400e18);
+        vm.prank(keeper);
+        assertEq(yieldManager.harvestBatch(_sources, _amounts), 400e18);
+        assertEq(yieldManager.harvestable(CORE), 600e18, "the rest stays harvestable");
+    }
+
+    function test_harvestBatch_emptyMintsNothing() public {
+        createExcess(1_000e6);
+        vm.prank(keeper);
+        assertEq(yieldManager.harvestBatch(new address[](0), new uint256[](0)), 0);
+    }
+
+    /// @dev All or nothing: a source that cannot be valued reverts the batch
+    function test_harvestBatch_revertIfStale() public {
+        createExcess(1_000e6);
+        skip(2 hours);
+        (address[] memory _sources, uint256[] memory _amounts) = _one(CORE, ALL);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.StalePrice.selector, address(mockOracle)));
+        yieldManager.harvestBatch(_sources, _amounts);
+    }
+
+    function test_harvestBatch_revertWithoutUmmRole() public {
+        createExcess(1_000e6);
+        bytes32 _ummRole = treasury.UMM_ROLE();
+        vm.prank(admin);
+        treasury.revokeRole(_ummRole, address(yieldManager));
+        (address[] memory _sources, uint256[] memory _amounts) = _one(CORE, ALL);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(Gateway.AccessControlUnauthorizedAccount.selector, address(yieldManager), _ummRole)
+        );
+        yieldManager.harvestBatch(_sources, _amounts);
+    }
+
+    function test_harvestBatch_revertIfLengthMismatch() public {
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(YieldManager.LengthMismatch.selector, 1, 0));
+        yieldManager.harvestBatch(new address[](1), new uint256[](0));
+    }
+
+    function test_harvestBatch_revertIfNotKeeper() public {
+        bytes32 keeperRole = yieldManager.KEEPER_ROLE();
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(YieldManager.AccessControlUnauthorizedAccount.selector, alice, keeperRole)
+        );
+        yieldManager.harvestBatch(new address[](0), new uint256[](0));
     }
 
     // --- harvestAndDistribute ---
@@ -679,7 +801,8 @@ contract YieldManagerTest is Test {
         createExcess(1_000e6);
 
         vm.prank(keeper);
-        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(token, 1_000e18, TARGET_PER_PERIOD);
+        (uint256 minted, uint256 distributed) =
+            yieldManager.harvestAndDistribute(_coreSources(), _allAmounts(), TARGET_PER_PERIOD);
 
         assertEq(minted, 1_000e18, "minted mismatch");
         assertEq(distributed, TARGET_PER_PERIOD, "distributed mismatch");
@@ -687,11 +810,46 @@ contract YieldManagerTest is Test {
         assertBackingInvariant();
     }
 
+    /// @dev Several sources are harvested, then distributed once from the whole buffer
+    function test_harvestAndDistribute_batchDistributesOnce() public {
+        createExcess(1_000e6);
+        MockReserveSpoke _spoke = new MockReserveSpoke(address(peggedToken));
+        vm.prank(admin);
+        gateway.addSpoke(address(_spoke));
+        _spoke.setReserve(50e18);
+        address[] memory _sources = new address[](2);
+        _sources[1] = address(_spoke);
+        uint256[] memory _amounts = new uint256[](2);
+        _amounts[0] = _amounts[1] = ALL;
+
+        vm.recordLogs();
+        vm.prank(keeper);
+        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(_sources, _amounts, TARGET_PER_PERIOD);
+
+        assertEq(minted, 1_050e18, "core and spoke");
+        assertEq(distributed, TARGET_PER_PERIOD);
+        assertEq(gateway.spokeSupply(address(_spoke)), 50e18);
+        Vm.Log[] memory _logs = vm.getRecordedLogs();
+        uint256 _distributions;
+        for (uint256 i; i < _logs.length; ++i) {
+            if (_logs[i].emitter == address(yieldManager) && _logs[i].topics[0] == Distributed.selector) {
+                ++_distributions;
+            }
+        }
+        assertEq(_distributions, 1, "one distribution");
+    }
+
+    function test_harvestAndDistribute_revertIfLengthMismatch() public {
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(YieldManager.LengthMismatch.selector, 2, 1));
+        yieldManager.harvestAndDistribute(new address[](2), new uint256[](1), 1e18);
+    }
+
     function test_harvestAndDistribute_distributesBufferWithoutExcess() public {
         fillBuffer(1_000e6);
 
         vm.prank(keeper);
-        (uint256 minted,) = yieldManager.harvestAndDistribute(token, 0, TARGET_PER_PERIOD);
+        (uint256 minted,) = yieldManager.harvestAndDistribute(_coreSources(), _allAmounts(), TARGET_PER_PERIOD);
 
         assertEq(minted, 0, "nothing to harvest");
         assertEq(yieldManager.buffer(), 1_000e18 - TARGET_PER_PERIOD, "buffer still pays out");
@@ -703,7 +861,8 @@ contract YieldManagerTest is Test {
         vm.expectEmit();
         emit Distributed(keeper, MAX_PER_PERIOD, 1_000e18 - MAX_PER_PERIOD);
         vm.prank(keeper);
-        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(token, 0, MAX_PER_PERIOD + 1e18);
+        (uint256 minted, uint256 distributed) =
+            yieldManager.harvestAndDistribute(_coreSources(), _allAmounts(), MAX_PER_PERIOD + 1e18);
 
         assertEq(minted, 1_000e18, "harvest kept");
         assertEq(distributed, MAX_PER_PERIOD, "clamped to the cap");
@@ -716,7 +875,7 @@ contract YieldManagerTest is Test {
 
         vm.recordLogs();
         vm.prank(keeper);
-        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(token, 0, 1e18);
+        (uint256 minted, uint256 distributed) = yieldManager.harvestAndDistribute(_coreSources(), _allAmounts(), 1e18);
 
         assertEq(minted, 1_000e18, "harvest kept");
         assertEq(distributed, 0, "no headroom left");
@@ -736,7 +895,7 @@ contract YieldManagerTest is Test {
         vm.expectEmit();
         emit Distributed(keeper, TARGET_PER_PERIOD, 1_100e18 - TARGET_PER_PERIOD);
         vm.prank(keeper);
-        yieldManager.harvestAndDistribute(token, 0, TARGET_PER_PERIOD);
+        yieldManager.harvestAndDistribute(_coreSources(), _allAmounts(), TARGET_PER_PERIOD);
     }
 
     function test_harvestAndDistribute_revertIfNotKeeper() public {
@@ -745,14 +904,14 @@ contract YieldManagerTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(YieldManager.AccessControlUnauthorizedAccount.selector, alice, keeperRole)
         );
-        yieldManager.harvestAndDistribute(token, 0, 1e18);
+        yieldManager.harvestAndDistribute(_coreSources(), _allAmounts(), 1e18);
     }
 
     function test_harvestAndDistribute_revertIfZeroAmount() public {
         createExcess(1_000e6);
         vm.prank(keeper);
         vm.expectRevert(YieldManager.AmountIsZero.selector);
-        yieldManager.harvestAndDistribute(token, 0, 0);
+        yieldManager.harvestAndDistribute(_coreSources(), _allAmounts(), 0);
     }
 
     // --- setters ---
@@ -897,9 +1056,9 @@ contract YieldManagerTest is Test {
     }
 
     function test_harvestable() public {
-        assertEq(yieldManager.harvestable(), 0, "no excess initially");
+        assertEq(yieldManager.harvestable(CORE), 0, "no excess initially");
         createExcess(1_000e6);
-        assertEq(yieldManager.harvestable(), 1_000e18, "harvestable should equal donated excess");
+        assertEq(yieldManager.harvestable(CORE), 1_000e18, "harvestable should equal donated excess");
     }
 
     function test_maxDistribute() public {

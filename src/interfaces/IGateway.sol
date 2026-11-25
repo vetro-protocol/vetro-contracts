@@ -67,6 +67,21 @@ interface IGateway {
     /// @notice Gets all registered spokes
     function getSpokes() external view returns (address[] memory);
 
+    /// @notice Mints up to `amount_` of a source's yield to `receiver_` (UMM role). The core's yield (`source_` is
+    /// `address(0)`) is the Treasury's reserve above the core supply; a spoke's is its reserve above its supply, which
+    /// joins that spoke's supply. Not bound by the mint limits, but counts against them.
+    /// @dev Reverts with AddressIsZero for a zero `receiver_`, Treasury's Sanctioned if it is on the sanctions list,
+    /// InvalidSpoke for an unregistered spoke (even with `amount_` 0), and when the source cannot be valued
+    /// @param source_ `address(0)` for the core, else a registered spoke
+    /// @param receiver_ Address to receive the minted PeggedToken
+    /// @param amount_ Most to mint; `type(uint256).max` for all of it
+    /// @return _minted PeggedToken minted
+    function harvest(address source_, address receiver_, uint256 amount_) external returns (uint256 _minted);
+
+    /// @notice Yield `harvest` can mint now for a source (`address(0)` for the core, else a registered spoke), whatever
+    /// the receiver. Reverts when the source cannot be valued.
+    function harvestable(address source_) external view returns (uint256);
+
     /// @notice Raises a spoke's mint limit (DEFAULT_ADMIN)
     /// @param spoke_ Registered spoke
     /// @param newLimit_ New limit in PeggedToken, above the current one

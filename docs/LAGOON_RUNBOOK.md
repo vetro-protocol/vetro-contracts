@@ -334,7 +334,7 @@ The Yield Vault (`yield-vault/src/YieldVault.sol`) is a multi-strategy ERC-4626 
 1. Lagoon vault earns on Base → Valuation Provider posts higher NAV → Curator settles (§4) → Lagoon share price rises.
 2. Lagoon strategy reports the gain to the Yield Vault via `rebalance → reportEarning` → Yield Vault `pricePerShare` rises, performance fee taken.
 3. Treasury holds Yield Vault shares, so `Treasury.reserve()` now exceeds backed supply.
-4. **Harvest** (`UMM_ROLE`): `Treasury.harvest(token, receiver)` extracts the excess.
-5. Convert via the Gateway and `YieldDistributor.distribute(amount)` (`DISTRIBUTOR_ROLE`) drips it (~7 days) into the StakingVault, raising sVUSD / svetBTC value for stakers.
+4. **Harvest** (`UMM_ROLE`): `Gateway.harvest(address(0), receiver, amount)` mints the excess as the pegged token (VUSD or vetBTC), no collateral moves.
+5. `YieldDistributor.distribute(amount)` (`DISTRIBUTOR_ROLE`) drips it (~7 days) into the StakingVault, raising sVUSD / svetBTC value for stakers.
 
 See [OPERATIONS.md](./OPERATIONS.md) for the harvest workflow, addresses, and roles for these layers.

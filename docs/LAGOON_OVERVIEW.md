@@ -179,7 +179,7 @@ The Curator's buffer (Job #3) is the *innermost* of three cushions across the wh
 4. Keep money mid-bridge **counted** in the next valuation, so the share price stays smooth.
 5. Repeat next cadence. **Never skip a settlement.**
 
-That recognized yield eventually flows back to Vetro stakers via the Treasury's harvest cycle — see [OPERATIONS.md](./OPERATIONS.md).
+That recognized yield eventually flows back to Vetro stakers via the Gateway's harvest (`Gateway.harvest`, usually through the YieldManager). See [OPERATIONS.md](./OPERATIONS.md).
 
 ---
 

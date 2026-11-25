@@ -427,7 +427,9 @@ contract GatewayTest is Test {
         assertEq(gateway.maxRedeem(bob), 0, "nothing redeemable at the boundary");
         assertEq(gateway.maxWithdraw(token), 0, "nothing withdrawable at the boundary");
         assertEq(gateway.maxMint(), type(uint256).max, "maxMint must not underflow");
-        assertEq(treasury.harvest(token, address(this)), 10e6, "unharvested yield stays harvestable");
+        assertEq(
+            gateway.harvest(address(0), address(this), type(uint256).max), 10e18, "unharvested yield stays harvestable"
+        );
     }
 
     function test_withdraw_revertIfBurnBelowAmoSupply() public {
