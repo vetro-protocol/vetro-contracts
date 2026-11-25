@@ -12,6 +12,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 import {IPeggedToken} from "./interfaces/IPeggedToken.sol";
 import {ITreasury} from "./interfaces/ITreasury.sol";
 import {IGateway} from "./interfaces/IGateway.sol";
+import {ISpoke} from "./interfaces/ISpoke.sol";
 
 /// @title Gateway - Handles both minting and redeeming of PeggedToken
 contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
@@ -47,6 +48,10 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         mapping(address token => uint256 pegBand) pegBand;
         mapping(address token => uint256 mintFeeBps) mintFee;
         mapping(address token => uint256 redeemFeeBps) redeemFee;
+        // Spokes: each is its own entry point and backs, with its own collateral, the supply minted through it
+        EnumerableSet.AddressSet spokes;
+        mapping(address spoke => uint256 limit) spokeMintLimit;
+        mapping(address spoke => uint256 supply) spokeSupply;
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -80,6 +85,11 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     event RedeemRequestCancelled(address indexed user, uint256 amount);
     event RedeemRequested(address indexed user, uint256 amount, uint256 claimableAt);
     event RemovedFromInstantRedeemWhitelist(address indexed account);
+    event SpokeAdded(address indexed spoke);
+    event SpokeBurned(address indexed spoke, address indexed account, uint256 amount, uint256 newSpokeSupply);
+    event SpokeMintLimitUpdated(address indexed spoke, uint256 previousLimit, uint256 newLimit);
+    event SpokeMinted(address indexed spoke, address indexed receiver, uint256 amount, uint256 newSpokeSupply);
+    event SpokeRemoved(address indexed spoke);
     event UpdatedAmoMintLimit(uint256 previousLimit, uint256 newLimit);
     event Withdraw(address indexed token, uint256 tokenAmount, uint256 peggedTokenAmount, address indexed receiver);
     event WithdrawalDelayEnabled(bool enabled);
@@ -95,19 +105,25 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     error AddressIsZero();
     error AmoBurnExceedsSupply(uint256 requested, uint256 available);
     error AmountIsZero();
-    error BurnBelowAmoSupply(uint256 totalSupply, uint256 amoSupply);
+    error BurnBelowSpokeSupply(uint256 totalSupply, uint256 spokeSupply);
+    error CallerNotSpoke(address caller);
     error CallerNotWhitelisted(address caller);
     error ExceededMaxMint(uint256 requested, uint256 available);
     error ExceededMaxWithdraw(uint256 requested, uint256 available);
+    error ExceededSpokeSupply(uint256 requested, uint256 spokeSupply);
     error FeeOnTransferToken(address token);
     error InvalidAmoMintLimit(uint256 limit, uint256 constraint);
     error InvalidMintFee(uint256 fee);
     error InvalidRedeemFee(uint256 fee);
+    error InvalidSpoke(address spoke);
+    error InvalidSpokeMintLimit(uint256 current, uint256 requested);
     error InvalidWithdrawalDelay();
     error MintableIsLessThanMinimum(uint256 peggedTokenOut, uint256 minPeggedTokenOut);
     error NoActiveWithdrawalRequest();
     error PeggedTokenToBurnIsHigherThanMax(uint256 peggedTokenIn, uint256 maxPeggedTokenIn);
     error RedeemableIsLessThanMinimum(uint256 tokenOut, uint256 minTokenOut);
+    error SpokeSupplyNotZero(address spoke, uint256 supply);
+    error SpokeUndercollateralized(uint256 reserve, uint256 supply);
     error TokenAmountIsHigherThanMax(uint256 tokenIn, uint256 maxTokenIn);
     error TokenNotWhitelisted(address token);
     error WithdrawalDelayFeatureNotEnabled();
@@ -115,6 +131,11 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /*/////////////////////////////////////////////////////////////
                             MODIFIERS
     /////////////////////////////////////////////////////////////*/
+
+    modifier onlySpoke() {
+        if (!_getGatewayStorage().spokes.contains(msg.sender)) revert CallerNotSpoke(msg.sender);
+        _;
+    }
 
     modifier onlyRole(bytes32 role_) {
         _requireRole(role_);
@@ -379,6 +400,11 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().amoSupply;
     }
 
+    /// @inheritdoc IGateway
+    function coreSupply() external view returns (uint256) {
+        return _coreSupply(_getGatewayStorage());
+    }
+
     /// @notice Get all whitelisted addresses
     /// @return Array of whitelisted addresses
     function getInstantRedeemWhitelist() external view returns (address[] memory) {
@@ -407,14 +433,11 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IGateway
-    /// @dev Capped at `totalSupply - amoSupply`: redemptions may not burn supply below outstanding AMO debt.
-    ///      amoSupply is governed to stay a small fraction of totalSupply, so in practice this equals the balance.
+    /// @dev Capped at `coreSupply`: redemptions may not burn AMO or spoke supply. amoSupply is governed to stay a
+    ///      small fraction of totalSupply.
     function maxRedeem(address owner_) external view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = $.peggedToken.totalSupply();
-        uint256 _amoSupply = $.amoSupply;
-        uint256 _redeemable = _totalSupply > _amoSupply ? _totalSupply - _amoSupply : 0;
-        return Math.min($.peggedToken.balanceOf(owner_), _redeemable);
+        return Math.min($.peggedToken.balanceOf(owner_), _coreSupply($));
     }
 
     /// @inheritdoc IGateway
@@ -462,34 +485,29 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /**
      * @inheritdoc IGateway
-     * @dev Returns remaining mint capacity (excludes AMO supply from calculation)
-     * @dev amoSupply <= totalSupply is enforced on every redemption burn (see _checkAmoBacking);
+     * @dev Returns remaining core mint capacity (excludes spoke supply, the AMO's included, which has its own limits)
+     * @dev totalSpokeSupply <= totalSupply is enforced on every redemption burn (see _checkSpokeSupply);
      *      the guard below is defensive only
      */
     function maxMint() public view returns (uint256) {
         GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = $.peggedToken.totalSupply();
-        uint256 _amoSupply = $.amoSupply;
-        uint256 _userSupply = _totalSupply > _amoSupply ? _totalSupply - _amoSupply : 0;
+        uint256 _supply = _coreSupply($);
         uint256 _mintLimit = $.mintLimit;
-        if (_mintLimit <= _userSupply) return 0;
+        if (_mintLimit <= _supply) return 0;
         unchecked {
-            return _mintLimit - _userSupply;
+            return _mintLimit - _supply;
         }
     }
 
     /// @inheritdoc IGateway
-    /// @dev Capped at `previewRedeem(tokenOut_, totalSupply - amoSupply)`, the token-denominated equivalent of the
-    ///      maxRedeem cap: redemptions may not burn supply below outstanding AMO debt.
-    ///      Book value, not liquidity: it relies on `Treasury.withdrawable`, so a withdrawal within it can still
-    ///      revert if the vault can't free that much at once.
+    /// @dev Capped at `previewRedeem(tokenOut_, coreSupply)`, the token-denominated equivalent of
+    ///      the maxRedeem cap. Book value, not liquidity: it relies on `Treasury.withdrawable`, so a withdrawal within
+    ///      it can still revert if the vault can't free that much at once.
     function maxWithdraw(address tokenOut_) public view returns (uint256) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = $.peggedToken.totalSupply();
-        uint256 _amoSupply = $.amoSupply;
-        if (_totalSupply <= _amoSupply) return 0;
+        uint256 _redeemable = _coreSupply(_getGatewayStorage());
+        if (_redeemable == 0) return 0;
         uint256 _withdrawable = ITreasury(treasury()).withdrawable(tokenOut_);
-        return Math.min(_withdrawable, previewRedeem(tokenOut_, _totalSupply - _amoSupply));
+        return Math.min(_withdrawable, previewRedeem(tokenOut_, _redeemable));
     }
 
     /// @inheritdoc IGateway
@@ -526,6 +544,115 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     /// @inheritdoc IGateway
     function treasury() public view returns (address) {
         return _peggedToken().treasury();
+    }
+
+    /*/////////////////////////////////////////////////////////////
+                                SPOKES
+    /////////////////////////////////////////////////////////////*/
+
+    // The AMO is a special purpose spoke for now: UMM mints and burns its supply directly (`mintToAMO`,
+    // `burnFromAMO`) under `amoMintLimit`, and that supply counts in `totalSpokeSupply`.
+
+    /// @inheritdoc IGateway
+    function addSpoke(address spoke_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (spoke_ == address(0)) revert AddressIsZero();
+        GatewayStorage storage $ = _getGatewayStorage();
+        if (address(ISpoke(spoke_).peggedToken()) != address($.peggedToken)) revert InvalidSpoke(spoke_);
+        if (!$.spokes.add(spoke_)) revert InvalidSpoke(spoke_);
+        emit SpokeAdded(spoke_);
+    }
+
+    /// @inheritdoc IGateway
+    /// @dev The burn takes the spoke's supply and the total supply down together, so the core supply is unchanged.
+    /// Screens both parties as the core redeem does.
+    function burnFromSpoke(address account_, address receiver_, uint256 amount_) external nonReentrant onlySpoke {
+        if (amount_ == 0) revert AmountIsZero();
+        _checkNotSanctioned(account_);
+        if (receiver_ != account_) _checkNotSanctioned(receiver_);
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _supply = $.spokeSupply[msg.sender];
+        if (amount_ > _supply) revert ExceededSpokeSupply(amount_, _supply);
+        uint256 _newSupply;
+        unchecked {
+            _newSupply = _supply - amount_;
+        }
+        $.spokeSupply[msg.sender] = _newSupply;
+        $.peggedToken.burnFrom(account_, amount_);
+        emit SpokeBurned(msg.sender, account_, amount_, _newSupply);
+    }
+
+    /// @inheritdoc IGateway
+    function decreaseSpokeMintLimit(address spoke_, uint256 newLimit_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        if (!$.spokes.contains(spoke_)) revert InvalidSpoke(spoke_);
+        uint256 _current = $.spokeMintLimit[spoke_];
+        if (newLimit_ >= _current) revert InvalidSpokeMintLimit(_current, newLimit_);
+        $.spokeMintLimit[spoke_] = newLimit_;
+        emit SpokeMintLimitUpdated(spoke_, _current, newLimit_);
+    }
+
+    /// @inheritdoc IGateway
+    function increaseSpokeMintLimit(address spoke_, uint256 newLimit_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        if (!$.spokes.contains(spoke_)) revert InvalidSpoke(spoke_);
+        uint256 _current = $.spokeMintLimit[spoke_];
+        if (newLimit_ <= _current) revert InvalidSpokeMintLimit(_current, newLimit_);
+        $.spokeMintLimit[spoke_] = newLimit_;
+        emit SpokeMintLimitUpdated(spoke_, _current, newLimit_);
+    }
+
+    /**
+     * @inheritdoc IGateway
+     * @dev The spoke takes its collateral before calling, and the mint must leave its reserve at or above its supply.
+     * A mint at full value never closes a deficit, so new holders never enter an undercollateralized spoke and a loss
+     * stays with those already in it. Screens both parties as the core deposit does.
+     */
+    function mintFromSpoke(address payer_, address receiver_, uint256 amount_) external nonReentrant onlySpoke {
+        if (amount_ == 0) revert AmountIsZero();
+        _checkNotSanctioned(payer_);
+        if (receiver_ != payer_) _checkNotSanctioned(receiver_);
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _supply = $.spokeSupply[msg.sender];
+        uint256 _limit = $.spokeMintLimit[msg.sender];
+        uint256 _mintable = _limit > _supply ? _limit - _supply : 0;
+        if (amount_ > _mintable) revert ExceededMaxMint(amount_, _mintable);
+        uint256 _newSupply = _supply + amount_;
+        $.spokeSupply[msg.sender] = _newSupply;
+        uint256 _reserve = ISpoke(msg.sender).reserve();
+        if (_reserve < _newSupply) revert SpokeUndercollateralized(_reserve, _newSupply);
+        $.peggedToken.mint(receiver_, amount_);
+        emit SpokeMinted(msg.sender, receiver_, amount_, _newSupply);
+    }
+
+    /// @inheritdoc IGateway
+    function removeSpoke(address spoke_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        if (!$.spokes.contains(spoke_)) revert InvalidSpoke(spoke_);
+        uint256 _supply = $.spokeSupply[spoke_];
+        if (_supply != 0) revert SpokeSupplyNotZero(spoke_, _supply);
+        $.spokes.remove(spoke_);
+        delete $.spokeMintLimit[spoke_];
+        emit SpokeRemoved(spoke_);
+    }
+
+    /// @inheritdoc IGateway
+    function getSpokes() external view returns (address[] memory) {
+        return _getGatewayStorage().spokes.values();
+    }
+
+    /// @inheritdoc IGateway
+    function spokeMintLimit(address spoke_) external view returns (uint256) {
+        return _getGatewayStorage().spokeMintLimit[spoke_];
+    }
+
+    /// @inheritdoc IGateway
+    function spokeSupply(address spoke_) external view returns (uint256) {
+        return _getGatewayStorage().spokeSupply[spoke_];
+    }
+
+    /// @inheritdoc IGateway
+    function totalSpokeSupply() external view returns (uint256) {
+        return _totalSpokeSupply(_getGatewayStorage());
     }
 
     /*/////////////////////////////////////////////////////////////
@@ -568,7 +695,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         if (amountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(amountOut_, _maxWithdraw);
         IPeggedToken _token = _peggedToken();
         _token.burnFrom(msg.sender, peggedTokenIn_);
-        _checkAmoBacking();
+        _checkSpokeSupply();
         ITreasury(treasury()).withdraw(tokenOut_, amountOut_, receiver_);
 
         emit Withdraw(tokenOut_, amountOut_, peggedTokenIn_, receiver_);
@@ -655,7 +782,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
             _token.burnFrom(address(this), _lockedAmount);
             _token.burnFrom(msg.sender, _excessAmount);
         }
-        _checkAmoBacking();
+        _checkSpokeSupply();
 
         // Withdraw tokens from treasury
         ITreasury(treasury()).withdraw(tokenOut_, tokenAmountOut_, receiver_);
@@ -702,22 +829,6 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     }
 
     /**
-     * @dev Reverts if a redemption burn left totalSupply below amoSupply. AMO-minted tokens are backed by the
-     * AMO position, not the reserve, and are retired via burnFromAMO. Only the Gateway burns PeggedToken, so
-     * checking every redemption keeps amoSupply <= totalSupply, which maxMint, Treasury and YieldManager rely on.
-     * Note: amoSupply is meant to stay a very small fraction of totalSupply, and governance sizes amoMintLimit
-     * (and unwinds the AMO via burnFromAMO) as totalSupply changes. Reaching this revert is therefore unlikely;
-     * it guards the edge case where redemptions paid from unharvested yield would push supply below amoSupply.
-     * Governor is supposed to react quickly as totalSupply approaches amoSupply.
-     */
-    function _checkAmoBacking() private view {
-        GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = $.peggedToken.totalSupply();
-        uint256 _amoSupply = $.amoSupply;
-        if (_totalSupply < _amoSupply) revert BurnBelowAmoSupply(_totalSupply, _amoSupply);
-    }
-
-    /**
      * @dev Check if instant redeem is allowed for the caller
      * @dev Reverts if delay is enabled and caller is not whitelisted
      */
@@ -733,6 +844,29 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         ITreasury(treasury()).checkNotSanctioned(account_);
     }
 
+    /**
+     * @dev Reverts if a redemption burn left totalSupply below totalSpokeSupply (the AMO's included). AMO-minted
+     * tokens are backed by the AMO position and retired via burnFromAMO; other spoke supply is backed by its spoke and
+     * retired through it. Only the Gateway burns PeggedToken, so checking every redemption keeps totalSpokeSupply <=
+     * totalSupply, which maxMint, Treasury and YieldManager rely on. A core redemption that would dip into spoke
+     * supply (e.g. core holders past the core reserve after yield drift) reverts here.
+     * Note: amoSupply is meant to stay a very small fraction of totalSupply, and governance sizes amoMintLimit
+     * (and unwinds the AMO via burnFromAMO) as totalSupply changes.
+     */
+    function _checkSpokeSupply() private view {
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _spokeSupply = _totalSpokeSupply($);
+        if (_totalSupply < _spokeSupply) revert BurnBelowSpokeSupply(_totalSupply, _spokeSupply);
+    }
+
+    /// @dev Supply the Treasury backs: total supply less spoke supply (the AMO's included)
+    function _coreSupply(GatewayStorage storage $) private view returns (uint256) {
+        uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _spokeSupply = _totalSpokeSupply($);
+        return _totalSupply > _spokeSupply ? _totalSupply - _spokeSupply : 0;
+    }
+
     /// @dev Helper function to get peggedToken from storage
     function _peggedToken() private view returns (IPeggedToken) {
         return _getGatewayStorage().peggedToken;
@@ -743,10 +877,24 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         return _getGatewayStorage().peggedTokenDecimals;
     }
 
+    /// @dev Supply the registered spokes back, summed rather than stored: spokes are few, and it saves a write on every
+    /// spoke mint and burn
+    function _registeredSpokeSupply(GatewayStorage storage $) private view returns (uint256 _total) {
+        uint256 _len = $.spokes.length();
+        for (uint256 i; i < _len; ++i) {
+            _total += $.spokeSupply[$.spokes.at(i)];
+        }
+    }
+
     function _requireRole(bytes32 role_) private view {
         if (!ITreasury(treasury()).hasRole(role_, msg.sender)) {
             revert AccessControlUnauthorizedAccount(msg.sender, role_);
         }
+    }
+
+    /// @dev Supply the Treasury does not back: the AMO's plus every registered spoke's
+    function _totalSpokeSupply(GatewayStorage storage $) private view returns (uint256) {
+        return $.amoSupply + _registeredSpokeSupply($);
     }
 
     function _getGatewayStorage() private pure returns (GatewayStorage storage $) {

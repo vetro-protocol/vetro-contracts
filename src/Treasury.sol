@@ -669,13 +669,8 @@ contract Treasury is ReentrancyGuardTransient, AccessControlDefaultAdminRulesUpg
     function _excessTokens(address token_) private view returns (uint256 excess) {
         TreasuryStorage storage $ = _getTreasuryStorage();
         IPeggedToken _peggedToken = $.peggedToken;
-        // Excess = reserve - (supply - amoSupply)
-        uint256 _totalSupply = _peggedToken.totalSupply();
-        // Get AMO supply from Gateway
-        uint256 _amoSupply = IGateway(_peggedToken.gateway()).amoSupply();
-
-        // Invariant: amoSupply <= totalSupply always holds
-        uint256 _backedSupply = _totalSupply - _amoSupply;
+        // Excess = reserve - coreSupply: the reserve backs only the core supply, not AMO or spoke supply
+        uint256 _backedSupply = IGateway(_peggedToken.gateway()).coreSupply();
         uint256 _reserve = reserve();
         if (_reserve <= _backedSupply) return 0;
 
