@@ -19,6 +19,11 @@ jobs:
         with:
           version: nightly
 
+      - name: Check foundry.lock matches the submodules
+        run: |
+          forge install
+          git diff --exit-code
+
       - name: Run Forge build
         run: |
           forge --version
