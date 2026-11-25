@@ -12,7 +12,8 @@ const {
 } = ContractAliases
 
 /**
- * Deploy the cbBTC/WBTC feed: min(Chainlink cbBTC/WBTC, Curve EMA cbBTC/WBTC)
+ * Deploy the cbBTC/WBTC feed: min(Chainlink cbBTC/WBTC, Curve EMA cbBTC/WBTC). Reverts if the legs diverge more
+ * than 0.5% (50 bps)
  *
  * - Chainlink leg: the deployed cbBTC/BTC DerivedPriceFeedAdapter ÷ Chainlink WBTC/BTC
  * - Curve leg:     EMA of cbBTC (coin 1) in WBTC (coin 0), times the fixed 1.0 feed
@@ -43,7 +44,7 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
     'CurveStableSwapNGEmaFeedAdapter'
   )
 
-  await deployNonUpgradeable(hre, CbBtcWbtcPriceFeed, [chainlinkLeg, curveLeg, 18], 'MinPriceFeedAdapter')
+  await deployNonUpgradeable(hre, CbBtcWbtcPriceFeed, [chainlinkLeg, curveLeg, 18, 50], 'MinPriceFeedAdapter')
 }
 
 func.tags = [CbBtcWbtcPriceFeed]

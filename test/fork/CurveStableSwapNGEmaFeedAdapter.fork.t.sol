@@ -49,8 +49,8 @@ contract CurveStableSwapNGEmaFeedAdapterForkTest is Test {
         vm.createSelectFork("ethereum", FORK_BLOCK);
         cbBtcEma = new CurveStableSwapNGEmaFeedAdapter(POOL, cbBTC, 1, WBTC, 0, WBTC_BTC_FEED);
         hemiBtcEma = new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, WBTC_BTC_FEED);
-        cbBtcFeed = new MinPriceFeedAdapter(CBBTC_BTC_DERIVED_FEED, cbBtcEma, 8);
-        hemiBtcFeed = new MinPriceFeedAdapter(HEMIBTC_BTC_RATE_FEED, hemiBtcEma, 18);
+        cbBtcFeed = new MinPriceFeedAdapter(CBBTC_BTC_DERIVED_FEED, cbBtcEma, 8, 50);
+        hemiBtcFeed = new MinPriceFeedAdapter(HEMIBTC_BTC_RATE_FEED, hemiBtcEma, 18, 500);
     }
 
     function _answer(AggregatorV2V3Interface feed_) private view returns (int256 _price) {
