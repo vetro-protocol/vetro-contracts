@@ -216,21 +216,28 @@ contract CurveStableSwapNGEmaFeedAdapterTest is Test {
         // cbBTC/WBTC = min(Chainlink-derived cbBTC/WBTC, Curve EMA cbBTC/WBTC)
         MockChainlinkOracle _chainlink = new MockChainlinkOracle(1.0041e8);
         CurveStableSwapNGEmaFeedAdapter _ema = _adapter(address(cbBtc), 1, address(wbtc), 0, wbtcUnit);
-        MinPriceFeedAdapter _feed = new MinPriceFeedAdapter(_chainlink, _ema, 18);
+        MinPriceFeedAdapter _feed = new MinPriceFeedAdapter(_chainlink, _ema, 18, 50);
 
         // Chainlink lags above par: the EMA sets the price
         assertEq(_answer(_feed), 1.0016e18);
 
-        // Market depeg the Chainlink leg has not caught yet: the EMA lowers the price
+        // Market depeg the Chainlink leg has not caught yet: the EMA lowers the price, up to 0.5% below Chainlink
+        pool.setPriceOracle(0, 0.9995e18);
+        assertEq(_answer(_feed), 0.9995e18);
         pool.setPriceOracle(0, 0.97e18);
-        assertEq(_answer(_feed), 0.97e18);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _feed.latestRoundData();
 
-        // Chainlink reports a lower price than the EMA: Chainlink sets the price
+        // Chainlink reports a lower price than the EMA: Chainlink sets the price, up to 0.5% below the EMA
+        _chainlink.updatePrice(0.968e8);
+        assertEq(_answer(_feed), 0.968e18);
         _chainlink.updatePrice(0.96e8);
-        assertEq(_answer(_feed), 0.96e18);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _feed.latestRoundData();
+        _chainlink.updatePrice(0.968e8);
 
         // Chainlink goes stale: the min reports its age, not the EMA's
-        uint256 _chainlinkAt = block.timestamp;
+        uint256 _chainlinkAt = vm.getBlockTimestamp();
         vm.warp(block.timestamp + 2 days);
         (,,, uint256 _updatedAt,) = _feed.latestRoundData();
         assertEq(_updatedAt, _chainlinkAt);

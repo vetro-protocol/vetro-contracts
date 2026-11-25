@@ -11,6 +11,7 @@ const {FixedPriceFeedAdapter, HemiBtcWbtcChainlinkFeed, HemiBtcWbtcCurveEmaFeed,
  * - Chainlink leg: Chainlink HEMIBTC/BTC exchange rate ÷ Chainlink WBTC/BTC. The exchange rate reads 1.0 while
  *                  the bridge holds, so this leg only lowers the price on a bridge rate cut or a WBTC premium.
  * - Curve leg:     EMA of hemiBTC (coin 2) in WBTC (coin 0), times the fixed 1.0 feed
+ * - Reverts if the legs diverge more than 5% (500 bps).
  *
  * Deploy only. Wire it with `updateOracle(hemiBTC, HemiBtcWbtcPriceFeed, 90000)` from the Safe.
  */
@@ -36,7 +37,7 @@ const func: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
     'CurveStableSwapNGEmaFeedAdapter'
   )
 
-  await deployNonUpgradeable(hre, HemiBtcWbtcPriceFeed, [chainlinkLeg, curveLeg, 18], 'MinPriceFeedAdapter')
+  await deployNonUpgradeable(hre, HemiBtcWbtcPriceFeed, [chainlinkLeg, curveLeg, 18, 500], 'MinPriceFeedAdapter')
 }
 
 func.tags = [HemiBtcWbtcPriceFeed]

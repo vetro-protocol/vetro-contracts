@@ -26,13 +26,15 @@ contract PassthroughVault is ERC4626 {
 }
 
 /// @dev The feeds as the deploy scripts build them, priced in WBTC, on a Treasury and Gateway from this repo:
-///      WBTC at a fixed 1.0, cbBTC = min(cbBTC/BTC derived / WBTC/BTC, Curve EMA cbBTC/WBTC),
-///      hemiBTC = min(HEMIBTC/BTC exchange rate / WBTC/BTC, Curve EMA hemiBTC/WBTC), all with a 90000 s stale period
-///      and 2% tolerance.
+///      WBTC at a fixed 1.0, cbBTC = min(cbBTC/BTC derived / WBTC/BTC, Curve EMA cbBTC/WBTC) that reverts if the
+///      legs diverge more than 0.5%, hemiBTC = min(HEMIBTC/BTC exchange rate / WBTC/BTC, Curve EMA hemiBTC/WBTC)
+///      that reverts if the legs diverge more than 5%, all with a 90000 s stale period and 2% tolerance.
 contract WbtcPricedFeedsForkTest is Test {
     uint256 constant FORK_BLOCK = 26279532;
     uint256 constant STALE_PERIOD = 90000;
     uint256 constant REDEEM_FEE = 15; // bps
+    uint256 constant CBBTC_MAX_DEVIATION = 50; // bps
+    uint256 constant HEMIBTC_MAX_DEVIATION = 500; // bps
 
     ICurveStableSwapNG constant POOL = ICurveStableSwapNG(0x66039342C66760874047c36943B1e2d8300363BB);
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
@@ -66,10 +68,13 @@ contract WbtcPricedFeedsForkTest is Test {
 
         cbBtcChainlink = new DerivedPriceFeedAdapter(CBBTC_BTC_DERIVED_FEED, WBTC_BTC_FEED, 8);
         cbBtcEma = new CurveStableSwapNGEmaFeedAdapter(POOL, cbBTC, 1, WBTC, 0, WBTC_UNIT_FEED);
-        cbBtcFeed = new MinPriceFeedAdapter(cbBtcChainlink, cbBtcEma, 18);
+        cbBtcFeed = new MinPriceFeedAdapter(cbBtcChainlink, cbBtcEma, 18, CBBTC_MAX_DEVIATION);
         hemiBtcChainlink = new DerivedPriceFeedAdapter(HEMIBTC_BTC_RATE_FEED, WBTC_BTC_FEED, 18);
         hemiBtcFeed = new MinPriceFeedAdapter(
-            hemiBtcChainlink, new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, WBTC_UNIT_FEED), 18
+            hemiBtcChainlink,
+            new CurveStableSwapNGEmaFeedAdapter(POOL, HEMIBTC, 2, WBTC, 0, WBTC_UNIT_FEED),
+            18,
+            HEMIBTC_MAX_DEVIATION
         );
 
         vetBTC = new PeggedToken("Vetro BTC", "vetBTC", address(this));
@@ -106,6 +111,17 @@ contract WbtcPricedFeedsForkTest is Test {
         IERC20(token_).approve(address(gateway), amount_);
         _minted = gateway.deposit(token_, amount_, 0, alice);
         vm.stopPrank();
+    }
+
+    function _dumpCbBtc(uint256 amount_) private {
+        deal(cbBTC, address(this), amount_);
+        IERC20(cbBTC).approve(address(POOL), amount_);
+        ICurveExchange(address(POOL)).exchange(1, 0, amount_, 0);
+    }
+
+    function _cbBtcFloor() private view returns (int256) {
+        (int256 _chainlinkLeg,) = _answer(cbBtcChainlink);
+        return _chainlinkLeg * 1e10 * int256(10_000 - CBBTC_MAX_DEVIATION) / 10_000;
     }
 
     function _answer(AggregatorV2V3Interface feed_) private view returns (int256 _price, uint256 _updatedAt) {
@@ -220,5 +236,36 @@ contract WbtcPricedFeedsForkTest is Test {
         vm.warp(block.timestamp + 1800);
         vm.expectPartialRevert(Treasury.PriceExceedTolerance.selector);
         gateway.previewDeposit(HEMIBTC, 1e8);
+    }
+
+    /// @notice HVC-12: a Chainlink premium more than 0.5% over the EMA stops redeems
+    function test_cbBtc_chainlinkPremiumOverBoundRevertsRedeem() public {
+        _deposit(cbBTC, 3e8);
+
+        (uint80 _roundId,,, uint256 _updatedAt, uint80 _answeredInRound) = cbBtcChainlink.latestRoundData();
+        vm.mockCall(
+            address(cbBtcChainlink),
+            abi.encodeWithSignature("latestRoundData()"),
+            abi.encode(_roundId, CBBTC_EMA * 101 / 100 / 1e10, _updatedAt, _updatedAt, _answeredInRound)
+        );
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        cbBtcFeed.latestRoundData();
+
+        vm.prank(alice);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        gateway.redeem(cbBTC, 2e18, 0, alice);
+    }
+
+    /// @notice A held cbBTC dump more than 0.5% below Chainlink stops the feed
+    function test_cbBtc_heldDumpOverBoundReverts() public {
+        _dumpCbBtc(50e8);
+        vm.roll(block.number + 200);
+        vm.warp(block.timestamp + 2400);
+
+        (int256 _ema,) = _answer(cbBtcEma);
+        assertLt(_ema, _cbBtcFloor(), "EMA is out of bound");
+
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        treasury.getPrice(cbBTC);
     }
 }

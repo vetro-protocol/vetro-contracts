@@ -6,6 +6,9 @@ import {MinPriceFeedAdapter} from "src/MinPriceFeedAdapter.sol";
 import {MockChainlinkOracle} from "test/mocks/MockChainlinkOracle.sol";
 
 contract MinPriceFeedAdapterTest is Test {
+    uint256 constant NO_BOUND = 10_000;
+    uint256 constant CBBTC_MAX_DEVIATION = 50;
+
     MockChainlinkOracle feedA;
     MockChainlinkOracle feedB;
     MinPriceFeedAdapter adapter;
@@ -16,7 +19,7 @@ contract MinPriceFeedAdapterTest is Test {
         feedA.setDecimals(18);
         feedB = new MockChainlinkOracle(0.999112e18);
         feedB.setDecimals(18);
-        adapter = new MinPriceFeedAdapter(feedA, feedB, 18);
+        adapter = new MinPriceFeedAdapter(feedA, feedB, 18, NO_BOUND);
     }
 
     // ── constructor ──────────────────────────────────────────────────────────
@@ -28,15 +31,25 @@ contract MinPriceFeedAdapterTest is Test {
 
     function test_constructor_revertIfFeedIsZero() public {
         vm.expectRevert(MinPriceFeedAdapter.ZeroAddress.selector);
-        new MinPriceFeedAdapter(MockChainlinkOracle(address(0)), feedB, 18);
+        new MinPriceFeedAdapter(MockChainlinkOracle(address(0)), feedB, 18, NO_BOUND);
 
         vm.expectRevert(MinPriceFeedAdapter.ZeroAddress.selector);
-        new MinPriceFeedAdapter(feedA, MockChainlinkOracle(address(0)), 18);
+        new MinPriceFeedAdapter(feedA, MockChainlinkOracle(address(0)), 18, NO_BOUND);
     }
 
     function test_constructor_revertIfOutputDecimalsTooLow() public {
         vm.expectRevert(MinPriceFeedAdapter.OutputDecimalsTooLow.selector);
-        new MinPriceFeedAdapter(feedA, feedB, 7);
+        new MinPriceFeedAdapter(feedA, feedB, 7, NO_BOUND);
+    }
+
+    function test_constructor_storesMaxDeviation() public {
+        assertEq(adapter.maxDeviation(), NO_BOUND);
+        assertEq(new MinPriceFeedAdapter(feedA, feedB, 18, 0).maxDeviation(), 0);
+    }
+
+    function test_constructor_revertIfMaxDeviationTooHigh() public {
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationTooHigh.selector);
+        new MinPriceFeedAdapter(feedA, feedB, 18, NO_BOUND + 1);
     }
 
     // ── metadata ─────────────────────────────────────────────────────────────
@@ -79,11 +92,11 @@ contract MinPriceFeedAdapterTest is Test {
         MockChainlinkOracle _derived = new MockChainlinkOracle(1.00225087e8);
         MockChainlinkOracle _curve = new MockChainlinkOracle(0.999791e18);
         _curve.setDecimals(18);
-        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(_derived, _curve, 8);
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(_derived, _curve, 8, CBBTC_MAX_DEVIATION);
         (, int256 _answer,,,) = _adapter.latestRoundData();
         assertEq(_answer, 0.999791e8);
 
-        MinPriceFeedAdapter _adapter18 = new MinPriceFeedAdapter(_derived, _curve, 18);
+        MinPriceFeedAdapter _adapter18 = new MinPriceFeedAdapter(_derived, _curve, 18, CBBTC_MAX_DEVIATION);
         (, _answer,,,) = _adapter18.latestRoundData();
         assertEq(_answer, 0.999791e18);
     }
@@ -117,7 +130,7 @@ contract MinPriceFeedAdapterTest is Test {
 
     function test_latestRoundData_revertIfScaledPriceRoundsToZero() public {
         MockChainlinkOracle _feed8 = new MockChainlinkOracle(1e8);
-        MinPriceFeedAdapter _adapter8 = new MinPriceFeedAdapter(_feed8, feedB, 8);
+        MinPriceFeedAdapter _adapter8 = new MinPriceFeedAdapter(_feed8, feedB, 8, NO_BOUND);
         feedB.updatePrice(1); // 1e-18 rounds to 0 at 8 decimals
         vm.expectRevert(MinPriceFeedAdapter.InvalidPrice.selector);
         _adapter8.latestRoundData();
@@ -130,6 +143,96 @@ contract MinPriceFeedAdapterTest is Test {
         feedB.updatePrice(priceB_);
         (, int256 _answer,,,) = adapter.latestRoundData();
         assertEq(_answer, priceA_ < priceB_ ? priceA_ : priceB_);
+    }
+
+    // ── maxDeviation ──────────────────────────────────────────────────────────
+
+    function test_maxDeviation_feedBInsideBound() public {
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(feedA, feedB, 18, CBBTC_MAX_DEVIATION);
+        feedB.updatePrice(0.996e18);
+        (, int256 _answer,,,) = _adapter.latestRoundData();
+        assertEq(_answer, 0.996e18);
+    }
+
+    function test_maxDeviation_feedBAtBound() public {
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(feedA, feedB, 18, CBBTC_MAX_DEVIATION);
+        feedA.updatePrice(1.01e18);
+        feedB.updatePrice(1.00495e18);
+        (, int256 _answer,,,) = _adapter.latestRoundData();
+        assertEq(_answer, 1.00495e18);
+    }
+
+    function test_maxDeviation_revertIfFeedBBelowBound() public {
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(feedA, feedB, 18, CBBTC_MAX_DEVIATION);
+        feedA.updatePrice(1.01e18);
+        feedB.updatePrice(1.00494e18);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _adapter.latestRoundData();
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _adapter.latestAnswer();
+    }
+
+    function test_maxDeviation_feedAAtBound() public {
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(feedA, feedB, 18, CBBTC_MAX_DEVIATION);
+        feedA.updatePrice(1.00495e18);
+        feedB.updatePrice(1.01e18);
+        (, int256 _answer,,,) = _adapter.latestRoundData();
+        assertEq(_answer, 1.00495e18);
+    }
+
+    function test_maxDeviation_revertIfFeedABelowBound() public {
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(feedA, feedB, 18, CBBTC_MAX_DEVIATION);
+        feedA.updatePrice(1.00494e18);
+        feedB.updatePrice(1.01e18);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _adapter.latestRoundData();
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _adapter.latestAnswer();
+    }
+
+    function test_maxDeviation_zeroRevertsUnlessFeedsAreEqual() public {
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(feedA, feedB, 18, 0);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _adapter.latestRoundData();
+
+        feedB.updatePrice(1.000001e18);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _adapter.latestRoundData();
+
+        feedB.updatePrice(1e18);
+        (, int256 _answer,,,) = _adapter.latestRoundData();
+        assertEq(_answer, 1e18);
+    }
+
+    function test_maxDeviation_normalisesMixedDecimals() public {
+        MockChainlinkOracle _derived = new MockChainlinkOracle(1.01e8);
+        MockChainlinkOracle _curve = new MockChainlinkOracle(1.00495e18);
+        _curve.setDecimals(18);
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(_derived, _curve, 18, CBBTC_MAX_DEVIATION);
+        (, int256 _answer,,,) = _adapter.latestRoundData();
+        assertEq(_answer, 1.00495e18);
+
+        _curve.updatePrice(1.00494e18);
+        vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+        _adapter.latestRoundData();
+    }
+
+    function testFuzz_maxDeviation_boundsDifference(int256 priceA_, int256 priceB_, uint256 maxDeviation_) public {
+        priceA_ = bound(priceA_, 1, 1e30);
+        priceB_ = bound(priceB_, 1, 1e30);
+        maxDeviation_ = bound(maxDeviation_, 0, NO_BOUND);
+        MinPriceFeedAdapter _adapter = new MinPriceFeedAdapter(feedA, feedB, 18, maxDeviation_);
+        feedA.updatePrice(priceA_);
+        feedB.updatePrice(priceB_);
+
+        (int256 _high, int256 _low) = priceA_ > priceB_ ? (priceA_, priceB_) : (priceB_, priceA_);
+        if ((_high - _low) * int256(NO_BOUND) > _high * int256(maxDeviation_)) {
+            vm.expectRevert(MinPriceFeedAdapter.MaxDeviationExceeded.selector);
+            _adapter.latestRoundData();
+        } else {
+            (, int256 _answer,,,) = _adapter.latestRoundData();
+            assertEq(_answer, _low);
+        }
     }
 
     // ── AggregatorInterface ──────────────────────────────────────────────────
