@@ -1279,6 +1279,87 @@ contract GatewayTest is Test {
         assertEq(gateway.maxDeposit(token), 0, "90 net deposited is still past the cap");
     }
 
+    function test_maxDeposit_cappedByMintLimit() public {
+        mockOracle.updatePrice(1e8);
+        vm.prank(admin);
+        gateway.updateMintLimit(100e18);
+        mintPeggedToken(alice, 70e18);
+        assertEq(gateway.maxDeposit(token), 30e6);
+
+        deal(token, bob, 30e6);
+        vm.startPrank(bob);
+        IERC20(token).forceApprove(address(gateway), 30e6);
+        gateway.deposit(token, 30e6, 0, bob);
+        vm.stopPrank();
+        assertEq(gateway.maxDeposit(token), 0);
+    }
+
+    function testFuzz_maxDeposit_depositAtMaxSucceeds(int256 price, uint256 mintFee, uint256 mintLimit) public {
+        mockOracle.updatePrice(bound(price, 0.99e8, 1.01e8));
+        gateway.updateMintFee(token, bound(mintFee, 0, gateway.MAX_FEE_BPS()));
+        vm.prank(admin);
+        gateway.updateMintLimit(bound(mintLimit, 1e18, 1e30));
+
+        uint256 _max = gateway.maxDeposit(token);
+        deal(token, bob, _max);
+        vm.startPrank(bob);
+        IERC20(token).forceApprove(address(gateway), _max);
+        gateway.deposit(token, _max, 0, bob);
+        vm.stopPrank();
+        assertLe(VUSD.totalSupply(), gateway.mintLimit());
+        assertLt(gateway.maxMint(), 1e13, "maxDeposit is tight");
+    }
+
+    function test_maxDeposit_returnZeroIfPriceStale() public {
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        assertEq(gateway.maxDeposit(token), 0);
+    }
+
+    function test_maxDeposit_returnZeroIfPriceOutOfTolerance() public {
+        mockOracle.updatePrice(0.98e8);
+        assertEq(gateway.maxDeposit(token), 0);
+    }
+
+    function test_maxWithdraw_returnZeroIfWithdrawPaused() public {
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(bob, 100e18);
+        treasury.setWithdrawActive(token, false);
+        assertEq(gateway.maxWithdraw(token), 0);
+    }
+
+    function test_maxWithdraw_returnZeroIfPriceStale() public {
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(bob, 100e18);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        assertEq(gateway.maxWithdraw(token), 0);
+    }
+
+    function test_maxWithdraw_returnZeroIfPriceOutOfTolerance() public {
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(bob, 100e18);
+        mockOracle.updatePrice(1.02e8);
+        assertEq(gateway.maxWithdraw(token), 0);
+    }
+
+    function test_maxWithdraw_returnZeroIfNotWhitelisted() public {
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(bob, 100e18);
+        assertEq(gateway.maxWithdraw(address(new MockERC20())), 0);
+    }
+
+    function test_maxWithdraw_withdrawAtMaxSucceeds() public {
+        mockOracle.updatePrice(1e8);
+        mintPeggedToken(bob, 100e18);
+        gateway.setWithdrawalDelayEnabled(false);
+
+        uint256 _max = gateway.maxWithdraw(token);
+        assertEq(_max, 100e6);
+        vm.prank(bob);
+        gateway.withdraw(token, _max, type(uint256).max, bob);
+        assertEq(IERC20(token).balanceOf(bob), _max);
+        assertEq(gateway.maxWithdraw(token), 0);
+    }
+
     function test_maxMint() public {
         // With zero supply
         vm.prank(admin);

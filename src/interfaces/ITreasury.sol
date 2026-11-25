@@ -39,6 +39,17 @@ interface ITreasury {
         external
         returns (uint256);
     function sweep(address fromToken_, address receiver_) external;
+    function tokenConfig(address token_)
+        external
+        view
+        returns (
+            address vault,
+            address oracle,
+            uint256 stalePeriod,
+            bool depositActive,
+            bool withdrawActive,
+            uint8 decimals
+        );
     // solhint-disable-next-line func-name-mixedcase
     function UMM_ROLE() external view returns (bytes32);
     function updateDepositCap(address token_, uint256 newDepositCap_) external;

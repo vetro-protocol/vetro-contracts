@@ -226,15 +226,11 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     function mintToAMO(uint256 amount_, address receiver_) external onlyRole(UMM_ROLE) {
         if (receiver_ == address(0)) revert AddressIsZero();
 
-        GatewayStorage storage $ = _getGatewayStorage();
-        // Check AMO mint limit
-        uint256 _supply = $.amoSupply;
-        uint256 _limit = $.amoMintLimit;
-        uint256 _amoMintable = _limit > _supply ? _limit - _supply : 0;
+        uint256 _amoMintable = maxAmoMint();
         if (amount_ > _amoMintable) revert ExceededMaxMint(amount_, _amoMintable);
 
-        // increment supply and mint tokens
-        _supply += amount_;
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _supply = $.amoSupply + amount_;
         $.amoSupply = _supply;
         $.peggedToken.mint(receiver_, amount_);
         emit MintedToAMO(receiver_, amount_, _supply);
@@ -401,18 +397,46 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
 
     /// @inheritdoc IGateway
     function maxDeposit(address tokenIn_) external view returns (uint256) {
-        return ITreasury(treasury()).maxDeposit(tokenIn_);
+        ITreasury _treasury = ITreasury(treasury());
+        uint256 _treasuryMax = _treasury.maxDeposit(tokenIn_);
+        if (_treasuryMax == 0) return 0;
+        uint256 _maxMint = maxMint();
+        if (_maxMint == 0) return 0;
+
+        try _treasury.getMintPrice(tokenIn_) returns (uint256 _mintPrice, uint256 _unitPrice) {
+            if (_maxMint == type(uint256).max) return _treasuryMax;
+            return Math.min(_treasuryMax, _tokenInput(tokenIn_, _maxMint, _mintPrice, _unitPrice));
+        } catch {
+            return 0;
+        }
     }
 
     /// @inheritdoc IGateway
     /// @dev Capped at `totalSupply - amoSupply`: redemptions may not burn supply below outstanding AMO debt.
     ///      amoSupply is governed to stay a small fraction of totalSupply, so in practice this equals the balance.
     function maxRedeem(address owner_) external view returns (uint256) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = $.peggedToken.totalSupply();
-        uint256 _amoSupply = $.amoSupply;
-        uint256 _redeemable = _totalSupply > _amoSupply ? _totalSupply - _amoSupply : 0;
-        return Math.min($.peggedToken.balanceOf(owner_), _redeemable);
+        return Math.min(_peggedToken().balanceOf(owner_), _redeemableSupply());
+    }
+
+    /// @inheritdoc IGateway
+    /// @dev Capped at `previewRedeem(tokenOut_, totalSupply - amoSupply)`, the token-denominated equivalent of the
+    ///      maxRedeem cap: redemptions may not burn supply below outstanding AMO debt.
+    ///      Book value, not liquidity: it relies on `Treasury.withdrawable`, so a withdrawal within it can still
+    ///      revert if the vault can't free that much at once.
+    function maxWithdraw(address tokenOut_) external view returns (uint256) {
+        ITreasury _treasury = ITreasury(treasury());
+        (,,,, bool _withdrawActive,) = _treasury.tokenConfig(tokenOut_);
+        if (!_withdrawActive) return 0;
+        uint256 _redeemable = _redeemableSupply();
+        if (_redeemable == 0) return 0;
+        try _treasury.getRedeemPrice(tokenOut_) returns (uint256 _redeemPrice, uint256 _unitPrice) {
+            return
+                Math.min(
+                    _treasury.withdrawable(tokenOut_), _tokenOutput(tokenOut_, _redeemable, _redeemPrice, _unitPrice)
+                );
+        } catch {
+            return 0;
+        }
     }
 
     /// @inheritdoc IGateway
@@ -465,29 +489,12 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      *      the guard below is defensive only
      */
     function maxMint() public view returns (uint256) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = $.peggedToken.totalSupply();
-        uint256 _amoSupply = $.amoSupply;
-        uint256 _userSupply = _totalSupply > _amoSupply ? _totalSupply - _amoSupply : 0;
-        uint256 _mintLimit = $.mintLimit;
+        uint256 _userSupply = _redeemableSupply();
+        uint256 _mintLimit = _getGatewayStorage().mintLimit;
         if (_mintLimit <= _userSupply) return 0;
         unchecked {
             return _mintLimit - _userSupply;
         }
-    }
-
-    /// @inheritdoc IGateway
-    /// @dev Capped at `previewRedeem(tokenOut_, totalSupply - amoSupply)`, the token-denominated equivalent of the
-    ///      maxRedeem cap: redemptions may not burn supply below outstanding AMO debt.
-    ///      Book value, not liquidity: it relies on `Treasury.withdrawable`, so a withdrawal within it can still
-    ///      revert if the vault can't free that much at once.
-    function maxWithdraw(address tokenOut_) public view returns (uint256) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        uint256 _totalSupply = $.peggedToken.totalSupply();
-        uint256 _amoSupply = $.amoSupply;
-        if (_totalSupply <= _amoSupply) return 0;
-        uint256 _withdrawable = ITreasury(treasury()).withdrawable(tokenOut_);
-        return Math.min(_withdrawable, previewRedeem(tokenOut_, _totalSupply - _amoSupply));
     }
 
     /// @inheritdoc IGateway
@@ -562,7 +569,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
     function _executeWithdraw(address tokenOut_, uint256 amountOut_, uint256 peggedTokenIn_, address receiver_)
         private
     {
-        uint256 _maxWithdraw = maxWithdraw(tokenOut_);
+        uint256 _maxWithdraw = _maxWithdrawable(tokenOut_);
         if (amountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(amountOut_, _maxWithdraw);
         IPeggedToken _token = _peggedToken();
         _token.burnFrom(msg.sender, peggedTokenIn_);
@@ -619,7 +626,7 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         IPeggedToken _token = $.peggedToken;
 
         // Validate treasury has sufficient withdrawable amount
-        uint256 _maxWithdraw = maxWithdraw(tokenOut_);
+        uint256 _maxWithdraw = _maxWithdrawable(tokenOut_);
         if (tokenAmountOut_ > _maxWithdraw) revert ExceededMaxWithdraw(tokenAmountOut_, _maxWithdraw);
 
         RedeemRequest storage _request = $.redeemRequests[msg.sender];
@@ -668,35 +675,80 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
      * @custom:formula peggedTokenOut = amountIn * mintPrice * (1 - mintFee), mintPrice being par from the Treasury's
      *                peg floor up, else the oracle price
      */
-    function _calculatePeggedTokenOutput(address tokenIn_, uint256 amountIn_) private view returns (uint256) {
-        GatewayStorage storage $ = _getGatewayStorage();
-        (uint256 _mintPrice, uint256 _unitPrice) = ITreasury($.peggedToken.treasury()).getMintPrice(tokenIn_);
-        uint256 _mintFee = $.mintFee[tokenIn_];
-        uint256 _amountInAfterFee = _mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - _mintFee), MAX_BPS) : amountIn_;
-        uint256 _rawPeggedTokenAmount = _amountInAfterFee.mulDiv(_mintPrice, _unitPrice);
-        // convert _rawPeggedTokenAmount into peggedToken decimal
-        uint8 _decimals = $.peggedTokenDecimals;
-        return _rawPeggedTokenAmount * 10 ** (_decimals - IERC20Metadata(tokenIn_).decimals());
+    function _calculatePeggedTokenOutput(address tokenIn_, uint256 amountIn_)
+        private
+        view
+        returns (uint256 _peggedTokenOut)
+    {
+        (uint256 _mintPrice, uint256 _unitPrice) = ITreasury(treasury()).getMintPrice(tokenIn_);
+        return _peggedTokenOutput(tokenIn_, amountIn_, _mintPrice, _unitPrice);
     }
 
     /**
      * @dev Calculate token output for a given PeggedToken input considering price and fees
      * @param tokenOut_ Output token address
      * @param peggedTokenIn_ Input PeggedToken amount
-     * @return _tokenOut Token amount after price and fee adjustments
+     * @return _tokenAmountOut Token amount after price and fee adjustments
      * @custom:formula tokenOut = peggedTokenIn / redeemPrice * (1 - redeemFee), redeemPrice being par up to the
      *                Treasury's peg ceiling, else the oracle price
      */
-    function _calculateTokenOutput(address tokenOut_, uint256 peggedTokenIn_) private view returns (uint256) {
-        GatewayStorage storage $ = _getGatewayStorage();
+    function _calculateTokenOutput(address tokenOut_, uint256 peggedTokenIn_)
+        private
+        view
+        returns (uint256 _tokenAmountOut)
+    {
         (uint256 _redeemPrice, uint256 _unitPrice) = ITreasury(treasury()).getRedeemPrice(tokenOut_);
+        return _tokenOutput(tokenOut_, peggedTokenIn_, _redeemPrice, _unitPrice);
+    }
+
+    function _peggedTokenOutput(address tokenIn_, uint256 amountIn_, uint256 mintPrice_, uint256 unitPrice_)
+        private
+        view
+        returns (uint256 _peggedTokenOut)
+    {
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _mintFee = $.mintFee[tokenIn_];
+        uint256 _amountInAfterFee = _mintFee > 0 ? amountIn_.mulDiv((MAX_BPS - _mintFee), MAX_BPS) : amountIn_;
+        uint256 _rawPeggedTokenAmount = _amountInAfterFee.mulDiv(mintPrice_, unitPrice_);
+        // convert _rawPeggedTokenAmount into peggedToken decimal
+        uint8 _decimals = $.peggedTokenDecimals;
+        return _rawPeggedTokenAmount * 10 ** (_decimals - IERC20Metadata(tokenIn_).decimals());
+    }
+
+    /// @dev Inverse of `_peggedTokenOutput`, rounded down so that depositing the
+    ///      result mints at most `peggedTokenOut_`. Returns `type(uint256).max` when the result does not fit.
+    function _tokenInput(address tokenIn_, uint256 peggedTokenOut_, uint256 mintPrice_, uint256 unitPrice_)
+        private
+        view
+        returns (uint256 _tokenAmountIn)
+    {
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _rawPeggedTokenAmount =
+            peggedTokenOut_ / 10 ** ($.peggedTokenDecimals - IERC20Metadata(tokenIn_).decimals());
+        uint256 _amountInAfterFee = _mulDivOrMax(_rawPeggedTokenAmount, unitPrice_, mintPrice_);
+        uint256 _mintFee = $.mintFee[tokenIn_];
+        return _mintFee > 0 ? _mulDivOrMax(_amountInAfterFee, MAX_BPS, MAX_BPS - _mintFee) : _amountInAfterFee;
+    }
+
+    function _tokenOutput(address tokenOut_, uint256 peggedTokenIn_, uint256 redeemPrice_, uint256 unitPrice_)
+        private
+        view
+        returns (uint256 _tokenAmountOut)
+    {
+        GatewayStorage storage $ = _getGatewayStorage();
         uint256 _redeemFee = $.redeemFee[tokenOut_];
         uint256 _peggedTokenInAfterFee =
             _redeemFee > 0 ? peggedTokenIn_.mulDiv((MAX_BPS - _redeemFee), MAX_BPS) : peggedTokenIn_;
-        uint256 _rawTokenAmount = _peggedTokenInAfterFee.mulDiv(_unitPrice, _redeemPrice);
+        uint256 _rawTokenAmount = _peggedTokenInAfterFee.mulDiv(unitPrice_, redeemPrice_);
         // convert _rawTokenAmount to token_ decimal
         uint8 _decimals = $.peggedTokenDecimals;
         return _rawTokenAmount / 10 ** (_decimals - IERC20Metadata(tokenOut_).decimals());
+    }
+
+    /// @dev `x_ * y_ / d_` rounded down, saturated at `type(uint256).max`
+    function _mulDivOrMax(uint256 x_, uint256 y_, uint256 d_) private pure returns (uint256) {
+        (uint256 _high,) = Math.mul512(x_, y_);
+        return _high >= d_ ? type(uint256).max : x_.mulDiv(y_, d_);
     }
 
     /**
@@ -713,6 +765,21 @@ contract Gateway is IGateway, Initializable, ReentrancyGuardTransient {
         uint256 _totalSupply = $.peggedToken.totalSupply();
         uint256 _amoSupply = $.amoSupply;
         if (_totalSupply < _amoSupply) revert BurnBelowAmoSupply(_totalSupply, _amoSupply);
+    }
+
+    /// @dev Execution limit: book value from `Treasury.withdrawable`, reverts if the redeem price check fails
+    function _maxWithdrawable(address tokenOut_) private view returns (uint256) {
+        uint256 _redeemable = _redeemableSupply();
+        if (_redeemable == 0) return 0;
+        return Math.min(ITreasury(treasury()).withdrawable(tokenOut_), previewRedeem(tokenOut_, _redeemable));
+    }
+
+    /// @dev PeggedToken supply that redemptions may burn: `totalSupply - amoSupply`
+    function _redeemableSupply() private view returns (uint256) {
+        GatewayStorage storage $ = _getGatewayStorage();
+        uint256 _totalSupply = $.peggedToken.totalSupply();
+        uint256 _amoSupply = $.amoSupply;
+        return _totalSupply > _amoSupply ? _totalSupply - _amoSupply : 0;
     }
 
     /**
