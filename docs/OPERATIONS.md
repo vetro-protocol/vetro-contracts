@@ -308,8 +308,9 @@ Treasury.updateDepositCap(address token_, uint256 newDepositCap_)
   token or raise the cap. Size caps with room for the yield
 - New tokens start uncapped (`type(uint256).max`) with net deposits at 0, and so does a token removed and whitelisted
   again. AMO mints and keeper operations ignore the cap
-- `Gateway.maxDeposit(token)` returns the room left, bounded by what the yield vault accepts. It is not a guarantee:
-  the deposit must also fit `maxMint` and pass the price checks
+- `Gateway.maxDeposit(token)` returns the room left, bounded by what the yield vault accepts and by `maxMint` in token
+  units. It returns 0 while deposits are paused or the price is stale or out of tolerance
+- `Gateway.maxWithdraw(token)` returns 0 while withdrawals are paused or the price is stale or out of tolerance
 - **When**: Size each cap to the token's exit liquidity and how far its oracle can be trusted, so what users can take by depositing a token the oracle overprices is at most the cap times the depeg
 
 ---
